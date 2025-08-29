@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "dgSpecHash": "/s9Bbl7QftQ=",
+  "success": true,
+  "projectFilePath": "/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Application/HealthyBreakfastApp.Application.csproj",
+  "expectedPackageFiles": [
+    "/Users/rishijain/.nuget/packages/fluentvalidation/12.0.0/fluentvalidation.12.0.0.nupkg.sha512"
+  ],
+  "logs": []
+}

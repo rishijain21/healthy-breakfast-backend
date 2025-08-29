@@ -1,0 +1,11 @@
+{
+  "Version": 1,
+  "Hash": "wyX16RNFkeIRo2UUIOMOGl6GfnrvQhD+3inTfYRDxJo=",
+  "Source": "HealthyBreakfastApp.WebAPI",
+  "BasePath": "_content/HealthyBreakfastApp.WebAPI",
+  "Mode": "Default",
+  "ManifestType": "Build",
+  "ReferencedProjectsConfiguration": [],
+  "DiscoveryPatterns": [],
+  "Assets": []
+}

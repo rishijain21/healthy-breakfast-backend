@@ -1,0 +1,40 @@
+using System.Threading.Tasks;
+using System.Collections.Generic;
+using System.Linq;
+using HealthyBreakfastApp.Application.Interfaces;
+using HealthyBreakfastApp.Domain.Entities;
+using HealthyBreakfastApp.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
+
+namespace HealthyBreakfastApp.Infrastructure.Repositories
+{
+    public class UserMealRepository : IUserMealRepository
+    {
+        private readonly AppDbContext _context;
+
+        public UserMealRepository(AppDbContext context)
+        {
+            _context = context;
+        }
+
+        public async Task AddAsync(UserMeal entity)
+        {
+            await _context.UserMeals.AddAsync(entity);
+        }
+
+        public async Task SaveChangesAsync()
+        {
+            await _context.SaveChangesAsync();
+        }
+
+        public async Task<UserMeal?> GetByIdAsync(int id)
+        {
+            return await _context.UserMeals.FirstOrDefaultAsync(um => um.UserMealId == id);
+        }
+
+        public async Task<IEnumerable<UserMeal>> GetByUserIdAsync(int userId)
+        {
+            return await _context.UserMeals.Where(um => um.UserId == userId).ToListAsync();
+        }
+    }
+}

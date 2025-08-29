@@ -1,0 +1,12 @@
+namespace HealthyBreakfastApp.Application.DTOs
+{
+    public class MealDto
+    {
+        public int MealId { get; set; }
+        public string MealName { get; set; } = null!;
+        public string Description { get; set; } = null!;
+        public decimal BasePrice { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public DateTime UpdatedAt { get; set; }
+    }
+}

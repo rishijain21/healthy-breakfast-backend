@@ -1,0 +1,11 @@
+/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Domain/bin/Debug/net8.0/HealthyBreakfastApp.Domain.deps.json
+/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Domain/bin/Debug/net8.0/HealthyBreakfastApp.Domain.dll
+/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Domain/bin/Debug/net8.0/HealthyBreakfastApp.Domain.pdb
+/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Domain/obj/Debug/net8.0/HealthyBreakfastApp.Domain.GeneratedMSBuildEditorConfig.editorconfig
+/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Domain/obj/Debug/net8.0/HealthyBreakfastApp.Domain.AssemblyInfoInputs.cache
+/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Domain/obj/Debug/net8.0/HealthyBreakfastApp.Domain.AssemblyInfo.cs
+/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Domain/obj/Debug/net8.0/HealthyBreakfastApp.Domain.csproj.CoreCompileInputs.cache
+/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Domain/obj/Debug/net8.0/HealthyBreakfastApp.Domain.dll
+/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Domain/obj/Debug/net8.0/refint/HealthyBreakfastApp.Domain.dll
+/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Domain/obj/Debug/net8.0/HealthyBreakfastApp.Domain.pdb
+/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Domain/obj/Debug/net8.0/ref/HealthyBreakfastApp.Domain.dll
