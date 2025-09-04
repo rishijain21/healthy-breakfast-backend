@@ -1,8 +1,8 @@
-using System.Threading.Tasks;
 using HealthyBreakfastApp.Application.Interfaces;
 using HealthyBreakfastApp.Domain.Entities;
 using HealthyBreakfastApp.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using System.Threading.Tasks;
 
 namespace HealthyBreakfastApp.Infrastructure.Repositories
 {
@@ -13,6 +13,19 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
         public IngredientRepository(AppDbContext context)
         {
             _context = context;
+        }
+
+        // REMOVE .Include() calls for now
+        public async Task<IEnumerable<Ingredient>> GetAllAsync()
+        {
+            return await _context.Ingredients.ToListAsync();
+        }
+
+        public async Task<IEnumerable<Ingredient>> GetByCategoryIdAsync(int categoryId)
+        {
+            return await _context.Ingredients
+                .Where(i => i.CategoryId == categoryId)
+                .ToListAsync();
         }
 
         public async Task AddIngredientAsync(Ingredient ingredient)
@@ -27,14 +40,13 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
 
         public async Task<Ingredient?> GetByIdAsync(int id)
         {
-            return await _context.Ingredients.FirstOrDefaultAsync(i => i.IngredientId == id);
+            return await _context.Ingredients
+                .FirstOrDefaultAsync(i => i.IngredientId == id);
         }
 
-        // ADD THIS NEW METHOD
         public async Task<Ingredient?> GetByIdWithCategoryAsync(int id)
         {
             return await _context.Ingredients
-                .Include(i => i.IngredientCategory)
                 .FirstOrDefaultAsync(i => i.IngredientId == id);
         }
     }

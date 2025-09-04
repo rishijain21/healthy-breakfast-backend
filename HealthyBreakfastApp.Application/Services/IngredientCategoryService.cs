@@ -15,6 +15,19 @@ namespace HealthyBreakfastApp.Application.Services
             _repository = repository;
         }
 
+        // ADD THIS NEW METHOD ⬇️
+        public async Task<IEnumerable<IngredientCategoryDto>> GetAllIngredientCategoriesAsync()
+        {
+            var entities = await _repository.GetAllAsync();
+            return entities.Select(entity => new IngredientCategoryDto
+            {
+                CategoryId = entity.CategoryId,
+                CategoryName = entity.CategoryName,
+                CreatedAt = entity.CreatedAt,
+                UpdatedAt = entity.UpdatedAt
+            });
+        }
+
         public async Task<int> CreateIngredientCategoryAsync(CreateIngredientCategoryDto dto)
         {
             var entity = new IngredientCategory

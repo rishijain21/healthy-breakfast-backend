@@ -17,3 +17,4 @@
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Infrastructure/obj/Debug/net8.0/HealthyBreakfastApp.Infrastructure.pdb
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Infrastructure/obj/Debug/net8.0/HealthyBreakfastApp.Infrastructure.genruntimeconfig.cache
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Infrastructure/obj/Debug/net8.0/ref/HealthyBreakfastApp.Infrastructure.dll
+/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Infrastructure/obj/Debug/net8.0/HealthyBreakfastApp.Infrastructure.sourcelink.json

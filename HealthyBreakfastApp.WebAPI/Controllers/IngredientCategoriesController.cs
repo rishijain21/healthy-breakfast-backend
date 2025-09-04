@@ -16,6 +16,14 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             _service = service;
         }
 
+        // ADD THIS NEW METHOD ⬇️ (This fixes the 405 error!)
+        [HttpGet]
+        public async Task<IActionResult> GetAll()
+        {
+            var categories = await _service.GetAllIngredientCategoriesAsync();
+            return Ok(categories);
+        }
+
         [HttpPost]
         public async Task<IActionResult> Create([FromBody] CreateIngredientCategoryDto dto)
         {

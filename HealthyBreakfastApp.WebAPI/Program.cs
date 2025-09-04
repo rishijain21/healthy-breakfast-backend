@@ -3,11 +3,11 @@ using HealthyBreakfastApp.Application.Services;
 using HealthyBreakfastApp.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using HealthyBreakfastApp.Infrastructure.Repositories;
-
+using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add DbContext
+// Add DbContext (ONLY ONCE)
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
@@ -30,18 +30,22 @@ builder.Services.AddScoped<IUserMealIngredientService, UserMealIngredientService
 builder.Services.AddScoped<IUserMealIngredientRepository, UserMealIngredientRepository>();
 builder.Services.AddScoped<IOrderService, OrderService>();
 builder.Services.AddScoped<IOrderRepository, OrderRepository>();
-
 builder.Services.AddScoped<ISubscriptionRepository, SubscriptionRepository>();
 builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
-
 builder.Services.AddScoped<IWalletTransactionRepository, WalletTransactionRepository>();
 builder.Services.AddScoped<IWalletTransactionService, WalletTransactionService>();
 
+// ✅ Configure JSON serialization to use camelCase (THIS FIXES THE ISSUE!)
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+    });
 
 // ✅ Add CORS Policy
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowFrontend", policy =>
+    options.AddPolicy("AllowAngular", policy =>
     {
         policy.WithOrigins("http://localhost:4200") // Angular app
               .AllowAnyHeader()
@@ -49,27 +53,20 @@ builder.Services.AddCors(options =>
     });
 });
 
-
-
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
-
-
-
-// Add controllers and swagger
-builder.Services.AddControllers();
+// Add swagger
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
 
+// Configure the HTTP request pipeline
 app.UseSwagger();
 app.UseSwaggerUI();
 
-app.UseCors("AllowFrontend");
+// ✅ Use CORS
+app.UseCors("AllowAngular");
 
 app.UseAuthorization();
-
 app.MapControllers();
 
 app.Run();

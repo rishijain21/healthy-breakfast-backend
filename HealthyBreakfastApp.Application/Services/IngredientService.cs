@@ -15,6 +15,50 @@ namespace HealthyBreakfastApp.Application.Services
             _ingredientRepository = ingredientRepository;
         }
 
+        // FIXED: Include all nutritional fields in mapping
+        public async Task<IEnumerable<IngredientDto>> GetAllIngredientsAsync()
+        {
+            var ingredients = await _ingredientRepository.GetAllAsync();
+            return ingredients.Select(ingredient => new IngredientDto
+            {
+                IngredientId = ingredient.IngredientId,
+                CategoryId = ingredient.CategoryId,
+                IngredientName = ingredient.IngredientName,
+                Price = ingredient.Price,
+                Available = ingredient.Available,
+                CreatedAt = ingredient.CreatedAt,
+                UpdatedAt = ingredient.UpdatedAt,
+                // ✅ ADD THESE NUTRITIONAL FIELDS:
+                Calories = ingredient.Calories,
+                Protein = ingredient.Protein,
+                Fiber = ingredient.Fiber,
+                Description = ingredient.Description,
+                IconEmoji = ingredient.IconEmoji
+            });
+        }
+
+        // FIXED: Include all nutritional fields in mapping
+        public async Task<IEnumerable<IngredientDto>> GetIngredientsByCategoryIdAsync(int categoryId)
+        {
+            var ingredients = await _ingredientRepository.GetByCategoryIdAsync(categoryId);
+            return ingredients.Select(ingredient => new IngredientDto
+            {
+                IngredientId = ingredient.IngredientId,
+                CategoryId = ingredient.CategoryId,
+                IngredientName = ingredient.IngredientName,
+                Price = ingredient.Price,
+                Available = ingredient.Available,
+                CreatedAt = ingredient.CreatedAt,
+                UpdatedAt = ingredient.UpdatedAt,
+                // ✅ ADD THESE NUTRITIONAL FIELDS:
+                Calories = ingredient.Calories,
+                Protein = ingredient.Protein,
+                Fiber = ingredient.Fiber,
+                Description = ingredient.Description,
+                IconEmoji = ingredient.IconEmoji
+            });
+        }
+
         public async Task<int> CreateIngredientAsync(CreateIngredientDto dto)
         {
             var ingredient = new Ingredient
@@ -33,6 +77,7 @@ namespace HealthyBreakfastApp.Application.Services
             return ingredient.IngredientId;
         }
 
+        // FIXED: Include all nutritional fields in mapping
         public async Task<IngredientDto?> GetIngredientByIdAsync(int id)
         {
             var ingredient = await _ingredientRepository.GetByIdAsync(id);
@@ -46,7 +91,13 @@ namespace HealthyBreakfastApp.Application.Services
                 Price = ingredient.Price,
                 Available = ingredient.Available,
                 CreatedAt = ingredient.CreatedAt,
-                UpdatedAt = ingredient.UpdatedAt
+                UpdatedAt = ingredient.UpdatedAt,
+                // ✅ ADD THESE NUTRITIONAL FIELDS:
+                Calories = ingredient.Calories,
+                Protein = ingredient.Protein,
+                Fiber = ingredient.Fiber,
+                Description = ingredient.Description,
+                IconEmoji = ingredient.IconEmoji
             };
         }
     }

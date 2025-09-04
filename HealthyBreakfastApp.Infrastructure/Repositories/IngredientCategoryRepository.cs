@@ -15,6 +15,12 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
             _context = context;
         }
 
+        // ADD THIS NEW METHOD ⬇️
+        public async Task<IEnumerable<IngredientCategory>> GetAllAsync()
+        {
+            return await _context.IngredientCategories.ToListAsync();
+        }
+
         public async Task AddAsync(IngredientCategory entity)
         {
             await _context.IngredientCategories.AddAsync(entity);
