@@ -1,6 +1,7 @@
 using HealthyBreakfastApp.Application.DTOs;
 using HealthyBreakfastApp.Application.Interfaces;
 using Microsoft.AspNetCore.Mvc;
+using System;
 
 namespace HealthyBreakfastApp.WebAPI.Controllers
 {
@@ -119,6 +120,68 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             var hasSufficientBalance = await _walletTransactionService.HasSufficientBalanceAsync(userId, amount);
             return Ok(new { userId, amount, hasSufficientBalance });
         }
+
+        // ✅ NEW: User-Centric Wallet Endpoints using Supabase Auth ID
+        [HttpPost("topup-by-auth")]
+        public async Task<ActionResult<UserDto>> TopUpWalletByAuth([FromBody] WalletTopUpRequest request)
+        {
+            try
+            {
+                // Get current user ID from Supabase auth ID
+                var currentUserService = HttpContext.RequestServices.GetRequiredService<ICurrentUserService>();
+                var userId = await currentUserService.GetCurrentUserIdAsync(request.AuthId);
+                
+                if (!userId.HasValue)
+                    return NotFound("User not found");
+
+                var updatedUser = await _walletTransactionService.TopUpWalletAsync(userId.Value, request.Amount, request.Description);
+                return Ok(updatedUser);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        [HttpGet("balance-by-auth")]
+        public async Task<ActionResult<object>> GetWalletBalanceByAuth([FromQuery] Guid authId)
+        {
+            try
+            {
+                var currentUserService = HttpContext.RequestServices.GetRequiredService<ICurrentUserService>();
+                var userId = await currentUserService.GetCurrentUserIdAsync(authId);
+                
+                if (!userId.HasValue)
+                    return NotFound("User not found");
+
+                var balance = await _walletTransactionService.GetWalletBalanceAsync(userId.Value);
+                return Ok(new { balance, userId = userId.Value });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        [HttpGet("transactions-by-auth")]
+        public async Task<ActionResult<IEnumerable<WalletTransactionDto>>> GetUserTransactionsByAuth([FromQuery] Guid authId)
+        {
+            try
+            {
+                var currentUserService = HttpContext.RequestServices.GetRequiredService<ICurrentUserService>();
+                var userId = await currentUserService.GetCurrentUserIdAsync(authId);
+                
+                if (!userId.HasValue)
+                    return NotFound("User not found");
+
+                var transactions = await _walletTransactionService.GetUserTransactionsAsync(userId.Value);
+                return Ok(transactions);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
     }
 
     // Helper DTO for debit endpoint
@@ -126,5 +189,13 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
     {
         public decimal Amount { get; set; }
         public string Description { get; set; } = null!;
+    }
+
+    // ✅ NEW: DTO for auth-based wallet top-up
+    public class WalletTopUpRequest
+    {
+        public Guid AuthId { get; set; }
+        public decimal Amount { get; set; }
+        public string Description { get; set; } = "Wallet top-up";
     }
 }

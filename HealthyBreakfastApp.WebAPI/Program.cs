@@ -35,6 +35,8 @@ builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
 builder.Services.AddScoped<IWalletTransactionRepository, WalletTransactionRepository>();
 builder.Services.AddScoped<IWalletTransactionService, WalletTransactionService>();
 
+builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
+
 // ✅ Configure JSON serialization to use camelCase (THIS FIXES THE ISSUE!)
 builder.Services.AddControllers()
     .AddJsonOptions(options =>

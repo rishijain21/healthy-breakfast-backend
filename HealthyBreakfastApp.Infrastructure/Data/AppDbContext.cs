@@ -22,11 +22,30 @@ namespace HealthyBreakfastApp.Infrastructure.Data
         public DbSet<OrderItem> OrderItems { get; set; }
         public DbSet<Subscription> Subscriptions { get; set; }
         public DbSet<WalletTransaction> WalletTransactions { get; set; }
+        public DbSet<UserAuthMapping> UserAuthMappings { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
-
+modelBuilder.Entity<UserAuthMapping>(entity =>
+            {
+                entity.HasKey(e => e.AuthId);
+                entity.Property(e => e.AuthId).IsRequired();
+                entity.Property(e => e.UserId).IsRequired();
+                entity.Property(e => e.CreatedAt).IsRequired();
+                
+                entity.HasOne(e => e.User)
+                      .WithMany()
+                      .HasForeignKey(e => e.UserId)
+                      .OnDelete(DeleteBehavior.Cascade);
+                
+                // Map to the correct table name (lowercase as per your DB)
+                entity.ToTable("user_auth_mapping");
+                entity.Property(e => e.AuthId).HasColumnName("auth_id");
+                entity.Property(e => e.UserId).HasColumnName("user_id");
+                entity.Property(e => e.CreatedAt).HasColumnName("created_at");
+            });
+            
             // Map OrderStatus property to "Status" column in Orders table
             modelBuilder.Entity<Order>(entity =>
             {

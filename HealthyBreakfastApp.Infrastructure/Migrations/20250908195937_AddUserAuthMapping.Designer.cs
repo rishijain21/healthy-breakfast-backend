@@ -3,6 +3,7 @@ using System;
 using HealthyBreakfastApp.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace HealthyBreakfastApp.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20250908195937_AddUserAuthMapping")]
+    partial class AddUserAuthMapping
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -614,28 +617,6 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                         });
                 });
 
-            modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.UserAuthMapping", b =>
-                {
-                    b.Property<Guid>("AuthId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid")
-                        .HasColumnName("auth_id");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at");
-
-                    b.Property<int>("UserId")
-                        .HasColumnType("integer")
-                        .HasColumnName("user_id");
-
-                    b.HasKey("AuthId");
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("user_auth_mapping", (string)null);
-                });
-
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.UserMeal", b =>
                 {
                     b.Property<int>("UserMealId")
@@ -843,17 +824,6 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                     b.Navigation("User");
 
                     b.Navigation("UserMeal");
-                });
-
-            modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.UserAuthMapping", b =>
-                {
-                    b.HasOne("HealthyBreakfastApp.Domain.Entities.User", "User")
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.UserMeal", b =>

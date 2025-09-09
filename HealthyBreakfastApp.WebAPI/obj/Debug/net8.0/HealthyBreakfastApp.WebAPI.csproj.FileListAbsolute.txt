@@ -126,6 +126,7 @@
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/obj/Debug/net8.0/HealthyBreakfastApp.WebAPI.csproj.CoreCompileInputs.cache
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/obj/Debug/net8.0/HealthyBreakfastApp.WebAPI.MvcApplicationPartsAssemblyInfo.cs
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/obj/Debug/net8.0/HealthyBreakfastApp.WebAPI.MvcApplicationPartsAssemblyInfo.cache
+/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/obj/Debug/net8.0/HealthyBreakfastApp.WebAPI.sourcelink.json
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/obj/Debug/net8.0/staticwebassets.build.json
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/obj/Debug/net8.0/staticwebassets.development.json
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/obj/Debug/net8.0/staticwebassets/msbuild.HealthyBreakfastApp.WebAPI.Microsoft.AspNetCore.StaticWebAssets.props
@@ -140,4 +141,3 @@
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/obj/Debug/net8.0/HealthyBreakfastApp.WebAPI.pdb
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/obj/Debug/net8.0/HealthyBreakfastApp.WebAPI.genruntimeconfig.cache
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/obj/Debug/net8.0/ref/HealthyBreakfastApp.WebAPI.dll
-/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/obj/Debug/net8.0/HealthyBreakfastApp.WebAPI.sourcelink.json

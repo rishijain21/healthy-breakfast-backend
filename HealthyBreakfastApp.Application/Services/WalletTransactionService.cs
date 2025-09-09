@@ -1,6 +1,10 @@
 using HealthyBreakfastApp.Application.DTOs;
 using HealthyBreakfastApp.Application.Interfaces;
 using HealthyBreakfastApp.Domain.Entities;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
 
 namespace HealthyBreakfastApp.Application.Services
 {
@@ -133,6 +137,77 @@ namespace HealthyBreakfastApp.Application.Services
         public async Task<bool> HasSufficientBalanceAsync(int userId, decimal amount)
         {
             return await _walletTransactionRepository.HasSufficientBalanceAsync(userId, amount);
+        }
+
+        // ✅ NEW: Added methods for user authentication integration
+        public async Task<UserDto> TopUpWalletAsync(int userId, decimal amount, string description = "Wallet top-up")
+        {
+            // Get user
+            var user = await _userRepository.GetByIdAsync(userId);
+            if (user == null) throw new ArgumentException("User not found");
+
+            // Create transaction record
+            var createDto = new CreateWalletTransactionDto
+            {
+                UserId = userId,
+                Amount = amount,
+                Type = "Credit",
+                Description = description
+            };
+
+            await CreateTransactionAsync(createDto);
+            
+            // Return updated user with new balance
+            var updatedUser = await _userRepository.GetByIdAsync(userId);
+            return new UserDto
+            {
+                UserId = updatedUser!.UserId,
+                Name = updatedUser.Name,
+                Email = updatedUser.Email,
+                Phone = updatedUser.Phone,
+                WalletBalance = await GetUserBalanceAsync(userId), // Get calculated balance
+                CreatedAt = updatedUser.CreatedAt,
+                UpdatedAt = updatedUser.UpdatedAt
+            };
+        }
+
+        public async Task<UserDto> DeductWalletAsync(int userId, decimal amount, string description = "Order payment")
+        {
+            var user = await _userRepository.GetByIdAsync(userId);
+            if (user == null) throw new ArgumentException("User not found");
+            
+            // Check sufficient balance
+            if (!await HasSufficientBalanceAsync(userId, amount))
+                throw new InvalidOperationException("Insufficient wallet balance");
+
+            // Create debit transaction
+            var createDto = new CreateWalletTransactionDto
+            {
+                UserId = userId,
+                Amount = amount,
+                Type = "Debit",
+                Description = description
+            };
+
+            await CreateTransactionAsync(createDto);
+            
+            // Return updated user
+            var updatedUser = await _userRepository.GetByIdAsync(userId);
+            return new UserDto
+            {
+                UserId = updatedUser!.UserId,
+                Name = updatedUser.Name,
+                Email = updatedUser.Email,
+                Phone = updatedUser.Phone,
+                WalletBalance = await GetUserBalanceAsync(userId),
+                CreatedAt = updatedUser.CreatedAt,
+                UpdatedAt = updatedUser.UpdatedAt
+            };
+        }
+
+        public async Task<decimal> GetWalletBalanceAsync(int userId)
+        {
+            return await GetUserBalanceAsync(userId); // Use existing method
         }
 
         private static WalletTransactionDto MapToDto(WalletTransaction transaction)

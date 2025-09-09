@@ -1,3 +1,4 @@
+``/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Application/bin/Debug/net8.0/HealthyBreakfastApp.Application.deps.json
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Application/bin/Debug/net8.0/HealthyBreakfastApp.Application.deps.json
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Application/bin/Debug/net8.0/HealthyBreakfastApp.Application.dll
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Application/bin/Debug/net8.0/HealthyBreakfastApp.Application.pdb
@@ -8,9 +9,9 @@
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Application/obj/Debug/net8.0/HealthyBreakfastApp.Application.AssemblyInfoInputs.cache
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Application/obj/Debug/net8.0/HealthyBreakfastApp.Application.AssemblyInfo.cs
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Application/obj/Debug/net8.0/HealthyBreakfastApp.Application.csproj.CoreCompileInputs.cache
+/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Application/obj/Debug/net8.0/HealthyBreakfastApp.Application.sourcelink.json
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Application/obj/Debug/net8.0/HealthyB.C17966DB.Up2Date
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Application/obj/Debug/net8.0/HealthyBreakfastApp.Application.dll
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Application/obj/Debug/net8.0/refint/HealthyBreakfastApp.Application.dll
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Application/obj/Debug/net8.0/HealthyBreakfastApp.Application.pdb
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Application/obj/Debug/net8.0/ref/HealthyBreakfastApp.Application.dll
-/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.Application/obj/Debug/net8.0/HealthyBreakfastApp.Application.sourcelink.json

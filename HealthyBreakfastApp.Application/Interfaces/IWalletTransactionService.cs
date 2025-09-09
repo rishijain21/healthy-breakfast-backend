@@ -9,6 +9,9 @@ namespace HealthyBreakfastApp.Application.Interfaces
         Task<IEnumerable<WalletTransactionDto>> GetUserTransactionsAsync(int userId);
         Task<IEnumerable<WalletTransactionDto>> GetUserTransactionsByTypeAsync(int userId, string type);
         Task<decimal> GetUserBalanceAsync(int userId);
+        Task<UserDto> TopUpWalletAsync(int userId, decimal amount, string description = "Wallet top-up");
+Task<decimal> GetWalletBalanceAsync(int userId);
+
         Task<UserWalletSummaryDto?> GetUserWalletSummaryAsync(int userId);
         Task<WalletTransactionDto> CreateTransactionAsync(CreateWalletTransactionDto createTransactionDto);
         Task<WalletTransactionDto> TopUpWalletAsync(int userId, WalletTopUpDto topUpDto);

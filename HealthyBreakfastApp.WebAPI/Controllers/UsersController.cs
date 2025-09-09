@@ -15,6 +15,13 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         {
             _userService = userService;
         }
+[HttpGet]
+public async Task<ActionResult<List<UserDto>>> GetAllUsers()
+{
+    // You'll need to add this method to your IUserService and UserService
+    var users = await _userService.GetAllUsersAsync();
+    return Ok(users);
+}
 
 
         [HttpPost]
