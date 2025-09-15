@@ -15,5 +15,8 @@ namespace HealthyBreakfastApp.Domain.Entities
         public decimal WalletBalance { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
+
+        // ADD navigation property
+        public virtual UserAuthMapping? AuthMapping { get; set; }
     }
 }

@@ -3,6 +3,7 @@ using HealthyBreakfastApp.Application.Services;
 using HealthyBreakfastApp.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using HealthyBreakfastApp.Infrastructure.Repositories;
+using HealthyBreakfastApp.WebAPI.Middleware; // ADD this line
 using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -67,6 +68,9 @@ app.UseSwaggerUI();
 
 // ✅ Use CORS
 app.UseCors("AllowAngular");
+
+// ✅ ADD AUTH MIDDLEWARE (before authorization)
+app.UseMiddleware<AuthMiddleware>();
 
 app.UseAuthorization();
 app.MapControllers();

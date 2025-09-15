@@ -27,25 +27,35 @@ namespace HealthyBreakfastApp.Infrastructure.Data
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
+// In your OnModelCreating method, REPLACE the UserAuthMapping configuration with this:
+
 modelBuilder.Entity<UserAuthMapping>(entity =>
-            {
-                entity.HasKey(e => e.AuthId);
-                entity.Property(e => e.AuthId).IsRequired();
-                entity.Property(e => e.UserId).IsRequired();
-                entity.Property(e => e.CreatedAt).IsRequired();
-                
-                entity.HasOne(e => e.User)
-                      .WithMany()
-                      .HasForeignKey(e => e.UserId)
-                      .OnDelete(DeleteBehavior.Cascade);
-                
-                // Map to the correct table name (lowercase as per your DB)
-                entity.ToTable("user_auth_mapping");
-                entity.Property(e => e.AuthId).HasColumnName("auth_id");
-                entity.Property(e => e.UserId).HasColumnName("user_id");
-                entity.Property(e => e.CreatedAt).HasColumnName("created_at");
-            });
-            
+{
+    // NEW: Use integer PK instead of Guid PK
+    entity.HasKey(e => e.MappingId);
+    
+    entity.Property(e => e.MappingId).IsRequired();
+    entity.Property(e => e.AuthId).IsRequired();
+    entity.Property(e => e.UserId).IsRequired();
+    entity.Property(e => e.CreatedAt).IsRequired();
+    
+    // Create unique index on AuthId for fast lookups
+    entity.HasIndex(e => e.AuthId).IsUnique();
+    
+    entity.HasOne(e => e.User)
+          .WithOne(u => u.AuthMapping)  // One-to-one relationship
+          .HasForeignKey<UserAuthMapping>(e => e.UserId)
+          .OnDelete(DeleteBehavior.Cascade);
+    
+    // Map to the correct table name
+    entity.ToTable("user_auth_mapping");
+    entity.Property(e => e.MappingId).HasColumnName("mapping_id");
+    entity.Property(e => e.AuthId).HasColumnName("auth_id");
+    entity.Property(e => e.UserId).HasColumnName("user_id");
+    entity.Property(e => e.CreatedAt).HasColumnName("created_at");
+});
+
+        
             // Map OrderStatus property to "Status" column in Orders table
             modelBuilder.Entity<Order>(entity =>
             {

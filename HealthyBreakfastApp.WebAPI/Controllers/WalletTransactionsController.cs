@@ -121,41 +121,28 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             return Ok(new { userId, amount, hasSufficientBalance });
         }
 
-        // ✅ NEW: User-Centric Wallet Endpoints using Supabase Auth ID
-        [HttpPost("topup-by-auth")]
-        public async Task<ActionResult<UserDto>> TopUpWalletByAuth([FromBody] WalletTopUpRequest request)
-        {
-            try
-            {
-                // Get current user ID from Supabase auth ID
-                var currentUserService = HttpContext.RequestServices.GetRequiredService<ICurrentUserService>();
-                var userId = await currentUserService.GetCurrentUserIdAsync(request.AuthId);
-                
-                if (!userId.HasValue)
-                    return NotFound("User not found");
-
-                var updatedUser = await _walletTransactionService.TopUpWalletAsync(userId.Value, request.Amount, request.Description);
-                return Ok(updatedUser);
-            }
-            catch (Exception ex)
-            {
-                return BadRequest(new { message = ex.Message });
-            }
-        }
-
+        // ✅ UPDATED: Simple Auth ID Endpoints (No JWT Required)
         [HttpGet("balance-by-auth")]
-        public async Task<ActionResult<object>> GetWalletBalanceByAuth([FromQuery] Guid authId)
+        public async Task<ActionResult<object>> GetWalletBalanceByAuth([FromQuery] string authId)
         {
             try
             {
-                var currentUserService = HttpContext.RequestServices.GetRequiredService<ICurrentUserService>();
-                var userId = await currentUserService.GetCurrentUserIdAsync(authId);
-                
-                if (!userId.HasValue)
-                    return NotFound("User not found");
+                if (string.IsNullOrEmpty(authId))
+                {
+                    return BadRequest("authId parameter is required");
+                }
 
-                var balance = await _walletTransactionService.GetWalletBalanceAsync(userId.Value);
-                return Ok(new { balance, userId = userId.Value });
+                if (!Guid.TryParse(authId, out var authGuid))
+                {
+                    return BadRequest("Invalid authId format. Must be a valid GUID.");
+                }
+
+                // Find or create user automatically
+                var userService = HttpContext.RequestServices.GetRequiredService<IUserService>();
+                var userDto = await userService.FindOrCreateUserByAuthIdAsync(authGuid, "Test User", "test@example.com");
+
+                var balance = await _walletTransactionService.GetWalletBalanceAsync(userDto.UserId);
+                return Ok(new { balance, userId = userDto.UserId, authId = authGuid });
             }
             catch (Exception ex)
             {
@@ -164,18 +151,58 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         }
 
         [HttpGet("transactions-by-auth")]
-        public async Task<ActionResult<IEnumerable<WalletTransactionDto>>> GetUserTransactionsByAuth([FromQuery] Guid authId)
+        public async Task<ActionResult<IEnumerable<WalletTransactionDto>>> GetUserTransactionsByAuth([FromQuery] string authId)
         {
             try
             {
-                var currentUserService = HttpContext.RequestServices.GetRequiredService<ICurrentUserService>();
-                var userId = await currentUserService.GetCurrentUserIdAsync(authId);
-                
-                if (!userId.HasValue)
-                    return NotFound("User not found");
+                if (string.IsNullOrEmpty(authId))
+                {
+                    return BadRequest("authId parameter is required");
+                }
 
-                var transactions = await _walletTransactionService.GetUserTransactionsAsync(userId.Value);
+                if (!Guid.TryParse(authId, out var authGuid))
+                {
+                    return BadRequest("Invalid authId format. Must be a valid GUID.");
+                }
+
+                // Find or create user automatically
+                var userService = HttpContext.RequestServices.GetRequiredService<IUserService>();
+                var userDto = await userService.FindOrCreateUserByAuthIdAsync(authGuid, "Test User", "test@example.com");
+
+                var transactions = await _walletTransactionService.GetUserTransactionsAsync(userDto.UserId);
                 return Ok(transactions);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        [HttpPost("topup-by-auth")]
+        public async Task<ActionResult<WalletTransactionDto>> TopUpWalletByAuth([FromQuery] string authId, [FromBody] WalletTopUpDto topUpDto)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(authId))
+                {
+                    return BadRequest("authId parameter is required");
+                }
+
+                if (!Guid.TryParse(authId, out var authGuid))
+                {
+                    return BadRequest("Invalid authId format. Must be a valid GUID.");
+                }
+
+                // Find or create user automatically
+                var userService = HttpContext.RequestServices.GetRequiredService<IUserService>();
+                var userDto = await userService.FindOrCreateUserByAuthIdAsync(authGuid, "Test User", "test@example.com");
+
+                var transaction = await _walletTransactionService.TopUpWalletAsync(userDto.UserId, topUpDto);
+                return CreatedAtAction(nameof(GetTransaction), new { id = transaction.TransactionId }, transaction);
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(ex.Message);
             }
             catch (Exception ex)
             {
@@ -191,7 +218,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         public string Description { get; set; } = null!;
     }
 
-    // ✅ NEW: DTO for auth-based wallet top-up
+    // DTO for auth-based wallet top-up (kept for backwards compatibility)
     public class WalletTopUpRequest
     {
         public Guid AuthId { get; set; }

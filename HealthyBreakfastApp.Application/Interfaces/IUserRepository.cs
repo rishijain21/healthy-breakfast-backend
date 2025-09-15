@@ -13,8 +13,11 @@ namespace HealthyBreakfastApp.Application.Interfaces
         Task SaveChangesAsync();
         Task<User?> GetByEmailAsync(string email);
         Task<User?> GetByAuthIdAsync(Guid authId);
-        
-        // ✅ ADD THIS METHOD
         Task<List<User>> GetAllAsync();
+        
+        // ✅ ADD THESE NEW METHODS
+        Task<User?> GetUserByAuthIdAsync(Guid authId);
+        Task<User> CreateUserWithAuthMappingAsync(User user, Guid authId);
+        Task<UserAuthMapping?> GetAuthMappingAsync(Guid authId);
     }
 }

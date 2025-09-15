@@ -17,6 +17,7 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
             _context = context;
         }
 
+        // ✅ YOUR EXISTING METHODS (unchanged)
         public async Task<User?> GetByIdAsync(int id)
         {
             return await _context.Users.FindAsync(id);
@@ -47,10 +48,56 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
             return userAuthMapping?.User;
         }
 
-        // ✅ ADD THIS NEW METHOD
         public async Task<List<User>> GetAllAsync()
         {
             return await _context.Users.ToListAsync();
+        }
+
+        // ✅ ADD THESE NEW METHODS
+        public async Task<User?> GetUserByAuthIdAsync(Guid authId)
+        {
+            return await _context.UserAuthMappings
+                .Where(mapping => mapping.AuthId == authId)
+                .Include(mapping => mapping.User)
+                .Select(mapping => mapping.User)
+                .FirstOrDefaultAsync();
+        }
+
+        public async Task<UserAuthMapping?> GetAuthMappingAsync(Guid authId)
+        {
+            return await _context.UserAuthMappings
+                .Include(m => m.User)
+                .FirstOrDefaultAsync(m => m.AuthId == authId);
+        }
+
+        public async Task<User> CreateUserWithAuthMappingAsync(User user, Guid authId)
+        {
+            using var transaction = await _context.Database.BeginTransactionAsync();
+            try
+            {
+                // Add user
+                await _context.Users.AddAsync(user);
+                await _context.SaveChangesAsync();
+
+                // Create auth mapping
+                var authMapping = new UserAuthMapping
+                {
+                    AuthId = authId,
+                    UserId = user.UserId,
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                await _context.UserAuthMappings.AddAsync(authMapping);
+                await _context.SaveChangesAsync();
+
+                await transaction.CommitAsync();
+                return user;
+            }
+            catch
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
         }
     }
 }

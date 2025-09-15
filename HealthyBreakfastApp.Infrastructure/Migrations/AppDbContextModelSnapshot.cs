@@ -616,8 +616,14 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
 
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.UserAuthMapping", b =>
                 {
-                    b.Property<Guid>("AuthId")
+                    b.Property<int>("MappingId")
                         .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("mapping_id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("MappingId"));
+
+                    b.Property<Guid>("AuthId")
                         .HasColumnType("uuid")
                         .HasColumnName("auth_id");
 
@@ -629,9 +635,13 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("user_id");
 
-                    b.HasKey("AuthId");
+                    b.HasKey("MappingId");
 
-                    b.HasIndex("UserId");
+                    b.HasIndex("AuthId")
+                        .IsUnique();
+
+                    b.HasIndex("UserId")
+                        .IsUnique();
 
                     b.ToTable("user_auth_mapping", (string)null);
                 });
@@ -848,8 +858,8 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.UserAuthMapping", b =>
                 {
                     b.HasOne("HealthyBreakfastApp.Domain.Entities.User", "User")
-                        .WithMany()
-                        .HasForeignKey("UserId")
+                        .WithOne("AuthMapping")
+                        .HasForeignKey("HealthyBreakfastApp.Domain.Entities.UserAuthMapping", "UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
@@ -903,6 +913,11 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                         .IsRequired();
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.User", b =>
+                {
+                    b.Navigation("AuthMapping");
                 });
 #pragma warning restore 612, 618
         }

@@ -6,7 +6,12 @@ namespace HealthyBreakfastApp.Domain.Entities
 {
     public class UserAuthMapping
     {
+        // NEW: Add integer primary key for performance
         [Key]
+        public int MappingId { get; set; }
+
+        // CHANGE: Make AuthId indexed but not PK
+        [Required]
         public Guid AuthId { get; set; }
 
         public int UserId { get; set; }
