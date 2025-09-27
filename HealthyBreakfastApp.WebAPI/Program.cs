@@ -3,16 +3,16 @@ using HealthyBreakfastApp.Application.Services;
 using HealthyBreakfastApp.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using HealthyBreakfastApp.Infrastructure.Repositories;
-using HealthyBreakfastApp.WebAPI.Middleware; // ADD this line
 using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add DbContext (ONLY ONCE)
+// Add DbContext
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// Register Application Services
+// Register Services
+builder.Services.AddScoped<IJwtService, JwtService>();
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IMealService, MealService>();
@@ -35,44 +35,35 @@ builder.Services.AddScoped<ISubscriptionRepository, SubscriptionRepository>();
 builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
 builder.Services.AddScoped<IWalletTransactionRepository, WalletTransactionRepository>();
 builder.Services.AddScoped<IWalletTransactionService, WalletTransactionService>();
-
 builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 
-// ✅ Configure JSON serialization to use camelCase (THIS FIXES THE ISSUE!)
+// Configure JSON serialization
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
     });
 
-// ✅ Add CORS Policy
+// Add CORS Policy
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAngular", policy =>
     {
-        policy.WithOrigins("http://localhost:4200") // Angular app
+        policy.WithOrigins("http://localhost:4200")
               .AllowAnyHeader()
               .AllowAnyMethod();
     });
 });
 
-// Add swagger
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline
 app.UseSwagger();
 app.UseSwaggerUI();
-
-// ✅ Use CORS
 app.UseCors("AllowAngular");
 
-// ✅ ADD AUTH MIDDLEWARE (before authorization)
-app.UseMiddleware<AuthMiddleware>();
-
-app.UseAuthorization();
+// ✅ NO AUTHENTICATION MIDDLEWARE AT ALL FOR TESTING
 app.MapControllers();
-
 app.Run();

@@ -7,6 +7,7 @@
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/HealthyBreakfastApp.WebAPI.pdb
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/FluentValidation.dll
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/Humanizer.dll
+/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/Microsoft.AspNetCore.Authentication.JwtBearer.dll
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/Microsoft.AspNetCore.OpenApi.dll
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/Microsoft.Bcl.AsyncInterfaces.dll
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/Microsoft.Build.Locator.dll
@@ -30,6 +31,12 @@
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/Microsoft.Extensions.Logging.Abstractions.dll
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/Microsoft.Extensions.Options.dll
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/Microsoft.Extensions.Primitives.dll
+/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/Microsoft.IdentityModel.Abstractions.dll
+/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/Microsoft.IdentityModel.JsonWebTokens.dll
+/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/Microsoft.IdentityModel.Logging.dll
+/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/Microsoft.IdentityModel.Protocols.dll
+/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/Microsoft.IdentityModel.Protocols.OpenIdConnect.dll
+/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/Microsoft.IdentityModel.Tokens.dll
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/Microsoft.OpenApi.dll
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/Mono.TextTemplating.dll
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/Npgsql.dll
@@ -44,6 +51,7 @@
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/System.Composition.Runtime.dll
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/System.Composition.TypedParts.dll
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/System.Diagnostics.DiagnosticSource.dll
+/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/System.IdentityModel.Tokens.Jwt.dll
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/System.IO.Pipelines.dll
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/System.Text.Encodings.Web.dll
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/System.Text.Json.dll
@@ -141,8 +149,3 @@
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/obj/Debug/net8.0/HealthyBreakfastApp.WebAPI.pdb
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/obj/Debug/net8.0/HealthyBreakfastApp.WebAPI.genruntimeconfig.cache
 /Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/obj/Debug/net8.0/ref/HealthyBreakfastApp.WebAPI.dll
-/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/Microsoft.IdentityModel.Abstractions.dll
-/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/Microsoft.IdentityModel.JsonWebTokens.dll
-/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/Microsoft.IdentityModel.Logging.dll
-/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/Microsoft.IdentityModel.Tokens.dll
-/Users/rishijain/Desktop/HealthyBreakfastApp/backendhealthy/healthy-breakfast-app/HealthyBreakfastApp.WebAPI/bin/Debug/net8.0/System.IdentityModel.Tokens.Jwt.dll
