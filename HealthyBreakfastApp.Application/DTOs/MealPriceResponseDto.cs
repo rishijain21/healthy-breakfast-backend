@@ -13,15 +13,5 @@ namespace HealthyBreakfastApp.Application.DTOs
         public List<IngredientBreakdownDto> IngredientBreakdown { get; set; } = new();
     }
 
-    public class IngredientBreakdownDto
-    {
-        public int IngredientId { get; set; }
-        public string IngredientName { get; set; } = null!;
-        public int Quantity { get; set; }
-        public decimal UnitPrice { get; set; }
-        public decimal TotalPrice { get; set; }
-        public int Calories { get; set; }
-        public decimal Protein { get; set; }
-        public string CategoryName { get; set; } = null!;
-    }
+    // ✅ REMOVED: IngredientBreakdownDto class (exists in separate file)
 }

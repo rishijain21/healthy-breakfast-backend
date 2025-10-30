@@ -23,5 +23,8 @@ namespace HealthyBreakfastApp.Domain.Entities
         // Navigation properties
         public User User { get; set; } = null!;
         public Meal Meal { get; set; } = null!;
+        
+        // ✅ ADD THIS: Collection navigation property for ingredients
+        public ICollection<UserMealIngredient> UserMealIngredients { get; set; } = new List<UserMealIngredient>();
     }
 }

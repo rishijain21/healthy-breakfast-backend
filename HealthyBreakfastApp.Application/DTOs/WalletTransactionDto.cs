@@ -8,9 +8,7 @@ namespace HealthyBreakfastApp.Application.DTOs
         public string Type { get; set; } = null!;
         public string Description { get; set; } = null!;
         public DateTime CreatedAt { get; set; }
-        
-        // Navigation properties for display
-        public string UserName { get; set; } = null!;
-        public string UserEmail { get; set; } = null!;
+
+        // ✅ REMOVED: UserName and UserEmail properties (redundant data eliminated)
     }
 }

@@ -1,7 +1,6 @@
 using System.IdentityModel.Tokens.Jwt;
 using HealthyBreakfastApp.Application.Interfaces;
 
-
 namespace HealthyBreakfastApp.WebAPI.Middleware
 {
     public class AuthMiddleware
@@ -48,7 +47,8 @@ namespace HealthyBreakfastApp.WebAPI.Middleware
                         // Make user available to controllers
                         context.Items["UserId"] = userDto.UserId;
                         context.Items["User"] = userDto;
-                        context.Items["AuthId"] = authGuid;
+                        context.Items["auth_id"] = authId; // ✅ FIXED: lowercase with underscore
+                        context.Items["AuthId"] = authGuid; // Keep for backwards compatibility
                     }
                 }
             }

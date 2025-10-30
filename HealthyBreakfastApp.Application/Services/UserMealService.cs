@@ -23,7 +23,8 @@ namespace HealthyBreakfastApp.Application.Services
             {
                 UserId = dto.UserId,
                 MealId = dto.MealId,
-                MealName = dto.MealName,
+                MealName = dto.MealName ?? "Custom Meal", // ✅ FIXED: Handle potential null
+
                 TotalPrice = dto.TotalPrice,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow

@@ -13,7 +13,7 @@ namespace HealthyBreakfastApp.Domain.Entities
         public int UserId { get; set; }
 
         public decimal Amount { get; set; }
-        public string Type { get; set; } = null!;  // e.g., "Credit", "Debit"
+        public string Type { get; set; } = null!;  // Credit or Debit
         public string Description { get; set; } = null!;
         public DateTime CreatedAt { get; set; }
 

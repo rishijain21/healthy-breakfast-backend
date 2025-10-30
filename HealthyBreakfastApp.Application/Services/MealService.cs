@@ -187,7 +187,7 @@ namespace HealthyBreakfastApp.Application.Services
                         TotalPrice = ingredient.Price * selectedIngredient.Quantity,
                         Calories = ingredient.Calories * selectedIngredient.Quantity,
                         Protein = ingredient.Protein * selectedIngredient.Quantity,
-                        CategoryName = ingredient.IngredientCategory?.CategoryName ?? "" // NOW THIS WILL WORK!
+                    
                     });
                 }
             }

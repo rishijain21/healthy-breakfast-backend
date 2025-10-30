@@ -1,23 +1,18 @@
 using HealthyBreakfastApp.Domain.Entities;
-using System;
-using System.Collections.Generic;
-using System.Threading.Tasks;
 
 namespace HealthyBreakfastApp.Application.Interfaces
 {
-    public interface IUserRepository
+    public interface IUserRepository  
     {
-        // Your existing methods
+        // ✅ Your existing methods (keep these)
         Task<User?> GetByIdAsync(int id);
+        Task<User?> GetByEmailAsync(string email);
+        Task<List<User>> GetAllAsync();
         Task AddUserAsync(User user);
         Task SaveChangesAsync();
-        Task<User?> GetByEmailAsync(string email);
-        Task<User?> GetByAuthIdAsync(Guid authId);
-        Task<List<User>> GetAllAsync();
-        
-        // ✅ ADD THESE NEW METHODS
+
+        // ✅ ADD THESE MISSING METHODS
         Task<User?> GetUserByAuthIdAsync(Guid authId);
         Task<User> CreateUserWithAuthMappingAsync(User user, Guid authId);
-        Task<UserAuthMapping?> GetAuthMappingAsync(Guid authId);
     }
 }

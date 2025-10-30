@@ -2,9 +2,6 @@ using HealthyBreakfastApp.Application.Interfaces;
 using HealthyBreakfastApp.Domain.Entities;
 using HealthyBreakfastApp.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
-using System;
-using System.Collections.Generic;
-using System.Threading.Tasks;
 
 namespace HealthyBreakfastApp.Infrastructure.Repositories
 {
@@ -17,10 +14,20 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
             _context = context;
         }
 
-        // ✅ YOUR EXISTING METHODS (unchanged)
+        // ✅ Your existing methods (keep these unchanged)
         public async Task<User?> GetByIdAsync(int id)
         {
             return await _context.Users.FindAsync(id);
+        }
+
+        public async Task<User?> GetByEmailAsync(string email)
+        {
+            return await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
+        }
+
+        public async Task<List<User>> GetAllAsync()
+        {
+            return await _context.Users.ToListAsync();
         }
 
         public async Task AddUserAsync(User user)
@@ -33,41 +40,12 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
             await _context.SaveChangesAsync();
         }
 
-        public async Task<User?> GetByEmailAsync(string email)
-        {
-            return await _context.Users
-                .FirstOrDefaultAsync(u => u.Email == email);
-        }
-
-        public async Task<User?> GetByAuthIdAsync(Guid authId)
-        {
-            var userAuthMapping = await _context.UserAuthMappings
-                .Include(m => m.User)
-                .FirstOrDefaultAsync(m => m.AuthId == authId);
-            
-            return userAuthMapping?.User;
-        }
-
-        public async Task<List<User>> GetAllAsync()
-        {
-            return await _context.Users.ToListAsync();
-        }
-
         // ✅ ADD THESE NEW METHODS
         public async Task<User?> GetUserByAuthIdAsync(Guid authId)
         {
-            return await _context.UserAuthMappings
-                .Where(mapping => mapping.AuthId == authId)
-                .Include(mapping => mapping.User)
-                .Select(mapping => mapping.User)
-                .FirstOrDefaultAsync();
-        }
-
-        public async Task<UserAuthMapping?> GetAuthMappingAsync(Guid authId)
-        {
-            return await _context.UserAuthMappings
-                .Include(m => m.User)
-                .FirstOrDefaultAsync(m => m.AuthId == authId);
+            return await _context.Users
+                .Include(u => u.AuthMapping)
+                .FirstOrDefaultAsync(u => u.AuthMapping != null && u.AuthMapping.AuthId == authId);
         }
 
         public async Task<User> CreateUserWithAuthMappingAsync(User user, Guid authId)
@@ -75,8 +53,8 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
             using var transaction = await _context.Database.BeginTransactionAsync();
             try
             {
-                // Add user
-                await _context.Users.AddAsync(user);
+                // Create user
+                _context.Users.Add(user);
                 await _context.SaveChangesAsync();
 
                 // Create auth mapping
@@ -87,10 +65,10 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
                     CreatedAt = DateTime.UtcNow
                 };
 
-                await _context.UserAuthMappings.AddAsync(authMapping);
+                _context.UserAuthMappings.Add(authMapping);
                 await _context.SaveChangesAsync();
-
                 await transaction.CommitAsync();
+
                 return user;
             }
             catch

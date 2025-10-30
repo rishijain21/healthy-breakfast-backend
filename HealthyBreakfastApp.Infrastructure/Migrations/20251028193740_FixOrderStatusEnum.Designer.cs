@@ -3,6 +3,7 @@ using System;
 using HealthyBreakfastApp.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace HealthyBreakfastApp.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251028193740_FixOrderStatusEnum")]
+    partial class FixOrderStatusEnum
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -483,14 +486,9 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                     b.Property<int>("UserId")
                         .HasColumnType("integer");
 
-                    b.Property<int?>("UserMealId")
-                        .HasColumnType("integer");
-
                     b.HasKey("OrderId");
 
                     b.HasIndex("UserId");
-
-                    b.HasIndex("UserMealId");
 
                     b.ToTable("Orders");
                 });
@@ -818,13 +816,7 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("HealthyBreakfastApp.Domain.Entities.UserMeal", "UserMeal")
-                        .WithMany()
-                        .HasForeignKey("UserMealId");
-
                     b.Navigation("User");
-
-                    b.Navigation("UserMeal");
                 });
 
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.OrderItem", b =>
@@ -904,7 +896,7 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                         .IsRequired();
 
                     b.HasOne("HealthyBreakfastApp.Domain.Entities.UserMeal", "UserMeal")
-                        .WithMany("UserMealIngredients")
+                        .WithMany()
                         .HasForeignKey("UserMealId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
@@ -928,11 +920,6 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.User", b =>
                 {
                     b.Navigation("AuthMapping");
-                });
-
-            modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.UserMeal", b =>
-                {
-                    b.Navigation("UserMealIngredients");
                 });
 #pragma warning restore 612, 618
         }

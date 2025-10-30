@@ -4,7 +4,8 @@ namespace HealthyBreakfastApp.Application.DTOs
     {
         public int UserId { get; set; }
         public int MealId { get; set; }
-        public string MealName { get; set; } = null!;
+        public string MealName { get; set; } = null!; // ✅ ADDED: Missing property
         public decimal TotalPrice { get; set; }
+        public DateTime CreatedAt { get; set; }
     }
 }

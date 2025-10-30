@@ -2,7 +2,7 @@ using HealthyBreakfastApp.Application.DTOs;
 using HealthyBreakfastApp.Application.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 
 namespace HealthyBreakfastApp.WebAPI.Controllers
 {
@@ -19,38 +19,119 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             _userService = userService;
         }
 
+        // ============================
+        // 🟢 GET ALL ORDER HISTORY (ENHANCED)
+        // ============================
+        [HttpGet("history")]
+        [Authorize]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        public async Task<ActionResult<IEnumerable<EnhancedOrderHistoryDto>>> GetAllOrderHistory()
+        {
+            try
+            {
+                var orderHistory = await _orderService.GetAllOrderHistoryWithDetailsAsync();
+                return Ok(orderHistory);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Error in GetAllOrderHistory: {ex.Message}");
+                return StatusCode(StatusCodes.Status500InternalServerError, 
+                    new { error = "An error occurred while retrieving order history" });
+            }
+        }
+
+        // ============================
+        // 🟢 GET CURRENT USER ORDERS (ENHANCED)
+        // ============================
+        [HttpGet("users/me/orders")]
+        [Authorize]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        public async Task<ActionResult<IEnumerable<EnhancedOrderHistoryDto>>> GetMyOrders()
+        {
+            try
+            {
+                var userId = await GetCurrentUserIdAsync();
+                if (userId == null)
+                    return Unauthorized("User not authenticated");
+
+                var userOrders = await _orderService.GetUserOrdersWithDetailsAsync(userId.Value);
+                return Ok(userOrders);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Error in GetMyOrders: {ex.Message}");
+                return StatusCode(StatusCodes.Status500InternalServerError, 
+                    new { error = "Unable to retrieve your orders" });
+            }
+        }
+
+        // ============================
+        // 🟢 BACKWARD COMPATIBILITY: Simple order endpoints
+        // ============================
+        [HttpGet("users/me/orders/simple")]
+        [Authorize]
+        public async Task<ActionResult<IEnumerable<OrderDto>>> GetMyOrdersSimple()
+        {
+            try
+            {
+                var userId = await GetCurrentUserIdAsync();
+                if (userId == null)
+                    return Unauthorized("User not authenticated");
+
+                var userOrders = await _orderService.GetUserOrdersAsync(userId.Value);
+                return Ok(userOrders);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, 
+                    new { error = "Unable to retrieve your orders" });
+            }
+        }
+
+        // ============================
+        // 🟢 CREATE ORDER
+        // ============================
         [HttpPost]
         [Authorize]
         public async Task<IActionResult> Create([FromBody] CreateOrderDto dto)
         {
-            var userId = GetCurrentUserId();
-            if (userId == null) return Unauthorized();
+            var userId = await GetCurrentUserIdAsync();
+            if (userId == null)
+                return Unauthorized("User not found");
 
+            dto.UserId = userId.Value;
             var id = await _orderService.CreateOrderAsync(dto);
             return CreatedAtAction(nameof(GetById), new { id }, null);
         }
 
+        // ============================
+        // 🟢 GET ORDER BY ID
+        // ============================
         [HttpGet("{id}")]
         [Authorize]
         public async Task<IActionResult> GetById(int id)
         {
             var order = await _orderService.GetOrderByIdAsync(id);
-            if (order == null) return NotFound();
+            if (order == null)
+                return NotFound();
+
             return Ok(order);
         }
 
+        // ============================
+        // 🟢 CREATE ORDER FROM MEAL BUILDER
+        // ============================
         [HttpPost("create-from-meal-builder")]
-        // [Authorize]
+        [Authorize]
         public async Task<ActionResult<OrderCreationResponseDto>> CreateFromMealBuilder([FromBody] CreateOrderFromMealBuilderDto dto)
         {
             try
             {
-                // Extract user ID from JWT token
-                var userId = await GetUserIdFromJwtAsync();
-                if (userId == null) 
-                {
+                var userId = await GetCurrentUserIdAsync();
+                if (userId == null)
                     return Unauthorized("User not authenticated");
-                }
 
                 dto.UserId = userId.Value;
                 var result = await _orderService.CreateOrderFromMealBuilderAsync(dto);
@@ -66,40 +147,57 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             }
         }
 
-        private async Task<int?> GetUserIdFromJwtAsync()
+        // ============================
+        // ✅ UNIFIED USER ID EXTRACTION
+        // ============================
+        private async Task<int?> GetCurrentUserIdAsync()
         {
             try
             {
-                var authHeader = Request.Headers["Authorization"].FirstOrDefault();
-                if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith("Bearer "))
+                var supabaseUserId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value 
+                                     ?? User.FindFirst("sub")?.Value;
+
+                Console.WriteLine($"🔍 Found Supabase User ID: {supabaseUserId}");
+
+                if (string.IsNullOrEmpty(supabaseUserId))
+                {
+                    Console.WriteLine("❌ No user ID found in token claims");
                     return null;
+                }
 
-                var token = authHeader.Substring("Bearer ".Length).Trim();
-                var handler = new JwtSecurityTokenHandler();
-                var jsonToken = handler.ReadJwtToken(token);
-                
-                var authId = jsonToken.Subject ?? jsonToken.Claims.FirstOrDefault(c => c.Type == "sub")?.Value;
-                
-                if (string.IsNullOrEmpty(authId) || !Guid.TryParse(authId, out var authGuid))
+                if (int.TryParse(supabaseUserId, out var directUserId))
+                {
+                    Console.WriteLine($"✅ Direct numeric user ID: {directUserId}");
+                    return directUserId;
+                }
+
+                if (Guid.TryParse(supabaseUserId, out var authId))
+                {
+                    Console.WriteLine($"🔍 Supabase GUID found: {authId}, looking up user in database...");
+                    var email = User.FindFirst(ClaimTypes.Email)?.Value ?? User.FindFirst("email")?.Value;
+                    var name = User.FindFirst(ClaimTypes.Name)?.Value ?? User.FindFirst("name")?.Value ?? User.FindFirst("full_name")?.Value;
+
+                    Console.WriteLine($"🔍 Email: {email}, Name: {name}");
+
+                    var userDto = await _userService.FindOrCreateUserByAuthIdAsync(authId, name, email);
+                    if (userDto != null)
+                    {
+                        Console.WriteLine($"✅ Found/Created user in database: UserId = {userDto.UserId}");
+                        return userDto.UserId;
+                    }
+
+                    Console.WriteLine("❌ Failed to find/create user in database");
                     return null;
+                }
 
-                var name = jsonToken.Claims.FirstOrDefault(c => c.Type == "name" || c.Type == "full_name")?.Value;
-                var email = jsonToken.Claims.FirstOrDefault(c => c.Type == "email")?.Value;
-
-                var userDto = await _userService.FindOrCreateUserByAuthIdAsync(authGuid, name, email);
-                
-                return userDto?.UserId;
+                Console.WriteLine($"❌ Could not parse user ID: {supabaseUserId}");
+                return null;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"JWT extraction error: {ex.Message}");
+                Console.WriteLine($"❌ User ID extraction error: {ex.Message}");
                 return null;
             }
-        }
-
-        private int? GetCurrentUserId()
-        {
-            return HttpContext.Items["UserId"] as int?;
         }
     }
 }
