@@ -1,8 +1,8 @@
 using HealthyBreakfastApp.Application.DTOs;
 using HealthyBreakfastApp.Application.Interfaces;
 using Microsoft.AspNetCore.Http;
-using System;
-using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
+using System.Security.Claims;
 
 namespace HealthyBreakfastApp.Application.Services
 {
@@ -10,19 +10,57 @@ namespace HealthyBreakfastApp.Application.Services
     {
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly IUserRepository _userRepository;
+        private readonly ILogger<CurrentUserService> _logger;
 
         public CurrentUserService(
             IHttpContextAccessor httpContextAccessor,
-            IUserRepository userRepository)
+            IUserRepository userRepository,
+            ILogger<CurrentUserService> logger)
         {
             _httpContextAccessor = httpContextAccessor;
             _userRepository = userRepository;
+            _logger = logger;
         }
 
-        // Retrieves the auth_id from the HTTP context
+        // ✅ ENHANCED: Retrieves the auth_id from multiple sources
         public string? GetAuthId()
         {
-            return _httpContextAccessor.HttpContext?.Items["auth_id"]?.ToString();
+            try
+            {
+                var context = _httpContextAccessor.HttpContext;
+                if (context == null) return null;
+
+                // ✅ METHOD 1: Try AuthMiddleware context items first
+                var authIdFromMiddleware = context.Items["auth_id"]?.ToString();
+                if (!string.IsNullOrEmpty(authIdFromMiddleware))
+                {
+                    _logger.LogInformation($"✅ CurrentUserService: AuthId from middleware: {authIdFromMiddleware}");
+                    return authIdFromMiddleware;
+                }
+
+                // ✅ METHOD 2: Try JWT claims directly (fallback)
+                if (context.User?.Identity?.IsAuthenticated == true)
+                {
+                    var authIdFromClaims = context.User.FindFirst("sub")?.Value 
+                                        ?? context.User.FindFirst("user_id")?.Value 
+                                        ?? context.User.FindFirst("id")?.Value
+                                        ?? context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+                    if (!string.IsNullOrEmpty(authIdFromClaims))
+                    {
+                        _logger.LogInformation($"✅ CurrentUserService: AuthId from JWT claims: {authIdFromClaims}");
+                        return authIdFromClaims;
+                    }
+                }
+
+                _logger.LogWarning("⚠️ CurrentUserService: No authId found from any source");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"❌ CurrentUserService GetAuthId error: {ex.Message}");
+                return null;
+            }
         }
 
         // Returns the currently logged-in user's UserId

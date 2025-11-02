@@ -68,6 +68,14 @@ builder.Services.AddHostedService<OrderConfirmationService>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 
+// ✅ ENHANCED: Logging configuration
+builder.Services.AddLogging(logging =>
+{
+    logging.AddConsole();
+    logging.AddDebug();
+    logging.SetMinimumLevel(LogLevel.Information);
+});
+
 // ========================================
 // ⚙️ JSON SERIALIZATION SETTINGS
 // ========================================
@@ -86,7 +94,8 @@ builder.Services.AddCors(options =>
     {
         policy.WithOrigins("http://localhost:4200")
               .AllowAnyHeader()
-              .AllowAnyMethod();
+              .AllowAnyMethod()
+              .AllowCredentials(); // ✅ Enhanced for auth
     });
 });
 
@@ -99,43 +108,56 @@ var supabaseUrl = builder.Configuration["Supabase:Url"] ?? "https://beeqamwptmbp
 if (string.IsNullOrEmpty(supabaseJwtSecret))
     throw new InvalidOperationException("Supabase JWT Secret is required in appsettings.json");
 
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
+    options.SaveToken = true;
+    options.IncludeErrorDetails = true;
+
+    options.TokenValidationParameters = new TokenValidationParameters
     {
-        options.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
-        options.SaveToken = true;
-        options.IncludeErrorDetails = true;
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = $"{supabaseUrl}/auth/v1",
+        ValidAudience = "authenticated",
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(supabaseJwtSecret)),
+        ClockSkew = TimeSpan.FromMinutes(1),
+        // ✅ Enhanced claim mapping
+        NameClaimType = "sub",
+        RoleClaimType = "role"
+    };
 
-        options.TokenValidationParameters = new TokenValidationParameters
+    options.Events = new JwtBearerEvents
+    {
+        OnAuthenticationFailed = context =>
         {
-            ValidateIssuer = true,
-            ValidateAudience = true,
-            ValidateLifetime = true,
-            ValidateIssuerSigningKey = true,
-            ValidIssuer = $"{supabaseUrl}/auth/v1",
-            ValidAudience = "authenticated",
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(supabaseJwtSecret)),
-            ClockSkew = TimeSpan.FromMinutes(1)
-        };
+            Console.WriteLine($"❌ JWT Authentication failed for {context.Request.Path}: {context.Exception.Message}");
+            return Task.CompletedTask;
+        },
+        OnTokenValidated = context =>
+        {
+            var path = context.Request.Path;
+            var sub = context.Principal?.FindFirst("sub")?.Value;
+            Console.WriteLine($"✅ JWT Token validated for {path} - User: {sub}");
+            return Task.CompletedTask;
+        },
+        OnChallenge = context =>
+        {
+            Console.WriteLine($"⚠️ JWT Challenge for {context.Request.Path}: {context.Error}");
+            return Task.CompletedTask;
+        }
+    };
+});
 
-        options.Events = new JwtBearerEvents
-        {
-            OnAuthenticationFailed = context =>
-            {
-                Console.WriteLine($"❌ Authentication failed: {context.Exception.Message}");
-                if (context.Exception.InnerException != null)
-                    Console.WriteLine($"❌ Inner exception: {context.Exception.InnerException.Message}");
-                return Task.CompletedTask;
-            },
-            OnTokenValidated = context =>
-            {
-                Console.WriteLine("✅ Token validated successfully (HS256)");
-                var claims = context.Principal?.Claims?.Select(c => $"{c.Type}: {c.Value}") ?? new List<string>();
-                Console.WriteLine($"Claims: {string.Join(", ", claims)}");
-                return Task.CompletedTask;
-            }
-        };
-    });
+// ✅ Enhanced authorization
+builder.Services.AddAuthorization();
 
 // ========================================
 // 📘 SWAGGER CONFIGURATION
@@ -145,7 +167,8 @@ builder.Services.AddSwaggerGen(c =>
     c.SwaggerDoc("v1", new OpenApiInfo
     {
         Title = "HealthyBreakfastApp API",
-        Version = "v1"
+        Version = "v1",
+        Description = "Production-ready API for Healthy Breakfast Delivery App"
     });
 
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
@@ -183,12 +206,16 @@ app.UseSwaggerUI();
 
 app.UseCors("AllowAngular");
 
-// ✅ Custom Auth Middleware
+// ✅ PRODUCTION: Enhanced middleware order
 app.UseMiddleware<AuthMiddleware>();
 
 app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
+var logger = app.Services.GetRequiredService<ILogger<Program>>();
+logger.LogInformation("🚀 HealthyBreakfastApp API starting with enhanced authentication");
+logger.LogInformation($"🔗 Swagger UI: http://localhost:5257/swagger");
 
 app.Run();

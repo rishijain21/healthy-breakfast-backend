@@ -1,5 +1,6 @@
 using System.IdentityModel.Tokens.Jwt;
 using HealthyBreakfastApp.Application.Interfaces;
+using Microsoft.AspNetCore.Authorization;
 
 namespace HealthyBreakfastApp.WebAPI.Middleware
 {
@@ -7,19 +8,44 @@ namespace HealthyBreakfastApp.WebAPI.Middleware
     {
         private readonly RequestDelegate _next;
         private readonly IServiceScopeFactory _serviceScopeFactory;
+        private readonly ILogger<AuthMiddleware> _logger;
 
-        public AuthMiddleware(RequestDelegate next, IServiceScopeFactory serviceScopeFactory)
+        public AuthMiddleware(RequestDelegate next, IServiceScopeFactory serviceScopeFactory, ILogger<AuthMiddleware> logger)
         {
             _next = next;
             _serviceScopeFactory = serviceScopeFactory;
+            _logger = logger;
         }
 
         public async Task InvokeAsync(HttpContext context)
         {
-            // Only process API routes
+            // ✅ SKIP: Public endpoints that don't need middleware processing
+            var path = context.Request.Path.Value?.ToLower() ?? "";
+            var publicEndpoints = new[]
+            {
+                "/swagger",
+                "/api/auth/login",
+                "/api/auth/register",
+                "/api/scheduledorders/time-until-midnight"
+            };
+
+            if (publicEndpoints.Any(endpoint => path.StartsWith(endpoint)))
+            {
+                await _next(context);
+                return;
+            }
+
+            // ✅ CHECK: If this is an API route that needs processing
             if (context.Request.Path.StartsWithSegments("/api"))
             {
-                await ProcessAuthenticationAsync(context);
+                var endpoint = context.GetEndpoint();
+                var requiresAuth = endpoint?.Metadata?.GetMetadata<AuthorizeAttribute>() != null;
+                var allowAnonymous = endpoint?.Metadata?.GetMetadata<AllowAnonymousAttribute>() != null;
+
+                if (requiresAuth && !allowAnonymous)
+                {
+                    await ProcessAuthenticationAsync(context);
+                }
             }
 
             await _next(context);
@@ -30,6 +56,7 @@ namespace HealthyBreakfastApp.WebAPI.Middleware
             try
             {
                 var authId = ExtractAuthIdFromToken(context);
+                _logger.LogInformation($"🔐 AuthMiddleware: Extracted authId: {authId}");
 
                 if (!string.IsNullOrEmpty(authId) && Guid.TryParse(authId, out var authGuid))
                 {
@@ -40,22 +67,24 @@ namespace HealthyBreakfastApp.WebAPI.Middleware
                     var (name, email) = ExtractUserInfoFromToken(context);
 
                     // Find or create user automatically
-                    var userDto = await userService.FindOrCreateUserByAuthIdAsync(authGuid, name, email);
+                    var userDto = await userService.FindOrCreateUserByAuthIdAsync(authGuid, name ?? "Test User", email ?? "test@example.com");
 
                     if (userDto != null)
                     {
-                        // Make user available to controllers
+                        // ✅ ENHANCED: Make user available to controllers in multiple ways
                         context.Items["UserId"] = userDto.UserId;
                         context.Items["User"] = userDto;
-                        context.Items["auth_id"] = authId; // ✅ FIXED: lowercase with underscore
-                        context.Items["AuthId"] = authGuid; // Keep for backwards compatibility
+                        context.Items["auth_id"] = authId; // For CurrentUserService
+                        context.Items["AuthId"] = authGuid; // For backward compatibility
+                        
+                        _logger.LogInformation($"✅ AuthMiddleware: User {userDto.UserId} (authId: {authId}) authenticated");
                     }
                 }
             }
             catch (Exception ex)
             {
-                // Log error but don't block the request
-                Console.WriteLine($"Auth middleware error: {ex.Message}");
+                // Log error but don't block the request - let JWT handle it
+                _logger.LogError($"❌ AuthMiddleware error: {ex.Message}");
             }
         }
 
@@ -75,7 +104,7 @@ namespace HealthyBreakfastApp.WebAPI.Middleware
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Token decode error: {ex.Message}");
+                _logger.LogError($"❌ Token decode error: {ex.Message}");
                 return null;
             }
         }
