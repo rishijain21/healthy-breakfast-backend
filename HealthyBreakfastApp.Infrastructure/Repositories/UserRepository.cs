@@ -24,6 +24,13 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
         {
             return await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
         }
+// Add this method to your existing UserRepository class
+public async Task<User?> GetByAuthIdAsync(Guid authId)
+{
+    return await _context.Users
+        .Include(u => u.AuthMapping)
+        .FirstOrDefaultAsync(u => u.AuthMapping != null && u.AuthMapping.AuthId == authId);
+}
 
         public async Task<List<User>> GetAllAsync()
         {

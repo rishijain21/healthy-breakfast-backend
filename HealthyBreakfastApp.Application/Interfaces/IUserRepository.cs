@@ -14,5 +14,8 @@ namespace HealthyBreakfastApp.Application.Interfaces
         // ✅ ADD THESE MISSING METHODS
         Task<User?> GetUserByAuthIdAsync(Guid authId);
         Task<User> CreateUserWithAuthMappingAsync(User user, Guid authId);
+        
+        // ✅ ADD: Method that scheduled order service needs
+        Task<User?> GetByAuthIdAsync(Guid authId);
     }
 }

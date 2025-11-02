@@ -2,6 +2,8 @@ using HealthyBreakfastApp.Application.Interfaces;
 using HealthyBreakfastApp.Application.Services;
 using HealthyBreakfastApp.Infrastructure.Data;
 using HealthyBreakfastApp.Infrastructure.Repositories;
+using HealthyBreakfastApp.WebAPI.Middleware;
+using HealthyBreakfastApp.WebAPI.Services; // For OrderConfirmationService
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -11,46 +13,73 @@ using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ===== Add DbContext =====
+// ========================================
+// 🚀 DATABASE CONFIGURATION
+// ========================================
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// ===== Register Application Services =====
+// ========================================
+// 🧩 APPLICATION SERVICES & REPOSITORIES
+// ========================================
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IUserService, UserService>();
+
 builder.Services.AddScoped<IMealService, MealService>();
 builder.Services.AddScoped<IMealRepository, MealRepository>();
+
 builder.Services.AddScoped<IIngredientService, IngredientService>();
 builder.Services.AddScoped<IIngredientRepository, IngredientRepository>();
+
 builder.Services.AddScoped<IIngredientCategoryService, IngredientCategoryService>();
 builder.Services.AddScoped<IIngredientCategoryRepository, IngredientCategoryRepository>();
+
 builder.Services.AddScoped<IMealOptionService, MealOptionService>();
 builder.Services.AddScoped<IMealOptionRepository, MealOptionRepository>();
+
 builder.Services.AddScoped<IMealOptionIngredientService, MealOptionIngredientService>();
 builder.Services.AddScoped<IMealOptionIngredientRepository, MealOptionIngredientRepository>();
+
 builder.Services.AddScoped<IUserMealService, UserMealService>();
 builder.Services.AddScoped<IUserMealRepository, UserMealRepository>();
+
 builder.Services.AddScoped<IUserMealIngredientService, UserMealIngredientService>();
 builder.Services.AddScoped<IUserMealIngredientRepository, UserMealIngredientRepository>();
+
 builder.Services.AddScoped<IOrderService, OrderService>();
 builder.Services.AddScoped<IOrderRepository, OrderRepository>();
-builder.Services.AddScoped<ISubscriptionRepository, SubscriptionRepository>();
-builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
-builder.Services.AddScoped<IWalletTransactionRepository, WalletTransactionRepository>();
-builder.Services.AddScoped<IWalletTransactionService, WalletTransactionService>();
 
-// ===== ✅ ADD THESE TWO LINES =====
+builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
+builder.Services.AddScoped<ISubscriptionRepository, SubscriptionRepository>();
+
+builder.Services.AddScoped<IWalletTransactionService, WalletTransactionService>();
+builder.Services.AddScoped<IWalletTransactionRepository, WalletTransactionRepository>();
+
+// ========================================
+// ⏰ SCHEDULED ORDER BACKGROUND SERVICES
+// ========================================
+builder.Services.AddScoped<IScheduledOrderRepository, ScheduledOrderRepository>();
+builder.Services.AddScoped<IScheduledOrderService, ScheduledOrderService>();
+builder.Services.AddHostedService<OrderConfirmationService>();
+
+// ========================================
+// 🌐 UTILITIES & HELPERS
+// ========================================
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 
-// ===== Configure JSON Serialization =====
+// ========================================
+// ⚙️ JSON SERIALIZATION SETTINGS
+// ========================================
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
     });
 
-// ===== Add CORS Policy =====
+// ========================================
+// 🔓 CORS CONFIGURATION
+// ========================================
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAngular", policy =>
@@ -61,14 +90,14 @@ builder.Services.AddCors(options =>
     });
 });
 
-// ===== SUPABASE HS256 JWT Authentication =====
+// ========================================
+// 🔑 SUPABASE HS256 JWT AUTHENTICATION
+// ========================================
 var supabaseJwtSecret = builder.Configuration["Supabase:JwtSecret"];
 var supabaseUrl = builder.Configuration["Supabase:Url"] ?? "https://beeqamwptmbpowswawfx.supabase.co";
 
 if (string.IsNullOrEmpty(supabaseJwtSecret))
-{
     throw new InvalidOperationException("Supabase JWT Secret is required in appsettings.json");
-}
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -107,14 +136,17 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             }
         };
     });
-// In your Program.cs, add these lines:
-builder.Services.AddScoped<IUserMealService, UserMealService>();
-builder.Services.AddScoped<IUserMealIngredientService, UserMealIngredientService>();
 
-// ===== Add Swagger with JWT support =====
+// ========================================
+// 📘 SWAGGER CONFIGURATION
+// ========================================
 builder.Services.AddSwaggerGen(c =>
 {
-    c.SwaggerDoc("v1", new OpenApiInfo { Title = "HealthyBreakfastApp API", Version = "v1" });
+    c.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "HealthyBreakfastApp API",
+        Version = "v1"
+    });
 
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
@@ -141,18 +173,22 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 
+// ========================================
+// 🚀 BUILD AND CONFIGURE PIPELINE
+// ========================================
 var app = builder.Build();
 
-// ===== Middleware =====
 app.UseSwagger();
 app.UseSwaggerUI();
+
 app.UseCors("AllowAngular");
 
-// ✅ ADD THIS CRITICAL LINE
-app.UseMiddleware<HealthyBreakfastApp.WebAPI.Middleware.AuthMiddleware>();
+// ✅ Custom Auth Middleware
+app.UseMiddleware<AuthMiddleware>();
 
 app.UseAuthentication();
 app.UseAuthorization();
+
 app.MapControllers();
 
 app.Run();

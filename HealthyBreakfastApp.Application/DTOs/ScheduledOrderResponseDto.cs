@@ -1,0 +1,31 @@
+using System;
+using System.Collections.Generic;
+
+namespace HealthyBreakfastApp.Application.DTOs
+{
+    public class ScheduledOrderResponseDto
+    {
+        public int ScheduledOrderId { get; set; }
+        public string MealName { get; set; } = null!;
+        public DateTime ScheduledFor { get; set; }
+        public string DeliveryTimeSlot { get; set; } = null!;
+        public decimal TotalPrice { get; set; }
+        public string OrderStatus { get; set; } = null!;
+        public bool CanModify { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public DateTime ExpiresAt { get; set; }
+        public NutritionalSummaryDto? NutritionalSummary { get; set; }
+        public List<ScheduledOrderIngredientDetailDto> Ingredients { get; set; } = new();
+    }
+
+    public class ScheduledOrderIngredientDetailDto
+    {
+        public int IngredientId { get; set; }
+        public string IngredientName { get; set; } = null!;
+        public int Quantity { get; set; }
+        public decimal UnitPrice { get; set; }
+        public decimal TotalPrice { get; set; }
+        public string Category { get; set; } = null!;
+        public string ImageUrl { get; set; } = null!;
+    }
+}

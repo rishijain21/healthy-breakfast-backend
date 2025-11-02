@@ -23,19 +23,19 @@ namespace HealthyBreakfastApp.Infrastructure.Data
         public DbSet<Subscription> Subscriptions { get; set; }
         public DbSet<WalletTransaction> WalletTransactions { get; set; }
         public DbSet<UserAuthMapping> UserAuthMappings { get; set; }
-   
-
+        
+        // ✅ ADD: New scheduled order tables
+        public DbSet<ScheduledOrder> ScheduledOrders { get; set; }
+        public DbSet<ScheduledOrderIngredient> ScheduledOrderIngredients { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
-            // In your OnModelCreating method, REPLACE the UserAuthMapping configuration with this:
 
+            // UserAuthMapping configuration
             modelBuilder.Entity<UserAuthMapping>(entity =>
             {
-                // NEW: Use integer PK instead of Guid PK
                 entity.HasKey(e => e.MappingId);
-
                 entity.Property(e => e.MappingId).IsRequired();
                 entity.Property(e => e.AuthId).IsRequired();
                 entity.Property(e => e.UserId).IsRequired();
@@ -57,13 +57,45 @@ namespace HealthyBreakfastApp.Infrastructure.Data
                 entity.Property(e => e.CreatedAt).HasColumnName("created_at");
             });
 
-
             // Map OrderStatus property to "Status" column in Orders table
             modelBuilder.Entity<Order>(entity =>
             {
                 entity.Property(e => e.OrderStatus)
                     .HasColumnName("Status")
                     .IsRequired();
+            });
+
+            // ✅ ADD: ScheduledOrder configurations
+            modelBuilder.Entity<ScheduledOrder>(entity =>
+            {
+                entity.HasKey(e => e.ScheduledOrderId);
+                entity.Property(e => e.MealName).HasMaxLength(255);
+                entity.Property(e => e.DeliveryTimeSlot).HasMaxLength(50);
+                entity.Property(e => e.OrderStatus).HasMaxLength(50);
+                entity.Property(e => e.TotalPrice).HasColumnType("decimal(10,2)");
+                entity.Property(e => e.ScheduledFor).HasColumnType("date");
+                
+                entity.HasOne(e => e.User)
+                    .WithMany()
+                    .HasForeignKey(e => e.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<ScheduledOrderIngredient>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.UnitPrice).HasColumnType("decimal(10,2)");
+                entity.Property(e => e.TotalPrice).HasColumnType("decimal(10,2)");
+                
+                entity.HasOne(e => e.ScheduledOrder)
+                    .WithMany(so => so.Ingredients)
+                    .HasForeignKey(e => e.ScheduledOrderId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                    
+                entity.HasOne(e => e.Ingredient)
+                    .WithMany()
+                    .HasForeignKey(e => e.IngredientId)
+                    .OnDelete(DeleteBehavior.Restrict);
             });
 
             // ========== SEED DATA WITH STATIC DATES ==========
