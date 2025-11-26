@@ -12,6 +12,7 @@ namespace HealthyBreakfastApp.WebAPI.Services
     {
         private readonly IServiceProvider _serviceProvider;
         private readonly ILogger<OrderConfirmationService> _logger;
+        private static readonly TimeZoneInfo IstZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
 
         public OrderConfirmationService(IServiceProvider serviceProvider, ILogger<OrderConfirmationService> logger)
         {
@@ -21,17 +22,22 @@ namespace HealthyBreakfastApp.WebAPI.Services
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
+            _logger.LogInformation("🚀 Order Confirmation Service started (IST timezone)");
+
             while (!stoppingToken.IsCancellationRequested)
             {
                 try
                 {
-                    var now = DateTime.UtcNow;
-                    var midnight = now.Date.AddDays(1); // Next midnight
-                    var delay = midnight - now;
+                    // ✅ FIX: Calculate next midnight in IST
+                    var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, IstZone);
+                    var nextMidnightIst = istNow.Date.AddDays(1); // Tomorrow midnight IST
                     
-                    _logger.LogInformation($"Next order confirmation at: {midnight} (in {delay.TotalHours:F1} hours)");
+                    var delay = nextMidnightIst - istNow;
                     
-                    // Wait until midnight
+                    _logger.LogInformation($"⏰ Next order confirmation at: {nextMidnightIst:yyyy-MM-dd HH:mm:ss} IST");
+                    _logger.LogInformation($"⏱️  Waiting {delay.TotalHours:F2} hours until next run");
+                    
+                    // Wait until IST midnight
                     await Task.Delay(delay, stoppingToken);
                     
                     if (!stoppingToken.IsCancellationRequested)
@@ -41,16 +47,18 @@ namespace HealthyBreakfastApp.WebAPI.Services
                 }
                 catch (OperationCanceledException)
                 {
-                    _logger.LogInformation("Order confirmation service was cancelled");
+                    _logger.LogInformation("🛑 Order confirmation service was cancelled");
                     break;
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error in order confirmation service");
-                    // Wait 1 minute before retrying
-                    await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
+                    _logger.LogError(ex, "❌ Error in order confirmation service");
+                    // Wait 5 minutes before retrying
+                    await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
                 }
             }
+            
+            _logger.LogInformation("🛑 Order Confirmation Service stopped");
         }
 
         private async Task ConfirmScheduledOrdersAsync()
@@ -60,13 +68,13 @@ namespace HealthyBreakfastApp.WebAPI.Services
             
             try
             {
-                _logger.LogInformation("Starting automatic order confirmation process");
+                _logger.LogInformation("🔄 Starting automatic order confirmation process (IST)");
                 await scheduledOrderService.ConfirmAllScheduledOrdersAsync();
-                _logger.LogInformation("Successfully completed automatic order confirmation");
+                _logger.LogInformation("✅ Successfully completed automatic order confirmation");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to confirm scheduled orders");
+                _logger.LogError(ex, "❌ Failed to confirm scheduled orders");
             }
         }
     }

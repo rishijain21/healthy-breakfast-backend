@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 using HealthyBreakfastApp.Application.Interfaces;
 using HealthyBreakfastApp.Application.DTOs;
 
@@ -15,10 +16,14 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
     public class ScheduledOrdersController : ControllerBase
     {
         private readonly IScheduledOrderService _scheduledOrderService;
+        private readonly ILogger<ScheduledOrdersController> _logger;
 
-        public ScheduledOrdersController(IScheduledOrderService scheduledOrderService)
+        public ScheduledOrdersController(
+            IScheduledOrderService scheduledOrderService,
+            ILogger<ScheduledOrdersController> logger)
         {
             _scheduledOrderService = scheduledOrderService;
+            _logger = logger;
         }
 
         [HttpPost("create-from-meal-builder")]
@@ -26,20 +31,16 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         {
             try
             {
-                // ✅ USE THE SAME DEBUGGING CODE AS GET METHOD
-                var allClaims = User.Claims.Select(c => $"{c.Type}: {c.Value}").ToList();
-                Console.WriteLine($"📋 POST Available claims: {string.Join(", ", allClaims)}");
-                
-                // ✅ TRY MULTIPLE CLAIM TYPES (same as GET method)
                 var authIdClaim = User.FindFirst("sub")?.Value ?? 
                                  User.FindFirst("user_id")?.Value ?? 
                                  User.FindFirst("id")?.Value ??
                                  User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
                                  
-                Console.WriteLine($"📋 POST Found authId: {authIdClaim}");
+                _logger.LogInformation($"📋 POST Found authId: {authIdClaim}");
                 
                 if (string.IsNullOrEmpty(authIdClaim))
                 {
+                    var allClaims = User.Claims.Select(c => $"{c.Type}: {c.Value}").ToList();
                     return Unauthorized($"Missing authentication claims. Available: {string.Join(", ", allClaims)}");
                 }
                 
@@ -57,6 +58,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Error creating scheduled order");
                 return StatusCode(500, new { message = "An error occurred while creating the scheduled order", details = ex.Message });
             }
         }
@@ -66,20 +68,16 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         {
             try
             {
-                // ✅ DEBUG: Log all available claims
-                var allClaims = User.Claims.Select(c => $"{c.Type}: {c.Value}").ToList();
-                Console.WriteLine($"📋 GET Available claims: {string.Join(", ", allClaims)}");
-                
-                // ✅ TRY MULTIPLE CLAIM TYPES
                 var authIdClaim = User.FindFirst("sub")?.Value ?? 
                                  User.FindFirst("user_id")?.Value ?? 
                                  User.FindFirst("id")?.Value ??
                                  User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
                                  
-                Console.WriteLine($"📋 GET Found authId: {authIdClaim}");
+                _logger.LogInformation($"📋 GET Found authId: {authIdClaim}");
                 
                 if (string.IsNullOrEmpty(authIdClaim))
                 {
+                    var allClaims = User.Claims.Select(c => $"{c.Type}: {c.Value}").ToList();
                     return Unauthorized($"Missing authentication claims. Available: {string.Join(", ", allClaims)}");
                 }
                 
@@ -94,6 +92,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Error retrieving tomorrow's scheduled orders");
                 return StatusCode(500, new { message = "An error occurred while retrieving scheduled orders", details = ex.Message });
             }
         }
@@ -103,20 +102,16 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         {
             try
             {
-                // ✅ ENHANCED: Use SAME comprehensive debugging as GET/POST methods
-                var allClaims = User.Claims.Select(c => $"{c.Type}: {c.Value}").ToList();
-                Console.WriteLine($"📋 PUT Available claims: {string.Join(", ", allClaims)}");
-                
-                // ✅ TRY MULTIPLE CLAIM TYPES (exactly like GET/POST)
                 var authIdClaim = User.FindFirst("sub")?.Value ?? 
                                  User.FindFirst("user_id")?.Value ?? 
                                  User.FindFirst("id")?.Value ??
                                  User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
                                  
-                Console.WriteLine($"📋 PUT Found authId: {authIdClaim}");
+                _logger.LogInformation($"📋 PUT Found authId: {authIdClaim}");
                 
                 if (string.IsNullOrEmpty(authIdClaim))
                 {
+                    var allClaims = User.Claims.Select(c => $"{c.Type}: {c.Value}").ToList();
                     return Unauthorized($"Missing authentication claims. Available: {string.Join(", ", allClaims)}");
                 }
                 
@@ -138,8 +133,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ PUT Error: {ex.Message}");
-                Console.WriteLine($"❌ PUT Stack Trace: {ex.StackTrace}");
+                _logger.LogError(ex, $"Error modifying scheduled order {id}");
                 return StatusCode(500, new { message = "An error occurred while modifying the scheduled order", details = ex.Message });
             }
         }
@@ -149,20 +143,16 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         {
             try
             {
-                // ✅ ENHANCED: Use SAME comprehensive debugging as GET/POST methods
-                var allClaims = User.Claims.Select(c => $"{c.Type}: {c.Value}").ToList();
-                Console.WriteLine($"📋 DELETE Available claims: {string.Join(", ", allClaims)}");
-                
-                // ✅ TRY MULTIPLE CLAIM TYPES (exactly like GET/POST)
                 var authIdClaim = User.FindFirst("sub")?.Value ?? 
                                  User.FindFirst("user_id")?.Value ?? 
                                  User.FindFirst("id")?.Value ??
                                  User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
                                  
-                Console.WriteLine($"📋 DELETE Found authId: {authIdClaim}");
+                _logger.LogInformation($"📋 DELETE Found authId: {authIdClaim}");
                 
                 if (string.IsNullOrEmpty(authIdClaim))
                 {
+                    var allClaims = User.Claims.Select(c => $"{c.Type}: {c.Value}").ToList();
                     return Unauthorized($"Missing authentication claims. Available: {string.Join(", ", allClaims)}");
                 }
                 
@@ -184,14 +174,13 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ DELETE Error: {ex.Message}");
-                Console.WriteLine($"❌ DELETE Stack Trace: {ex.StackTrace}");
+                _logger.LogError(ex, $"Error cancelling scheduled order {id}");
                 return StatusCode(500, new { message = "An error occurred while cancelling the scheduled order", details = ex.Message });
             }
         }
 
         [HttpGet("time-until-midnight")]
-        [AllowAnonymous] // ✅ This endpoint doesn't need authentication
+        [AllowAnonymous]
         public async Task<ActionResult<int>> GetTimeUntilMidnight()
         {
             try
@@ -201,7 +190,43 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Error getting time until midnight");
                 return StatusCode(500, new { message = "An error occurred while getting time until midnight", details = ex.Message });
+            }
+        }
+
+        // ============================================================================
+        // ✅ NEW: MANUAL PROCESSING ENDPOINT (For testing and catching up missed orders)
+        // ============================================================================
+        [HttpPost("process-today-manual")]
+        [AllowAnonymous] // ⚠️ Remove this in production and add proper authorization
+        public async Task<IActionResult> ProcessTodayOrdersManual()
+        {
+            try
+            {
+                _logger.LogInformation("🔧 Manual order processing triggered");
+                
+                await _scheduledOrderService.ConfirmAllScheduledOrdersAsync();
+                
+                _logger.LogInformation("✅ Manual order processing completed");
+                
+                return Ok(new 
+                { 
+                    success = true,
+                    message = "Scheduled orders processed successfully",
+                    timestamp = DateTime.UtcNow
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ Failed to process orders manually");
+                return StatusCode(500, new 
+                { 
+                    success = false,
+                    message = "Failed to process orders",
+                    error = ex.Message,
+                    details = ex.StackTrace
+                });
             }
         }
     }
