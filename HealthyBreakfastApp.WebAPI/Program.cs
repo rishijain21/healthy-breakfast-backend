@@ -207,10 +207,10 @@ app.UseSwaggerUI();
 app.UseCors("AllowAngular");
 
 // ✅ PRODUCTION: Enhanced middleware order
-app.UseMiddleware<AuthMiddleware>();
 
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseMiddleware<AuthMiddleware>();
 
 app.MapControllers();
 

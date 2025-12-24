@@ -14,7 +14,7 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
             _context = context;
         }
 
-        // ✅ Your existing methods (keep these unchanged)
+        // ✅ EXISTING METHODS
         public async Task<User?> GetByIdAsync(int id)
         {
             return await _context.Users.FindAsync(id);
@@ -24,13 +24,6 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
         {
             return await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
         }
-// Add this method to your existing UserRepository class
-public async Task<User?> GetByAuthIdAsync(Guid authId)
-{
-    return await _context.Users
-        .Include(u => u.AuthMapping)
-        .FirstOrDefaultAsync(u => u.AuthMapping != null && u.AuthMapping.AuthId == authId);
-}
 
         public async Task<List<User>> GetAllAsync()
         {
@@ -47,7 +40,15 @@ public async Task<User?> GetByAuthIdAsync(Guid authId)
             await _context.SaveChangesAsync();
         }
 
-        // ✅ ADD THESE NEW METHODS
+        // ✅ NEW METHOD: Get user by Supabase AuthId (used by ScheduledOrderService)
+        public async Task<User?> GetByAuthIdAsync(Guid authId)
+        {
+            return await _context.Users
+                .Include(u => u.AuthMapping)
+                .FirstOrDefaultAsync(u => u.AuthMapping != null && u.AuthMapping.AuthId == authId);
+        }
+
+        // ✅ NEW METHOD: Get user by Supabase AuthId (alternative name for clarity)
         public async Task<User?> GetUserByAuthIdAsync(Guid authId)
         {
             return await _context.Users
@@ -55,6 +56,7 @@ public async Task<User?> GetByAuthIdAsync(Guid authId)
                 .FirstOrDefaultAsync(u => u.AuthMapping != null && u.AuthMapping.AuthId == authId);
         }
 
+        // ✅ NEW METHOD: Create user with auth mapping in transaction
         public async Task<User> CreateUserWithAuthMappingAsync(User user, Guid authId)
         {
             using var transaction = await _context.Database.BeginTransactionAsync();
