@@ -9,7 +9,6 @@ using HealthyBreakfastApp.Application.Interfaces;
 using HealthyBreakfastApp.Application.DTOs;
 using HealthyBreakfastApp.Domain.Entities;
 
-
 namespace HealthyBreakfastApp.WebAPI.Controllers
 {
     [ApiController]
@@ -22,7 +21,6 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         private readonly IUserRepository _userRepository;
         private readonly IOrderService _orderService;
         private readonly ILogger<ScheduledOrdersController> _logger;
-
 
         public ScheduledOrdersController(
             IScheduledOrderService scheduledOrderService,
@@ -38,7 +36,6 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             _logger = logger;
         }
 
-
         [HttpPost("create-from-meal-builder")]
         public async Task<ActionResult<ScheduledOrderResponseDto>> CreateScheduledOrder([FromBody] CreateScheduledOrderDto dto)
         {
@@ -49,9 +46,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                                  User.FindFirst("id")?.Value ??
                                  User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
 
-
                 _logger.LogInformation($"📋 POST Found authId: {authIdClaim}");
-
 
                 if (string.IsNullOrEmpty(authIdClaim))
                 {
@@ -59,12 +54,10 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                     return Unauthorized($"Missing authentication claims. Available: {string.Join(", ", allClaims)}");
                 }
 
-
                 if (!Guid.TryParse(authIdClaim, out var authId))
                 {
                     return Unauthorized($"Invalid user identifier format: {authIdClaim}");
                 }
-
 
                 var result = await _scheduledOrderService.CreateScheduledOrderAsync(authId, dto);
                 return Ok(result);
@@ -80,10 +73,6 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             }
         }
 
-
-        // ============================================================================
-        // ✅ FIXED: GET PENDING SCHEDULED ORDERS (not yet processed)
-        // ============================================================================
         [HttpGet("tomorrow")]
         public async Task<ActionResult<List<ScheduledOrderResponseDto>>> GetTomorrowScheduledOrders()
         {
@@ -94,9 +83,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                                  User.FindFirst("id")?.Value ??
                                  User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
 
-
                 _logger.LogInformation($"📋 GET /tomorrow - Found authId: {authIdClaim}");
-
 
                 if (string.IsNullOrEmpty(authIdClaim))
                 {
@@ -104,33 +91,24 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                     return Unauthorized($"Missing authentication claims. Available: {string.Join(", ", allClaims)}");
                 }
 
-
                 if (!Guid.TryParse(authIdClaim, out var authId))
                 {
                     return Unauthorized($"Invalid user identifier format: {authIdClaim}");
                 }
 
-
-                // ✅ FIX: Get IST time for consistent date calculation
                 var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
                 var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
                 var tomorrow = istNow.Date.AddDays(1);
 
+                _logger.LogInformation($"🗓️ Looking for cart orders scheduled for: {tomorrow:yyyy-MM-dd}");
 
-                _logger.LogInformation($"🗓️ Looking for PENDING orders scheduled for: {tomorrow:yyyy-MM-dd}");
-
-
-                // Get all orders for tomorrow
                 var allOrders = await _scheduledOrderService.GetScheduledOrdersForDateAsync(authId, tomorrow);
 
-                // ✅ KEY FIX: Filter to show ONLY "scheduled" status (exclude processed, cancelled, failed)
                 var pendingOrders = allOrders
                     .Where(order => order.OrderStatus?.ToLower() == "scheduled")
                     .ToList();
 
-
-                _logger.LogInformation($"📦 Found {pendingOrders.Count} PENDING orders (filtered from {allOrders.Count} total)");
-
+                _logger.LogInformation($"📦 Found {pendingOrders.Count} orders in cart (filtered from {allOrders.Count} total)");
 
                 return Ok(pendingOrders);
             }
@@ -140,7 +118,6 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                 return StatusCode(500, new { message = "An error occurred while retrieving scheduled orders", details = ex.Message });
             }
         }
-
 
         [HttpPut("{id}/modify")]
         public async Task<ActionResult> ModifyScheduledOrder(int id, [FromBody] ModifyScheduledOrderDto dto)
@@ -152,9 +129,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                                  User.FindFirst("id")?.Value ??
                                  User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
 
-
                 _logger.LogInformation($"📋 PUT Found authId: {authIdClaim}");
-
 
                 if (string.IsNullOrEmpty(authIdClaim))
                 {
@@ -162,12 +137,10 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                     return Unauthorized($"Missing authentication claims. Available: {string.Join(", ", allClaims)}");
                 }
 
-
                 if (!Guid.TryParse(authIdClaim, out var authId))
                 {
                     return Unauthorized($"Invalid user identifier format: {authIdClaim}");
                 }
-
 
                 await _scheduledOrderService.ModifyScheduledOrderAsync(authId, id, dto);
                 return Ok(new { message = "Scheduled order modified successfully" });
@@ -187,7 +160,6 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             }
         }
 
-
         [HttpDelete("{id}/cancel")]
         public async Task<ActionResult> CancelScheduledOrder(int id)
         {
@@ -198,9 +170,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                                  User.FindFirst("id")?.Value ??
                                  User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
 
-
                 _logger.LogInformation($"📋 DELETE Found authId: {authIdClaim}");
-
 
                 if (string.IsNullOrEmpty(authIdClaim))
                 {
@@ -208,12 +178,10 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                     return Unauthorized($"Missing authentication claims. Available: {string.Join(", ", allClaims)}");
                 }
 
-
                 if (!Guid.TryParse(authIdClaim, out var authId))
                 {
                     return Unauthorized($"Invalid user identifier format: {authIdClaim}");
                 }
-
 
                 await _scheduledOrderService.CancelScheduledOrderAsync(authId, id);
                 return Ok(new { message = "Scheduled order cancelled successfully" });
@@ -233,7 +201,6 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             }
         }
 
-
         [HttpGet("time-until-midnight")]
         [AllowAnonymous]
         public async Task<ActionResult<int>> GetTimeUntilMidnight()
@@ -250,159 +217,193 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             }
         }
 
+        // ============================================================================
+        // ✅ NEW: MANUAL PROCESSING ENDPOINTS (Yesterday/Today/Tomorrow)
+        // ============================================================================
 
-        // ============================================================================
-        // ✅ MANUAL TESTING ENDPOINT - Simulates midnight auto-confirmation
-        // ============================================================================
         [HttpPost("process-today-manual")]
-        [AllowAnonymous] // ⚠️ Remove in production
-        public async Task<IActionResult> ProcessTodayOrdersManual()
+        [AllowAnonymous]
+        public async Task<ActionResult<ProcessOrdersResponseDto>> ProcessTodayManual()
         {
             try
             {
-                _logger.LogInformation("🔧 Manual order processing triggered (simulating midnight auto-confirmation)");
-
-                // ✅ Get IST time
-                var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
-                var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
-
-                // ✅ KEY LOGIC: Process orders scheduled for TOMORROW
-                // (Simulates what would happen at midnight tonight)
-                var tomorrow = istNow.Date.AddDays(1);
-
-                _logger.LogInformation($"🗓️ Current IST time: {istNow:yyyy-MM-dd HH:mm:ss}");
-                _logger.LogInformation($"🗓️ Processing orders scheduled for delivery: {tomorrow:yyyy-MM-dd}");
-                _logger.LogInformation($"💡 This simulates auto-confirmation that would run at midnight");
-
-                // ✅ Get tomorrow's scheduled orders
-                var scheduledOrders = await _scheduledOrderRepository.GetScheduledOrdersForDateAsync(tomorrow);
-
-                _logger.LogInformation($"📦 Found {scheduledOrders.Count} total orders for {tomorrow:yyyy-MM-dd}");
-
-                // Filter for only "scheduled" status
-                var pendingOrders = scheduledOrders
-                    .Where(o => o.OrderStatus == "scheduled")
-                    .ToList();
-
-                _logger.LogInformation($"📋 Found {pendingOrders.Count} PENDING orders to process");
-
-                if (pendingOrders.Count == 0)
-                {
-                    return Ok(new
-                    {
-                        success = true,
-                        message = $"No pending orders to process for {tomorrow:yyyy-MM-dd}",
-                        processedDate = tomorrow.ToString("yyyy-MM-dd"),
-                        ordersFound = scheduledOrders.Count,
-                        ordersPending = 0,
-                        timestamp = DateTime.UtcNow
-                    });
-                }
-
-                // ✅ Process each pending order
-                int processedCount = 0;
-                int failedCount = 0;
-
-                foreach (var scheduledOrder in pendingOrders)
-                {
-                    try
-                    {
-                        _logger.LogInformation($"🔄 Processing scheduled order #{scheduledOrder.ScheduledOrderId}");
-                        _logger.LogInformation($"   ├─ User: {scheduledOrder.UserId}");
-                        _logger.LogInformation($"   ├─ Amount: ₹{scheduledOrder.TotalPrice}");
-                        _logger.LogInformation($"   └─ Delivery: {scheduledOrder.ScheduledFor:yyyy-MM-dd}");
-
-                        // Get user
-                        var user = await _userRepository.GetByAuthIdAsync(scheduledOrder.AuthId);
-                        if (user == null)
-                        {
-                            _logger.LogWarning($"❌ User not found for order {scheduledOrder.ScheduledOrderId}");
-                            scheduledOrder.OrderStatus = "failed";
-                            scheduledOrder.CanModify = false;
-                            await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
-                            failedCount++;
-                            continue;
-                        }
-
-                        // Check wallet balance
-                        if (user.WalletBalance < scheduledOrder.TotalPrice)
-                        {
-                            _logger.LogWarning($"❌ Insufficient balance for order {scheduledOrder.ScheduledOrderId}");
-                            _logger.LogWarning($"   Required: ₹{scheduledOrder.TotalPrice}, Available: ₹{user.WalletBalance}");
-
-                            scheduledOrder.OrderStatus = "cancelled";
-                            scheduledOrder.CanModify = false;
-                            await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
-                            failedCount++;
-                            continue;
-                        }
-
-                        // Create actual order
-                        var createOrderDto = new CreateOrderFromMealBuilderDto
-                        {
-                            UserId = scheduledOrder.UserId,
-                            MealId = 1,
-                            SelectedIngredients = scheduledOrder.Ingredients.Select(i => new SelectedIngredientDto
-                            {
-                                IngredientId = i.IngredientId,
-                                Quantity = i.Quantity
-                            }).ToList(),
-                            ScheduledFor = DateTime.SpecifyKind(scheduledOrder.ScheduledFor, DateTimeKind.Utc),
-                            DeliveryAddress = "Default Address",
-                            SpecialInstructions = $"Auto-confirmed from scheduled order #{scheduledOrder.ScheduledOrderId}"
-                        };
-
-                        var orderResponse = await _orderService.CreateOrderFromMealBuilderAsync(createOrderDto);
-
-                        _logger.LogInformation($"✅ Successfully created order #{orderResponse.OrderId}");
-                        _logger.LogInformation($"   ├─ From scheduled order: #{scheduledOrder.ScheduledOrderId}");
-                        _logger.LogInformation($"   ├─ Amount charged: ₹{scheduledOrder.TotalPrice}");
-                        _logger.LogInformation($"   └─ New wallet balance: ₹{user.WalletBalance - scheduledOrder.TotalPrice}");
-
-                        // Mark as processed
-                        scheduledOrder.OrderStatus = "processed";
-                        scheduledOrder.CanModify = false;
-                        scheduledOrder.ConfirmedAt = DateTime.UtcNow;
-                        await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
-
-                        processedCount++;
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, $"❌ Failed to process order {scheduledOrder.ScheduledOrderId}");
-                        scheduledOrder.OrderStatus = "failed";
-                        scheduledOrder.CanModify = false;
-                        await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
-                        failedCount++;
-                    }
-                }
-
-                _logger.LogInformation($"✅ Manual processing complete!");
-                _logger.LogInformation($"   ├─ Successfully processed: {processedCount}");
-                _logger.LogInformation($"   └─ Failed: {failedCount}");
-
-                return Ok(new
-                {
-                    success = true,
-                    message = $"Processed {processedCount} orders for {tomorrow:yyyy-MM-dd}",
-                    processedDate = tomorrow.ToString("yyyy-MM-dd"),
-                    ordersProcessed = processedCount,
-                    ordersFailed = failedCount,
-                    timestamp = DateTime.UtcNow
-                });
+                var result = await ProcessOrdersForDate(DateTime.UtcNow, "TODAY");
+                return Ok(result);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ Failed to process orders manually");
-                return StatusCode(500, new
+                _logger.LogError(ex, "❌ Failed to process today's orders");
+                return StatusCode(500, new ProcessOrdersResponseDto
                 {
-                    success = false,
-                    message = "Failed to process orders",
-                    error = ex.Message,
-                    details = ex.StackTrace
+                    Success = false,
+                    Message = "Failed to process orders",
+                    Timestamp = DateTime.UtcNow
                 });
             }
         }
 
+        [HttpPost("process-yesterday-manual")]
+        [AllowAnonymous]
+        public async Task<ActionResult<ProcessOrdersResponseDto>> ProcessYesterdayManual()
+        {
+            try
+            {
+                var result = await ProcessOrdersForDate(DateTime.UtcNow.AddDays(-1), "YESTERDAY");
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ Failed to process yesterday's orders");
+                return StatusCode(500, new ProcessOrdersResponseDto
+                {
+                    Success = false,
+                    Message = "Failed to process orders",
+                    Timestamp = DateTime.UtcNow
+                });
+            }
+        }
+
+        [HttpPost("process-tomorrow-manual")]
+        [AllowAnonymous]
+        public async Task<ActionResult<ProcessOrdersResponseDto>> ProcessTomorrowManual()
+        {
+            try
+            {
+                var result = await ProcessOrdersForDate(DateTime.UtcNow.AddDays(1), "TOMORROW");
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ Failed to process tomorrow's orders");
+                return StatusCode(500, new ProcessOrdersResponseDto
+                {
+                    Success = false,
+                    Message = "Failed to process orders",
+                    Timestamp = DateTime.UtcNow
+                });
+            }
+        }
+
+        // ============================================================================
+        // SHARED PROCESSING LOGIC
+        // ============================================================================
+        private async Task<ProcessOrdersResponseDto> ProcessOrdersForDate(DateTime utcDate, string label)
+        {
+            var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
+            var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
+            var targetDate = TimeZoneInfo.ConvertTimeFromUtc(utcDate, istZone).Date;
+
+            _logger.LogInformation($"🧪 [{label}] Manual processing started at {istNow:yyyy-MM-dd HH:mm:ss} IST");
+            _logger.LogInformation($"🚚 Processing orders for {targetDate:yyyy-MM-dd}");
+
+            var scheduledOrders = await _scheduledOrderRepository.GetScheduledOrdersForDateAsync(targetDate);
+            _logger.LogInformation($"📦 Found {scheduledOrders.Count} total orders for {targetDate:yyyy-MM-dd}");
+
+            var pendingOrders = scheduledOrders
+                .Where(o => o.OrderStatus.ToLower() == "scheduled")
+                .ToList();
+
+            _logger.LogInformation($"📋 {pendingOrders.Count} orders pending confirmation");
+
+            if (pendingOrders.Count == 0)
+            {
+                var alreadyProcessed = scheduledOrders.Count(o => o.OrderStatus == "processed");
+                return new ProcessOrdersResponseDto
+                {
+                    Success = true,
+                    Message = $"No pending orders for {targetDate:yyyy-MM-dd}",
+                    DeliveryDate = targetDate,
+                    OrdersFound = scheduledOrders.Count,
+                    OrdersPending = 0,
+                    OrdersAlreadyConfirmed = alreadyProcessed,
+                    OrdersConfirmed = 0,
+                    OrdersFailed = 0,
+                    Timestamp = DateTime.UtcNow,
+                    Note = "Safe to call multiple times - no duplicates"
+                };
+            }
+
+            int confirmedCount = 0;
+            int failedCount = 0;
+
+            foreach (var scheduledOrder in pendingOrders)
+            {
+                try
+                {
+                    _logger.LogInformation($"🔄 Confirming cart order #{scheduledOrder.ScheduledOrderId}");
+
+                    var user = await _userRepository.GetByAuthIdAsync(scheduledOrder.AuthId);
+                    if (user == null)
+                    {
+                        _logger.LogWarning($"❌ User not found");
+                        scheduledOrder.OrderStatus = "failed";
+                        scheduledOrder.CanModify = false;
+                        await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
+                        failedCount++;
+                        continue;
+                    }
+
+                    if (user.WalletBalance < scheduledOrder.TotalPrice)
+                    {
+                        _logger.LogWarning($"❌ Insufficient balance: ₹{scheduledOrder.TotalPrice} needed, ₹{user.WalletBalance} available");
+                        scheduledOrder.OrderStatus = "cancelled";
+                        scheduledOrder.CanModify = false;
+                        await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
+                        failedCount++;
+                        continue;
+                    }
+
+                    var createOrderDto = new CreateOrderFromMealBuilderDto
+                    {
+                        UserId = scheduledOrder.UserId,
+                        MealId = 1,
+                        SelectedIngredients = scheduledOrder.Ingredients.Select(i => new SelectedIngredientDto
+                        {
+                            IngredientId = i.IngredientId,
+                            Quantity = i.Quantity
+                        }).ToList(),
+                        ScheduledFor = DateTime.SpecifyKind(scheduledOrder.ScheduledFor, DateTimeKind.Utc),
+                        DeliveryAddress = "Default Address",
+                        SpecialInstructions = $"Confirmed from cart #{scheduledOrder.ScheduledOrderId}"
+                    };
+
+                    var orderResponse = await _orderService.CreateOrderFromMealBuilderAsync(createOrderDto);
+
+                    _logger.LogInformation($"✅ Order confirmed → Kitchen order #{orderResponse.OrderId}");
+                    _logger.LogInformation($"   💰 Charged: ₹{scheduledOrder.TotalPrice}");
+
+                    scheduledOrder.OrderStatus = "processed";
+                    scheduledOrder.CanModify = false;
+                    scheduledOrder.ConfirmedAt = DateTime.UtcNow;
+                    await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
+
+                    confirmedCount++;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, $"❌ Failed to confirm order #{scheduledOrder.ScheduledOrderId}");
+                    scheduledOrder.OrderStatus = "failed";
+                    scheduledOrder.CanModify = false;
+                    await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
+                    failedCount++;
+                }
+            }
+
+            _logger.LogInformation($"🎉 [{label}] Complete: {confirmedCount} confirmed, {failedCount} failed");
+
+            return new ProcessOrdersResponseDto
+            {
+                Success = true,
+                Message = $"✅ Processed {confirmedCount} orders for {targetDate:yyyy-MM-dd}",
+                DeliveryDate = targetDate,
+                OrdersFound = scheduledOrders.Count,
+                OrdersPending = pendingOrders.Count,
+                OrdersAlreadyConfirmed = scheduledOrders.Count - pendingOrders.Count,
+                OrdersConfirmed = confirmedCount,
+                OrdersFailed = failedCount,
+                Timestamp = DateTime.UtcNow,
+                Note = "Safe to call multiple times - no duplicates"
+            };
+        }
     }
 }

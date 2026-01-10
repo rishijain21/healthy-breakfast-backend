@@ -37,6 +37,9 @@ namespace HealthyBreakfastApp.Domain.Entities
         
         public DateTime ExpiresAt { get; set; } // Midnight cutoff time
 
+public bool IsProcessedToOrder { get; set; } = false;  // Has been converted to confirmed Order
+public int? ConfirmedOrderId { get; set; }             // Link to created Order in Orders table
+
         // Navigation properties
         public User User { get; set; } = null!;
         public ICollection<ScheduledOrderIngredient> Ingredients { get; set; } = new List<ScheduledOrderIngredient>();

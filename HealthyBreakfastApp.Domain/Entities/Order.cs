@@ -16,6 +16,8 @@ namespace HealthyBreakfastApp.Domain.Entities
         // ✅ ADD THIS: Link to UserMeal for ingredient details
         [ForeignKey("UserMeal")]
         public int? UserMealId { get; set; }
+// ADD THIS LINE:
+public bool IsPrepared { get; set; } = false;  // For kitchen tracking
 
         // ✅ FIX: Put [Column] attribute BEFORE the property
         [Column("Status")]

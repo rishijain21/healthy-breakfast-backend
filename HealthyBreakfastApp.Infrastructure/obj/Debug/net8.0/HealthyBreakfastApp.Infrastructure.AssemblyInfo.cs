@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("HealthyBreakfastApp.Infrastructure")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+354a1dd3f633fc69490c342a8f0b2333a0984019")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+7ebe465b22ab0314f4694852e678fcc574c41ec6")]
 [assembly: System.Reflection.AssemblyProductAttribute("HealthyBreakfastApp.Infrastructure")]
 [assembly: System.Reflection.AssemblyTitleAttribute("HealthyBreakfastApp.Infrastructure")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

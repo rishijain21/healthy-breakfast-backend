@@ -3,21 +3,37 @@ using HealthyBreakfastApp.Application.Services;
 using HealthyBreakfastApp.Infrastructure.Data;
 using HealthyBreakfastApp.Infrastructure.Repositories;
 using HealthyBreakfastApp.WebAPI.Middleware;
-using HealthyBreakfastApp.WebAPI.Services; // For OrderConfirmationService
+using HealthyBreakfastApp.WebAPI.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using System.Text;
 using System.Text.Json;
+using Hangfire;
+using Hangfire.PostgreSql;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // ========================================
 // 🚀 DATABASE CONFIGURATION
 // ========================================
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseNpgsql(connectionString));
+
+// ========================================
+// 🕒 HANGFIRE CONFIGURATION (Background Jobs)
+// ========================================
+builder.Services.AddHangfire(config => config
+    .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+    .UseSimpleAssemblyNameTypeSerializer()
+    .UseRecommendedSerializerSettings()
+    .UsePostgreSqlStorage(options =>
+        options.UseNpgsqlConnection(connectionString)));
+
+builder.Services.AddHangfireServer();
 
 // ========================================
 // 🧩 APPLICATION SERVICES & REPOSITORIES
@@ -27,6 +43,10 @@ builder.Services.AddScoped<IUserService, UserService>();
 
 builder.Services.AddScoped<IMealService, MealService>();
 builder.Services.AddScoped<IMealRepository, MealRepository>();
+
+// Kitchen dashboard services
+builder.Services.AddScoped<IKitchenRepository, KitchenRepository>();
+builder.Services.AddScoped<IKitchenService, KitchenService>();
 
 builder.Services.AddScoped<IIngredientService, IngredientService>();
 builder.Services.AddScoped<IIngredientRepository, IngredientRepository>();
@@ -56,11 +76,13 @@ builder.Services.AddScoped<IWalletTransactionService, WalletTransactionService>(
 builder.Services.AddScoped<IWalletTransactionRepository, WalletTransactionRepository>();
 
 // ========================================
-// ⏰ SCHEDULED ORDER BACKGROUND SERVICES
+// ⏰ SCHEDULED ORDER SERVICES
 // ========================================
 builder.Services.AddScoped<IScheduledOrderRepository, ScheduledOrderRepository>();
 builder.Services.AddScoped<IScheduledOrderService, ScheduledOrderService>();
-builder.Services.AddHostedService<OrderConfirmationService>();
+
+// ⚠️ REMOVE OLD BACKGROUND SERVICE (Hangfire replaces it)
+// builder.Services.AddHostedService<OrderConfirmationService>();
 
 // ========================================
 // 🌐 UTILITIES & HELPERS
@@ -95,7 +117,7 @@ builder.Services.AddCors(options =>
         policy.WithOrigins("http://localhost:4200")
               .AllowAnyHeader()
               .AllowAnyMethod()
-              .AllowCredentials(); // ✅ Enhanced for auth
+              .AllowCredentials();
     });
 });
 
@@ -129,7 +151,6 @@ builder.Services.AddAuthentication(options =>
         ValidAudience = "authenticated",
         IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(supabaseJwtSecret)),
         ClockSkew = TimeSpan.FromMinutes(1),
-        // ✅ Enhanced claim mapping
         NameClaimType = "sub",
         RoleClaimType = "role"
     };
@@ -156,7 +177,6 @@ builder.Services.AddAuthentication(options =>
     };
 });
 
-// ✅ Enhanced authorization
 builder.Services.AddAuthorization();
 
 // ========================================
@@ -168,7 +188,7 @@ builder.Services.AddSwaggerGen(c =>
     {
         Title = "HealthyBreakfastApp API",
         Version = "v1",
-        Description = "Production-ready API for Healthy Breakfast Delivery App"
+        Description = "Production-ready API for Healthy Breakfast Delivery App with Hangfire Background Jobs"
     });
 
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
@@ -206,7 +226,13 @@ app.UseSwaggerUI();
 
 app.UseCors("AllowAngular");
 
-// ✅ PRODUCTION: Enhanced middleware order
+// ========================================
+// 🎛️ HANGFIRE DASHBOARD
+// ========================================
+app.UseHangfireDashboard("/hangfire", new DashboardOptions
+{
+    Authorization = new[] { new HangfireDashboardNoAuthFilter() } // ⚠️ Development only!
+});
 
 app.UseAuthentication();
 app.UseAuthorization();
@@ -214,8 +240,47 @@ app.UseMiddleware<AuthMiddleware>();
 
 app.MapControllers();
 
+// ========================================
+// ⏰ SCHEDULE RECURRING JOBS (MilkBasket Style)
+// ========================================
 var logger = app.Services.GetRequiredService<ILogger<Program>>();
-logger.LogInformation("🚀 HealthyBreakfastApp API starting with enhanced authentication");
+
+try
+{
+    var recurringJobManager = app.Services.GetRequiredService<IRecurringJobManager>();
+    
+    // ✅ MIDNIGHT ORDER CONFIRMATION JOB (12:00 AM IST)
+    recurringJobManager.AddOrUpdate<IScheduledOrderService>(
+        "midnight-order-confirmation",
+        service => service.ConfirmAllScheduledOrdersAsync(),
+        "0 0 * * *",  // Every day at 12:00 AM
+        new RecurringJobOptions
+        {
+            TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata")
+        });
+    
+    logger.LogInformation("✅ Hangfire job scheduled: Midnight order confirmation (12:00 AM IST)");
+}
+catch (Exception ex)
+{
+    logger.LogError(ex, "❌ Failed to schedule Hangfire jobs");
+}
+
+logger.LogInformation("🚀 HealthyBreakfastApp API started successfully");
 logger.LogInformation($"🔗 Swagger UI: http://localhost:5257/swagger");
+logger.LogInformation($"🎛️ Hangfire Dashboard: http://localhost:5257/hangfire");
 
 app.Run();
+
+// ========================================
+// 🔓 HANGFIRE DASHBOARD AUTH FILTER (Development Only)
+// ========================================
+public class HangfireDashboardNoAuthFilter : Hangfire.Dashboard.IDashboardAuthorizationFilter
+{
+    public bool Authorize(Hangfire.Dashboard.DashboardContext context)
+    {
+        // ⚠️ DEVELOPMENT ONLY - Allow all access
+        // TODO: Add proper authentication in production
+        return true;
+    }
+}

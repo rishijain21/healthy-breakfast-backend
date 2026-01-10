@@ -76,21 +76,25 @@ namespace HealthyBreakfastApp.Infrastructure.Data
                     .IsRequired();
             });
 
-            // ✅ ScheduledOrder configurations
-            modelBuilder.Entity<ScheduledOrder>(entity =>
-            {
-                entity.HasKey(e => e.ScheduledOrderId);
-                entity.Property(e => e.MealName).HasMaxLength(255);
-                entity.Property(e => e.DeliveryTimeSlot).HasMaxLength(50);
-                entity.Property(e => e.OrderStatus).HasMaxLength(50);
-                entity.Property(e => e.TotalPrice).HasColumnType("decimal(10,2)");
-                entity.Property(e => e.ScheduledFor).HasColumnType("date");
-                
-                entity.HasOne(e => e.User)
-                    .WithMany()
-                    .HasForeignKey(e => e.UserId)
-                    .OnDelete(DeleteBehavior.Cascade);
-            });
+      modelBuilder.Entity<ScheduledOrder>(entity =>
+{
+    entity.HasKey(e => e.ScheduledOrderId);
+    entity.Property(e => e.MealName).HasMaxLength(255);
+    entity.Property(e => e.DeliveryTimeSlot).HasMaxLength(50);
+    entity.Property(e => e.OrderStatus).HasMaxLength(50);
+    entity.Property(e => e.TotalPrice).HasColumnType("decimal(10,2)");
+    entity.Property(e => e.ScheduledFor).HasColumnType("date");
+    
+    // ✅ NEW FIELDS
+    entity.Property(e => e.IsProcessedToOrder).HasDefaultValue(false);
+    entity.Property(e => e.ConfirmedOrderId).IsRequired(false);
+    
+    entity.HasOne(e => e.User)
+        .WithMany()
+        .HasForeignKey(e => e.UserId)
+        .OnDelete(DeleteBehavior.Cascade);
+});
+
 
             modelBuilder.Entity<ScheduledOrderIngredient>(entity =>
             {

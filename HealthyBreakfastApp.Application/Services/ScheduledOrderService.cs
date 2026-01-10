@@ -36,7 +36,7 @@ namespace HealthyBreakfastApp.Application.Services
         }
 
         // ----------------------------------------------------------------------------------------
-        // CREATE SCHEDULED ORDER (IST VALIDATION)
+        // ✅ CREATE SCHEDULED ORDER (MILKBASKET LOGIC: Order today → Delivery tomorrow)
         // ----------------------------------------------------------------------------------------
         public async Task<ScheduledOrderResponseDto> CreateScheduledOrderAsync(Guid authId, CreateScheduledOrderDto dto)
         {
@@ -44,19 +44,16 @@ namespace HealthyBreakfastApp.Application.Services
             if (user == null)
                 throw new InvalidOperationException("User not found");
 
-            // Validate using IST timezone (must be tomorrow IST)
+            // ✅ MILKBASKET LOGIC: Orders placed today are for TOMORROW's delivery
             var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
             var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
-            var tomorrowIst = istNow.Date.AddDays(1);
+            var tomorrowIst = istNow.Date.AddDays(1); // TOMORROW
 
-            var scheduledDateIst = TimeZoneInfo.ConvertTimeFromUtc(dto.ScheduledFor, istZone).Date;
+            _logger.LogInformation($"📦 Order placed at: {istNow:yyyy-MM-dd HH:mm:ss} IST");
+            _logger.LogInformation($"🚚 Delivery scheduled for: {tomorrowIst:yyyy-MM-dd} (next morning)");
 
-            if (scheduledDateIst != tomorrowIst)
-            {
-                throw new InvalidOperationException(
-                    $"Orders can only be scheduled for tomorrow (IST). Expected: {tomorrowIst:yyyy-MM-dd}, Received: {scheduledDateIst:yyyy-MM-dd}"
-                );
-            }
+            // Set delivery date to tomorrow (ignore what frontend sends)
+            var deliveryDate = DateTime.SpecifyKind(tomorrowIst, DateTimeKind.Utc);
 
             // Calculate price
             var ingredients = new List<(Ingredient ingredient, int quantity)>();
@@ -76,21 +73,21 @@ namespace HealthyBreakfastApp.Application.Services
             if (!await CheckWalletBalanceAsync(authId, totalPrice))
                 throw new InvalidOperationException("Insufficient wallet balance");
 
-            // Create ScheduledOrder
+            // Create ScheduledOrder (goes to cart)
             var scheduledOrder = new ScheduledOrder
             {
                 UserId = user.UserId,
                 AuthId = authId,
                 MealName = "Custom Overnight Oats",
-                ScheduledFor = dto.ScheduledFor,
-                DeliveryTimeSlot = dto.DeliveryTimeSlot,
+                ScheduledFor = deliveryDate, // TOMORROW
+                DeliveryTimeSlot = dto.DeliveryTimeSlot ?? "8:00 AM",
                 TotalPrice = totalPrice,
                 NutritionalSummary = dto.NutritionalSummary != null
                     ? JsonSerializer.Serialize(dto.NutritionalSummary)
                     : null,
-                OrderStatus = "scheduled",
-                CanModify = true,
-                ExpiresAt = dto.ScheduledFor.Date.AddDays(1), // next midnight after delivery day
+                OrderStatus = "scheduled", // In cart
+                CanModify = true, // Editable until 11:59 PM
+                ExpiresAt = deliveryDate.AddDays(1), // Editable until day after delivery
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
@@ -107,6 +104,9 @@ namespace HealthyBreakfastApp.Application.Services
             }
 
             var createdOrder = await _scheduledOrderRepository.CreateAsync(scheduledOrder);
+            
+            _logger.LogInformation($"✅ Order #{createdOrder.ScheduledOrderId} created for {tomorrowIst:yyyy-MM-dd} delivery");
+            
             return await MapToResponseDto(createdOrder);
         }
 
@@ -135,7 +135,8 @@ namespace HealthyBreakfastApp.Application.Services
             if (scheduledOrder == null)
                 throw new InvalidOperationException("Scheduled order not found");
 
-            if (!scheduledOrder.CanModify || scheduledOrder.ExpiresAt <= DateTime.UtcNow)
+            // Check if still editable
+            if (!scheduledOrder.CanModify || scheduledOrder.OrderStatus != "scheduled")
                 throw new InvalidOperationException("Order can no longer be modified");
 
             var ingredients = new List<(Ingredient ingredient, int quantity)>();
@@ -174,32 +175,31 @@ namespace HealthyBreakfastApp.Application.Services
             scheduledOrder.NutritionalSummary = dto.NutritionalSummary != null
                 ? JsonSerializer.Serialize(dto.NutritionalSummary)
                 : scheduledOrder.NutritionalSummary;
+            scheduledOrder.UpdatedAt = DateTime.UtcNow;
 
             await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
+            
+            _logger.LogInformation($"✏️ Order #{scheduledOrderId} modified - New total: ₹{newTotalPrice}");
         }
 
         // ----------------------------------------------------------------------------------------
-        // CANCEL SCHEDULED ORDER
+        // CANCEL SCHEDULED ORDER - DELETE FROM DATABASE
         // ----------------------------------------------------------------------------------------
-// ----------------------------------------------------------------------------------------
-// CANCEL SCHEDULED ORDER - DELETE FROM DATABASE
-// ----------------------------------------------------------------------------------------
-public async Task CancelScheduledOrderAsync(Guid authId, int scheduledOrderId)
-{
-    var scheduledOrder = await _scheduledOrderRepository.GetByIdAndAuthIdAsync(scheduledOrderId, authId);
-    if (scheduledOrder == null)
-        throw new InvalidOperationException("Scheduled order not found");
+        public async Task CancelScheduledOrderAsync(Guid authId, int scheduledOrderId)
+        {
+            var scheduledOrder = await _scheduledOrderRepository.GetByIdAndAuthIdAsync(scheduledOrderId, authId);
+            if (scheduledOrder == null)
+                throw new InvalidOperationException("Scheduled order not found");
 
-    if (!scheduledOrder.CanModify || scheduledOrder.ExpiresAt <= DateTime.UtcNow)
-        throw new InvalidOperationException("Order can no longer be cancelled");
+            if (!scheduledOrder.CanModify || scheduledOrder.OrderStatus != "scheduled")
+                throw new InvalidOperationException("Order can no longer be cancelled");
 
-    // ✅ FIX: Delete the order completely (user cancellation)
-    _logger.LogInformation($"🗑️ User cancelled order {scheduledOrderId} - deleting from database");
-    
-    await _scheduledOrderRepository.DeleteAsync(scheduledOrderId);
-    
-    _logger.LogInformation($"✅ Order {scheduledOrderId} successfully deleted");
-}
+            _logger.LogInformation($"🗑️ User cancelled order #{scheduledOrderId} - deleting from cart");
+            
+            await _scheduledOrderRepository.DeleteAsync(scheduledOrderId);
+            
+            _logger.LogInformation($"✅ Order #{scheduledOrderId} successfully removed from cart");
+        }
 
         // ----------------------------------------------------------------------------------------
         // BALANCE CHECK
@@ -211,111 +211,119 @@ public async Task CancelScheduledOrderAsync(Guid authId, int scheduledOrderId)
         }
 
         // ----------------------------------------------------------------------------------------
-        // CRON JOB – CONFIRM SCHEDULED ORDERS FOR TODAY (IST + REAL ORDER CREATION)
+        // ✅ MIDNIGHT JOB – CONFIRM SCHEDULED ORDERS FOR TODAY (MILKBASKET LOGIC)
+        // This runs at 12:00 AM every night to confirm orders for TODAY's delivery
         // ----------------------------------------------------------------------------------------
- public async Task ConfirmAllScheduledOrdersAsync()
-{
-    var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
-    var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
-    var today = istNow.Date;
-
-    _logger.LogInformation($"🔄 Processing scheduled orders for IST date: {today:yyyy-MM-dd}");
-
-    var scheduledOrders = await _scheduledOrderRepository.GetScheduledOrdersForDateAsync(today);
-
-    _logger.LogInformation($"📦 Found {scheduledOrders.Count} scheduled orders to process");
-
-    foreach (var scheduledOrder in scheduledOrders)
-    {
-        try
+        public async Task ConfirmAllScheduledOrdersAsync()
         {
-            // ✅ FIX: Skip already processed or cancelled orders
-            if (scheduledOrder.OrderStatus != "scheduled")
-            {
-                _logger.LogInformation($"⏭️  Skipping order {scheduledOrder.ScheduledOrderId} - already {scheduledOrder.OrderStatus}");
-                continue;
-            }
+            var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
+            var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
+            var today = istNow.Date; // TODAY
 
-            // ✅ FIX: Get fresh user data for current wallet balance
-            var user = await _userRepository.GetByAuthIdAsync(scheduledOrder.AuthId);
-            if (user == null)
-            {
-                _logger.LogWarning($"❌ User not found for order {scheduledOrder.ScheduledOrderId}");
-                scheduledOrder.OrderStatus = "failed";
-                scheduledOrder.CanModify = false;
-                await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
-                continue;
-            }
+            _logger.LogInformation($"🌙 [MIDNIGHT JOB] Started at {istNow:yyyy-MM-dd HH:mm:ss} IST");
+            _logger.LogInformation($"🚚 Processing orders for TODAY's delivery: {today:yyyy-MM-dd}");
 
-            // Check wallet balance
-            if (user.WalletBalance < scheduledOrder.TotalPrice)
-            {
-                _logger.LogWarning(
-                    $"❌ Insufficient balance for order {scheduledOrder.ScheduledOrderId}. " +
-                    $"Required: ₹{scheduledOrder.TotalPrice}, Available: ₹{user.WalletBalance}");
-                
-                scheduledOrder.OrderStatus = "cancelled";
-                scheduledOrder.CanModify = false;
-                await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
-                continue;
-            }
+            var scheduledOrders = await _scheduledOrderRepository.GetScheduledOrdersForDateAsync(today);
 
-            // ✅ Create the actual Order
-            var createOrderDto = new CreateOrderFromMealBuilderDto
+            _logger.LogInformation($"📦 Found {scheduledOrders.Count} total orders for {today:yyyy-MM-dd}");
+
+            // Filter only "scheduled" status orders
+            var pendingOrders = scheduledOrders
+                .Where(o => o.OrderStatus.ToLower() == "scheduled")
+                .ToList();
+
+            _logger.LogInformation($"📋 {pendingOrders.Count} orders pending confirmation");
+
+            int confirmedCount = 0;
+            int failedCount = 0;
+
+            foreach (var scheduledOrder in pendingOrders)
             {
-                UserId = scheduledOrder.UserId,
-                MealId = 1,
-                SelectedIngredients = scheduledOrder.Ingredients.Select(i => new SelectedIngredientDto
+                try
                 {
-                    IngredientId = i.IngredientId,
-                    Quantity = i.Quantity
-                }).ToList(),
-                ScheduledFor = DateTime.SpecifyKind(scheduledOrder.ScheduledFor, DateTimeKind.Utc),
-                DeliveryAddress = "Default Address",
-                SpecialInstructions = $"Auto-confirmed from scheduled order #{scheduledOrder.ScheduledOrderId}"
-            };
+                    _logger.LogInformation($"🔄 Processing order #{scheduledOrder.ScheduledOrderId}");
 
-            var orderResponse = await _orderService.CreateOrderFromMealBuilderAsync(createOrderDto);
+                    // Get fresh user data
+                    var user = await _userRepository.GetByAuthIdAsync(scheduledOrder.AuthId);
+                    if (user == null)
+                    {
+                        _logger.LogWarning($"❌ User not found for order #{scheduledOrder.ScheduledOrderId}");
+                        scheduledOrder.OrderStatus = "failed";
+                        scheduledOrder.CanModify = false;
+                        await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
+                        failedCount++;
+                        continue;
+                    }
 
-            _logger.LogInformation(
-                $"✅ Created order {orderResponse.OrderId} from scheduled order {scheduledOrder.ScheduledOrderId}. " +
-                $"Amount: ₹{scheduledOrder.TotalPrice}");
+                    // Check wallet balance
+                    if (user.WalletBalance < scheduledOrder.TotalPrice)
+                    {
+                        _logger.LogWarning(
+                            $"❌ Insufficient balance for order #{scheduledOrder.ScheduledOrderId}. " +
+                            $"Required: ₹{scheduledOrder.TotalPrice}, Available: ₹{user.WalletBalance}");
+                        
+                        scheduledOrder.OrderStatus = "cancelled";
+                        scheduledOrder.CanModify = false;
+                        await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
+                        failedCount++;
+                        continue;
+                    }
 
-            // ✅ Mark scheduled order as processed (NOT cancelled)
-            scheduledOrder.OrderStatus = "processed";
-            scheduledOrder.CanModify = false;
-            scheduledOrder.ConfirmedAt = DateTime.UtcNow;
+                    // ✅ Create the actual Order (goes to Orders table → Kitchen Dashboard)
+                    var createOrderDto = new CreateOrderFromMealBuilderDto
+                    {
+                        UserId = scheduledOrder.UserId,
+                        MealId = 1,
+                        SelectedIngredients = scheduledOrder.Ingredients.Select(i => new SelectedIngredientDto
+                        {
+                            IngredientId = i.IngredientId,
+                            Quantity = i.Quantity
+                        }).ToList(),
+                        ScheduledFor = DateTime.SpecifyKind(scheduledOrder.ScheduledFor, DateTimeKind.Utc),
+                        DeliveryAddress = "Default Address",
+                        SpecialInstructions = $"Auto-confirmed at midnight from cart order #{scheduledOrder.ScheduledOrderId}"
+                    };
 
-            await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
+                    var orderResponse = await _orderService.CreateOrderFromMealBuilderAsync(createOrderDto);
+
+                    _logger.LogInformation(
+                        $"✅ Confirmed! Created Order #{orderResponse.OrderId} from cart order #{scheduledOrder.ScheduledOrderId}");
+                    _logger.LogInformation($"   💰 Amount charged: ₹{scheduledOrder.TotalPrice}");
+
+                    // ✅ Mark scheduled order as processed (no longer in cart)
+                    scheduledOrder.OrderStatus = "processed";
+                    scheduledOrder.CanModify = false;
+                    scheduledOrder.ConfirmedAt = DateTime.UtcNow;
+                    await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
+
+                    confirmedCount++;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, $"❌ Failed to confirm order #{scheduledOrder.ScheduledOrderId}");
+                    scheduledOrder.OrderStatus = "failed";
+                    scheduledOrder.CanModify = false;
+                    await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
+                    failedCount++;
+                }
+            }
+
+            _logger.LogInformation($"🎉 [MIDNIGHT JOB] Complete!");
+            _logger.LogInformation($"   ✅ Confirmed: {confirmedCount}");
+            _logger.LogInformation($"   ❌ Failed: {failedCount}");
+            _logger.LogInformation($"   ⏭️  Already processed: {scheduledOrders.Count - pendingOrders.Count}");
         }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("Insufficient wallet balance"))
-        {
-            // This exception comes from OrderService - wallet check failed there
-            _logger.LogWarning($"❌ Wallet deduction failed for order {scheduledOrder.ScheduledOrderId}: {ex.Message}");
-            scheduledOrder.OrderStatus = "cancelled";
-            scheduledOrder.CanModify = false;
-            await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, $"❌ Failed to confirm scheduled order {scheduledOrder.ScheduledOrderId}");
-            scheduledOrder.OrderStatus = "failed";
-            scheduledOrder.CanModify = false;
-            await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
-        }
-    }
-
-    _logger.LogInformation("✅ Scheduled order processing complete");
-}
 
         // ----------------------------------------------------------------------------------------
-        // TIME TILL MIDNIGHT (UTC)
+        // TIME TILL MIDNIGHT (IST)
         // ----------------------------------------------------------------------------------------
         public Task<int> GetTimeUntilMidnightMinutesAsync()
         {
-            var now = DateTime.UtcNow;
-            var midnight = now.Date.AddDays(1);
-            return Task.FromResult((int)(midnight - now).TotalMinutes);
+            var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
+            var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
+            var midnightIst = istNow.Date.AddDays(1);
+            
+            return Task.FromResult((int)(midnightIst - istNow).TotalMinutes);
         }
 
         // ----------------------------------------------------------------------------------------
@@ -335,7 +343,7 @@ public async Task CancelScheduledOrderAsync(Guid authId, int scheduledOrderId)
                 DeliveryTimeSlot = order.DeliveryTimeSlot,
                 TotalPrice = order.TotalPrice,
                 OrderStatus = order.OrderStatus,
-                CanModify = order.CanModify && order.ExpiresAt > DateTime.UtcNow,
+                CanModify = order.CanModify && order.OrderStatus == "scheduled",
                 CreatedAt = order.CreatedAt,
                 ExpiresAt = order.ExpiresAt,
                 NutritionalSummary = nutritional,

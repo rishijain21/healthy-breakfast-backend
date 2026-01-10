@@ -12,8 +12,8 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace HealthyBreakfastApp.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20251102074942_CreateScheduledDeliveryFeature")]
-    partial class CreateScheduledDeliveryFeature
+    [Migration("20251226071248_AddKitchenDashboardFields")]
+    partial class AddKitchenDashboardFields
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -74,203 +74,6 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                     b.HasIndex("CategoryId");
 
                     b.ToTable("Ingredients");
-
-                    b.HasData(
-                        new
-                        {
-                            IngredientId = 1,
-                            Available = true,
-                            Calories = 120,
-                            CategoryId = 1,
-                            CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "High fiber, slow release energy",
-                            Fiber = 4m,
-                            IconEmoji = "🥣",
-                            IngredientName = "Steel Cut Oats",
-                            Price = 25m,
-                            Protein = 4m,
-                            UpdatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)
-                        },
-                        new
-                        {
-                            IngredientId = 2,
-                            Available = true,
-                            Calories = 150,
-                            CategoryId = 1,
-                            CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "Classic choice, quick cooking",
-                            Fiber = 4m,
-                            IconEmoji = "🌾",
-                            IngredientName = "Rolled Oats",
-                            Price = 20m,
-                            Protein = 5m,
-                            UpdatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)
-                        },
-                        new
-                        {
-                            IngredientId = 3,
-                            Available = true,
-                            Calories = 110,
-                            CategoryId = 1,
-                            CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "Complete protein, gluten-free",
-                            Fiber = 3m,
-                            IconEmoji = "🌱",
-                            IngredientName = "Quinoa Flakes",
-                            Price = 40m,
-                            Protein = 6m,
-                            UpdatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)
-                        },
-                        new
-                        {
-                            IngredientId = 7,
-                            Available = true,
-                            Calories = 60,
-                            CategoryId = 2,
-                            CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "Omega-3 rich superfood",
-                            Fiber = 5m,
-                            IconEmoji = "🌰",
-                            IngredientName = "Chia Seeds",
-                            Price = 15m,
-                            Protein = 3m,
-                            UpdatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)
-                        },
-                        new
-                        {
-                            IngredientId = 11,
-                            Available = true,
-                            Calories = 55,
-                            CategoryId = 2,
-                            CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "Heart healthy fiber",
-                            Fiber = 3m,
-                            IconEmoji = "🌾",
-                            IngredientName = "Flax Seeds",
-                            Price = 12m,
-                            Protein = 2m,
-                            UpdatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)
-                        },
-                        new
-                        {
-                            IngredientId = 12,
-                            Available = true,
-                            Calories = 85,
-                            CategoryId = 2,
-                            CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "Magnesium powerhouse",
-                            Fiber = 1m,
-                            IconEmoji = "🎃",
-                            IngredientName = "Pumpkin Seeds",
-                            Price = 20m,
-                            Protein = 4m,
-                            UpdatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)
-                        },
-                        new
-                        {
-                            IngredientId = 20,
-                            Available = true,
-                            Calories = 42,
-                            CategoryId = 3,
-                            CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "Antioxidant rich blueberries",
-                            Fiber = 2m,
-                            IconEmoji = "🫐",
-                            IngredientName = "Fresh Blueberries",
-                            Price = 45m,
-                            Protein = 1m,
-                            UpdatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)
-                        },
-                        new
-                        {
-                            IngredientId = 21,
-                            Available = true,
-                            Calories = 90,
-                            CategoryId = 3,
-                            CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "Natural sweetness & potassium",
-                            Fiber = 3m,
-                            IconEmoji = "🍌",
-                            IngredientName = "Sliced Banana",
-                            Price = 15m,
-                            Protein = 1m,
-                            UpdatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)
-                        },
-                        new
-                        {
-                            IngredientId = 22,
-                            Available = true,
-                            Calories = 50,
-                            CategoryId = 3,
-                            CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "Crispy texture & fiber",
-                            Fiber = 2m,
-                            IconEmoji = "🍎",
-                            IngredientName = "Apple Chunks",
-                            Price = 25m,
-                            Protein = 0m,
-                            UpdatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)
-                        },
-                        new
-                        {
-                            IngredientId = 30,
-                            Available = true,
-                            Calories = 40,
-                            CategoryId = 4,
-                            CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "Light and nutty plant milk",
-                            Fiber = 0m,
-                            IconEmoji = "🥛",
-                            IngredientName = "Almond Milk",
-                            Price = 20m,
-                            Protein = 1m,
-                            UpdatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)
-                        },
-                        new
-                        {
-                            IngredientId = 32,
-                            Available = true,
-                            Calories = 100,
-                            CategoryId = 4,
-                            CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "High protein probiotic",
-                            Fiber = 0m,
-                            IconEmoji = "🥄",
-                            IngredientName = "Greek Yogurt",
-                            Price = 35m,
-                            Protein = 15m,
-                            UpdatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)
-                        },
-                        new
-                        {
-                            IngredientId = 40,
-                            Available = true,
-                            Calories = 65,
-                            CategoryId = 5,
-                            CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "Natural unprocessed sweetener",
-                            Fiber = 0m,
-                            IconEmoji = "🍯",
-                            IngredientName = "Raw Honey",
-                            Price = 12m,
-                            Protein = 0m,
-                            UpdatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)
-                        },
-                        new
-                        {
-                            IngredientId = 44,
-                            Available = true,
-                            Calories = 0,
-                            CategoryId = 5,
-                            CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "Natural fruit sweetness only",
-                            Fiber = 0m,
-                            IconEmoji = "🚫",
-                            IngredientName = "No Sweetener",
-                            Price = 0m,
-                            Protein = 0m,
-                            UpdatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)
-                        });
                 });
 
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.IngredientCategory", b =>
@@ -467,6 +270,9 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<bool>("IsPrepared")
+                        .HasColumnType("boolean");
+
                     b.Property<DateTime>("OrderDate")
                         .HasColumnType("timestamp with time zone");
 
@@ -550,6 +356,9 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                     b.Property<DateTime?>("ConfirmedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int?>("ConfirmedOrderId")
+                        .HasColumnType("integer");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -560,6 +369,11 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
 
                     b.Property<DateTime>("ExpiresAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsProcessedToOrder")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
 
                     b.Property<string>("MealName")
                         .IsRequired()
