@@ -15,7 +15,6 @@ namespace HealthyBreakfastApp.Application.Interfaces
         Task<UserDto> RegisterUserAsync(RegisterUserRequest request);
         Task<UserDto?> GetUserByAuthIdAsync(Guid authId);
         
-        // ✅ ADD THIS METHOD (used by WalletController, OrdersController, AuthMiddleware)
-        Task<UserDto> FindOrCreateUserByAuthIdAsync(Guid authId, string? name = null, string? email = null);
+        // ❌ REMOVED: FindOrCreateUserByAuthIdAsync() - Causes auto-creation bug
     }
 }

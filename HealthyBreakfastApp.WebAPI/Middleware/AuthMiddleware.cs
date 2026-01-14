@@ -26,6 +26,7 @@ namespace HealthyBreakfastApp.WebAPI.Middleware
                 "/swagger",
                 "/api/auth/login",
                 "/api/auth/register",
+                "/api/auth/check-user-exists",  // ✅ ADDED: Skip this endpoint too
                 "/api/scheduledorders/time-until-midnight"
             };
 
@@ -63,27 +64,34 @@ namespace HealthyBreakfastApp.WebAPI.Middleware
                     using var scope = _serviceScopeFactory.CreateScope();
                     var userService = scope.ServiceProvider.GetRequiredService<IUserService>();
 
-                    // Extract user info from token
-                    var (name, email) = ExtractUserInfoFromToken(context);
-
-                    // Find or create user automatically
-                    var userDto = await userService.FindOrCreateUserByAuthIdAsync(authGuid, name ?? "Test User", email ?? "test@example.com");
+                    // ✅ CRITICAL: Only FIND user, NEVER create
+                    var userDto = await userService.GetUserByAuthIdAsync(authGuid);
 
                     if (userDto != null)
                     {
-                        // ✅ ENHANCED: Make user available to controllers in multiple ways
+                        // ✅ Existing user - set context
                         context.Items["UserId"] = userDto.UserId;
                         context.Items["User"] = userDto;
-                        context.Items["auth_id"] = authId; // For CurrentUserService
-                        context.Items["AuthId"] = authGuid; // For backward compatibility
+                        context.Items["auth_id"] = authId;
+                        context.Items["AuthId"] = authGuid;
                         
-                        _logger.LogInformation($"✅ AuthMiddleware: User {userDto.UserId} (authId: {authId}) authenticated");
+                        _logger.LogInformation($"✅ AuthMiddleware: Existing user {userDto.UserId} authenticated");
+                    }
+                    else
+                    {
+                        // ✅ New user - don't create yet, just mark as pending
+                        _logger.LogInformation($"🆕 AuthMiddleware: New user detected (authId: {authId}) - awaiting registration");
+                        context.Items["auth_id"] = authId;
+                        context.Items["AuthId"] = authGuid;
+                        context.Items["IsNewUser"] = true;
+                        
+                        // ❌ DO NOT CREATE USER HERE!
+                        // User will be created when they submit the profile form at /api/Auth/register
                     }
                 }
             }
             catch (Exception ex)
             {
-                // Log error but don't block the request - let JWT handle it
                 _logger.LogError($"❌ AuthMiddleware error: {ex.Message}");
             }
         }

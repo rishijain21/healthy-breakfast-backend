@@ -12,11 +12,16 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
     {
         private readonly IOrderService _orderService;
         private readonly IUserService _userService;
+        private readonly ILogger<OrdersController> _logger;
 
-        public OrdersController(IOrderService orderService, IUserService userService)
+        public OrdersController(
+            IOrderService orderService, 
+            IUserService userService,
+            ILogger<OrdersController> logger)
         {
             _orderService = orderService;
             _userService = userService;
+            _logger = logger;
         }
 
         // ============================
@@ -35,7 +40,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ Error in GetAllOrderHistory: {ex.Message}");
+                _logger.LogError(ex, "❌ Error in GetAllOrderHistory");
                 return StatusCode(StatusCodes.Status500InternalServerError, 
                     new { error = "An error occurred while retrieving order history" });
             }
@@ -61,7 +66,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ Error in GetMyOrders: {ex.Message}");
+                _logger.LogError(ex, "❌ Error in GetMyOrders");
                 return StatusCode(StatusCodes.Status500InternalServerError, 
                     new { error = "Unable to retrieve your orders" });
             }
@@ -85,6 +90,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "❌ Error in GetMyOrdersSimple");
                 return StatusCode(StatusCodes.Status500InternalServerError, 
                     new { error = "Unable to retrieve your orders" });
             }
@@ -148,7 +154,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         }
 
         // ============================
-        // ✅ UNIFIED USER ID EXTRACTION
+        // ✅ UNIFIED USER ID EXTRACTION (FIXED)
         // ============================
         private async Task<int?> GetCurrentUserIdAsync()
         {
@@ -157,45 +163,44 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                 var supabaseUserId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value 
                                      ?? User.FindFirst("sub")?.Value;
 
-                Console.WriteLine($"🔍 Found Supabase User ID: {supabaseUserId}");
+                _logger.LogInformation($"🔍 Found Supabase User ID: {supabaseUserId}");
 
                 if (string.IsNullOrEmpty(supabaseUserId))
                 {
-                    Console.WriteLine("❌ No user ID found in token claims");
+                    _logger.LogWarning("❌ No user ID found in token claims");
                     return null;
                 }
 
+                // Try direct numeric user ID first
                 if (int.TryParse(supabaseUserId, out var directUserId))
                 {
-                    Console.WriteLine($"✅ Direct numeric user ID: {directUserId}");
+                    _logger.LogInformation($"✅ Direct numeric user ID: {directUserId}");
                     return directUserId;
                 }
 
+                // Try GUID (Supabase auth_id)
                 if (Guid.TryParse(supabaseUserId, out var authId))
                 {
-                    Console.WriteLine($"🔍 Supabase GUID found: {authId}, looking up user in database...");
-                    var email = User.FindFirst(ClaimTypes.Email)?.Value ?? User.FindFirst("email")?.Value;
-                    var name = User.FindFirst(ClaimTypes.Name)?.Value ?? User.FindFirst("name")?.Value ?? User.FindFirst("full_name")?.Value;
+                    _logger.LogInformation($"🔍 Supabase GUID found: {authId}, looking up user in database...");
 
-                    Console.WriteLine($"🔍 Email: {email}, Name: {name}");
-
-                    var userDto = await _userService.FindOrCreateUserByAuthIdAsync(authId, name, email);
-                    if (userDto != null)
+                    // ✅ FIXED: Only find user, don't create
+                    var userDto = await _userService.GetUserByAuthIdAsync(authId);
+                    if (userDto == null)
                     {
-                        Console.WriteLine($"✅ Found/Created user in database: UserId = {userDto.UserId}");
-                        return userDto.UserId;
+                        _logger.LogWarning($"⚠️ User not found for authId: {authId}");
+                        return null;
                     }
 
-                    Console.WriteLine("❌ Failed to find/create user in database");
-                    return null;
+                    _logger.LogInformation($"✅ Found user in database: UserId = {userDto.UserId}");
+                    return userDto.UserId;
                 }
 
-                Console.WriteLine($"❌ Could not parse user ID: {supabaseUserId}");
+                _logger.LogWarning($"❌ Could not parse user ID: {supabaseUserId}");
                 return null;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ User ID extraction error: {ex.Message}");
+                _logger.LogError(ex, "❌ User ID extraction error");
                 return null;
             }
         }

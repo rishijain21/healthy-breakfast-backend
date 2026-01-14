@@ -112,7 +112,13 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                     return Unauthorized($"Invalid user identifier format: {currentAuthId}");
                 }
 
-                var userDto = await _userService.FindOrCreateUserByAuthIdAsync(validatedAuthId, "Test User", "test@example.com");
+                // ✅ FIXED: Only find user, don't create
+                var userDto = await _userService.GetUserByAuthIdAsync(validatedAuthId);
+                if (userDto == null)
+                {
+                    return Unauthorized(new { message = "User not found. Please complete registration first." });
+                }
+
                 var balance = await _walletTransactionService.GetWalletBalanceAsync(userDto.UserId);
                 
                 _logger.LogInformation($"✅ WALLET: Balance retrieved: {balance} for user {userDto.UserId}");
@@ -136,7 +142,13 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                     return Unauthorized("User not authenticated");
                 }
 
-                var userDto = await _userService.FindOrCreateUserByAuthIdAsync(authGuid, "Test User", "test@example.com");
+                // ✅ FIXED: Only find user, don't create
+                var userDto = await _userService.GetUserByAuthIdAsync(authGuid);
+                if (userDto == null)
+                {
+                    return Unauthorized(new { message = "User not found. Please complete registration first." });
+                }
+
                 var transactions = await _walletTransactionService.GetUserTransactionsAsync(userDto.UserId);
                 return Ok(transactions);
             }
@@ -158,7 +170,13 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                     return Unauthorized("User not authenticated");
                 }
 
-                var userDto = await _userService.FindOrCreateUserByAuthIdAsync(authGuid, "Test User", "test@example.com");
+                // ✅ FIXED: Only find user, don't create
+                var userDto = await _userService.GetUserByAuthIdAsync(authGuid);
+                if (userDto == null)
+                {
+                    return Unauthorized(new { message = "User not found. Please complete registration first." });
+                }
+
                 var transaction = await _walletTransactionService.TopUpWalletAsync(userDto.UserId, topUpDto);
                 return CreatedAtAction(nameof(GetTransaction), new { id = transaction.TransactionId }, transaction);
             }

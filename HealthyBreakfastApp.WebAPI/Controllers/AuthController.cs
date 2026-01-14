@@ -23,7 +23,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         /// </summary>
         [HttpGet("check-user-exists")]
         [AllowAnonymous]
-        public async Task<ActionResult<bool>> CheckUserExists([FromQuery] string email)
+        public async Task<ActionResult> CheckUserExists([FromQuery] string email)
         {
             if (string.IsNullOrWhiteSpace(email))
             {
@@ -36,7 +36,9 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             {
                 var exists = await _userService.UserExistsAsync(email);
                 _logger.LogInformation("User exists check for {Email}: {Exists}", email, exists);
-                return Ok(exists);
+                
+                // ✅ FIXED: Return object with "exists" property
+                return Ok(new { exists });
             }
             catch (Exception ex)
             {
@@ -64,28 +66,57 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
 
             try
             {
+                // ✅ Check if user already exists by AuthId
+                var existingUserByAuth = await _userService.GetUserByAuthIdAsync(request.AuthId);
+                if (existingUserByAuth != null)
+                {
+                    _logger.LogInformation("User already exists with AuthId, returning existing user: {UserId}", existingUserByAuth.UserId);
+                    return Ok(new 
+                    { 
+                        success = true,
+                        message = "User already registered", 
+                        user = existingUserByAuth,
+                        isNewUser = false
+                    });
+                }
+
+                // ✅ Check if user already exists by Email
+                var existingUserByEmail = await _userService.GetUserByEmailAsync(request.Email);
+                if (existingUserByEmail != null)
+                {
+                    _logger.LogWarning("User already exists with Email: {Email}", request.Email);
+                    return Conflict(new 
+                    { 
+                        success = false,
+                        message = "Email already registered. Please login instead."
+                    });
+                }
+
+                // ✅ Create new user
                 var userDto = await _userService.RegisterUserAsync(request);
 
                 _logger.LogInformation(
-                    "User registered successfully - UserId: {UserId}, Email: {Email}",
+                    "✅ User registered successfully - UserId: {UserId}, Email: {Email}",
                     userDto.UserId, userDto.Email
                 );
 
-                return CreatedAtAction(
-                    nameof(Register),
-                    new { id = userDto.UserId },
-                    userDto
-                );
+                return Ok(new 
+                { 
+                    success = true,
+                    message = "User registered successfully", 
+                    user = userDto,
+                    isNewUser = true
+                });
             }
             catch (InvalidOperationException ex)
             {
                 _logger.LogWarning(ex, "Registration failed - {Message}", ex.Message);
-                return Conflict(new { message = ex.Message });
+                return Conflict(new { success = false, message = ex.Message });
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error registering user");
-                return StatusCode(500, new { message = "Internal server error", error = ex.Message });
+                return StatusCode(500, new { success = false, message = "Internal server error", error = ex.Message });
             }
         }
 

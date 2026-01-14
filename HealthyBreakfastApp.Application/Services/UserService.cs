@@ -70,7 +70,7 @@ namespace HealthyBreakfastApp.Application.Services
             }).ToList();
         }
 
-        // ✅ NEW METHOD: Get user by email (returns DTO)
+        // ✅ Get user by email (returns DTO)
         public async Task<UserDto?> GetUserByEmailAsync(string email)
         {
             var user = await _userRepository.GetByEmailAsync(email);
@@ -88,7 +88,7 @@ namespace HealthyBreakfastApp.Application.Services
             };
         }
 
-        // ✅ NEW METHOD: Register user with AuthId mapping
+        // ✅ Register user with AuthId mapping (only way to create users)
         public async Task<UserDto> RegisterUserAsync(RegisterUserRequest request)
         {
             // Check if user already exists with this AuthId
@@ -130,53 +130,7 @@ namespace HealthyBreakfastApp.Application.Services
             };
         }
 
-        // ✅ NEW METHOD: Get user by Supabase AuthId
-        // ✅ ADD THIS METHOD at the end of UserService class
-public async Task<UserDto> FindOrCreateUserByAuthIdAsync(Guid authId, string? name = null, string? email = null)
-{
-    // Try to find existing user by AuthId
-    var existingUser = await _userRepository.GetUserByAuthIdAsync(authId);
-    
-    if (existingUser != null)
-    {
-        // User already exists, return it
-        return new UserDto
-        {
-            UserId = existingUser.UserId,
-            Name = existingUser.Name,
-            Email = existingUser.Email,
-            Phone = existingUser.Phone,
-            WalletBalance = existingUser.WalletBalance,
-            CreatedAt = existingUser.CreatedAt,
-            UpdatedAt = existingUser.UpdatedAt
-        };
-    }
-
-    // User doesn't exist, create new one
-    var newUser = new User
-    {
-        Name = name ?? "New User",
-        Email = email ?? "",
-        Phone = "",
-        WalletBalance = 0,
-        CreatedAt = DateTime.UtcNow,
-        UpdatedAt = DateTime.UtcNow
-    };
-
-    var createdUser = await _userRepository.CreateUserWithAuthMappingAsync(newUser, authId);
-    
-    return new UserDto
-    {
-        UserId = createdUser.UserId,
-        Name = createdUser.Name,
-        Email = createdUser.Email,
-        Phone = createdUser.Phone,
-        WalletBalance = createdUser.WalletBalance,
-        CreatedAt = createdUser.CreatedAt,
-        UpdatedAt = createdUser.UpdatedAt
-    };
-}
-
+        // ✅ Get user by Supabase AuthId (only finds, doesn't create)
         public async Task<UserDto?> GetUserByAuthIdAsync(Guid authId)
         {
             var user = await _userRepository.GetUserByAuthIdAsync(authId);
@@ -193,5 +147,7 @@ public async Task<UserDto> FindOrCreateUserByAuthIdAsync(Guid authId, string? na
                 UpdatedAt = user.UpdatedAt
             };
         }
+
+        // ❌ REMOVED: FindOrCreateUserByAuthIdAsync() - This was causing auto-creation bug
     }
 }
