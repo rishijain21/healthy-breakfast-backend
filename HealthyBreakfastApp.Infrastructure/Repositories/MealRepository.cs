@@ -34,5 +34,29 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
         {
             return await _context.Meals.ToListAsync();
         }
+
+        // NEW METHODS
+        public async Task<Meal?> GetByIdWithOptionsAsync(int id)
+        {
+            return await _context.Meals
+                .Include(m => m.MealOptions)
+                    .ThenInclude(mo => mo.IngredientCategory)
+                .Include(m => m.MealOptions)
+                    .ThenInclude(mo => mo.MealOptionIngredients)
+                        .ThenInclude(moi => moi.Ingredient)
+                .FirstOrDefaultAsync(m => m.MealId == id);
+        }
+
+        public async Task UpdateMealAsync(Meal meal)
+        {
+            _context.Meals.Update(meal);
+            await _context.SaveChangesAsync();
+        }
+
+        public async Task DeleteMealAsync(Meal meal)
+        {
+            _context.Meals.Remove(meal);
+            await _context.SaveChangesAsync();
+        }
     }
 }

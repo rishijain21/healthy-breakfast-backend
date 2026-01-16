@@ -1,8 +1,9 @@
-using System.Threading.Tasks;
 using HealthyBreakfastApp.Application.Interfaces;
 using HealthyBreakfastApp.Domain.Entities;
 using HealthyBreakfastApp.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using System.Collections.Generic;
+using System.Threading.Tasks;
 
 namespace HealthyBreakfastApp.Infrastructure.Repositories
 {
@@ -15,9 +16,19 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
             _context = context;
         }
 
-        public async Task AddAsync(MealOption entity)
+        public async Task<IEnumerable<MealOption>> GetByMealIdAsync(int mealId)
         {
-            await _context.MealOptions.AddAsync(entity);
+            return await _context.MealOptions
+                .Include(mo => mo.IngredientCategory)
+                .Include(mo => mo.MealOptionIngredients)
+                    .ThenInclude(moi => moi.Ingredient)
+                .Where(mo => mo.MealId == mealId)
+                .ToListAsync();
+        }
+
+        public async Task AddAsync(MealOption mealOption)
+        {
+            await _context.MealOptions.AddAsync(mealOption);
         }
 
         public async Task SaveChangesAsync()
@@ -25,16 +36,10 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
             await _context.SaveChangesAsync();
         }
 
-        public async Task<MealOption?> GetByIdAsync(int id)
+        // NEW METHOD
+        public async Task DeleteAsync(MealOption mealOption)
         {
-            return await _context.MealOptions.FirstOrDefaultAsync(mo => mo.MealOptionId == id);
-        }
-
-        public async Task<IEnumerable<MealOption>> GetByMealIdAsync(int mealId)
-        {
-            return await _context.MealOptions
-                .Where(mo => mo.MealId == mealId)
-                .ToListAsync();
+            _context.MealOptions.Remove(mealOption);
         }
     }
 }

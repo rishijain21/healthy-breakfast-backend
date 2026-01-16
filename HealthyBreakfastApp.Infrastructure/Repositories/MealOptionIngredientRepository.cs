@@ -1,8 +1,8 @@
-using System.Threading.Tasks;
 using HealthyBreakfastApp.Application.Interfaces;
 using HealthyBreakfastApp.Domain.Entities;
 using HealthyBreakfastApp.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using System.Threading.Tasks;
 
 namespace HealthyBreakfastApp.Infrastructure.Repositories
 {
@@ -15,9 +15,9 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
             _context = context;
         }
 
-        public async Task AddAsync(MealOptionIngredient entity)
+        public async Task AddAsync(MealOptionIngredient mealOptionIngredient)
         {
-            await _context.MealOptionIngredients.AddAsync(entity);
+            await _context.MealOptionIngredients.AddAsync(mealOptionIngredient);
         }
 
         public async Task SaveChangesAsync()
@@ -25,9 +25,15 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
             await _context.SaveChangesAsync();
         }
 
-        public async Task<MealOptionIngredient?> GetByIdAsync(int id)
+        // NEW METHOD
+        public async Task DeleteByMealOptionIdAsync(int mealOptionId)
         {
-            return await _context.MealOptionIngredients.FirstOrDefaultAsync(moi => moi.MealOptionIngredientId == id);
+            var ingredients = await _context.MealOptionIngredients
+                .Where(moi => moi.MealOptionId == mealOptionId)
+                .ToListAsync();
+            
+            _context.MealOptionIngredients.RemoveRange(ingredients);
+            await _context.SaveChangesAsync();
         }
     }
 }

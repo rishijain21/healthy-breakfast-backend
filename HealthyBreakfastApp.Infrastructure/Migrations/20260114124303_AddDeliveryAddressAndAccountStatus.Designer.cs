@@ -3,6 +3,7 @@ using System;
 using HealthyBreakfastApp.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace HealthyBreakfastApp.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260114124303_AddDeliveryAddressAndAccountStatus")]
+    partial class AddDeliveryAddressAndAccountStatus
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -70,7 +73,7 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
 
                     b.HasIndex("CategoryId");
 
-                    b.ToTable("Ingredients", (string)null);
+                    b.ToTable("Ingredients");
                 });
 
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.IngredientCategory", b =>
@@ -93,7 +96,7 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
 
                     b.HasKey("CategoryId");
 
-                    b.ToTable("IngredientCategories", (string)null);
+                    b.ToTable("IngredientCategories");
 
                     b.HasData(
                         new
@@ -160,7 +163,7 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
 
                     b.HasKey("MealId");
 
-                    b.ToTable("Meals", (string)null);
+                    b.ToTable("Meals");
 
                     b.HasData(
                         new
@@ -224,7 +227,7 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
 
                     b.HasIndex("MealId");
 
-                    b.ToTable("MealOptions", (string)null);
+                    b.ToTable("MealOptions");
                 });
 
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.MealOptionIngredient", b =>
@@ -253,7 +256,7 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
 
                     b.HasIndex("MealOptionId");
 
-                    b.ToTable("MealOptionIngredients", (string)null);
+                    b.ToTable("MealOptionIngredients");
                 });
 
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.Order", b =>
@@ -298,7 +301,7 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
 
                     b.HasIndex("UserMealId");
 
-                    b.ToTable("Orders", (string)null);
+                    b.ToTable("Orders");
                 });
 
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.OrderItem", b =>
@@ -333,7 +336,7 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
 
                     b.HasIndex("UserMealId");
 
-                    b.ToTable("OrderItems", (string)null);
+                    b.ToTable("OrderItems");
                 });
 
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.ScheduledOrder", b =>
@@ -401,7 +404,7 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("ScheduledOrders", (string)null);
+                    b.ToTable("ScheduledOrders");
                 });
 
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.ScheduledOrderIngredient", b =>
@@ -436,7 +439,7 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
 
                     b.HasIndex("ScheduledOrderId");
 
-                    b.ToTable("ScheduledOrderIngredients", (string)null);
+                    b.ToTable("ScheduledOrderIngredients");
                 });
 
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.Subscription", b =>
@@ -478,7 +481,7 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
 
                     b.HasIndex("UserMealId");
 
-                    b.ToTable("Subscriptions", (string)null);
+                    b.ToTable("Subscriptions");
                 });
 
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.User", b =>
@@ -519,7 +522,7 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
 
                     b.HasKey("UserId");
 
-                    b.ToTable("Users", (string)null);
+                    b.ToTable("Users");
 
                     b.HasData(
                         new
@@ -600,7 +603,7 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("UserMeals", (string)null);
+                    b.ToTable("UserMeals");
                 });
 
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.UserMealIngredient", b =>
@@ -632,7 +635,7 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
 
                     b.HasIndex("UserMealId");
 
-                    b.ToTable("UserMealIngredients", (string)null);
+                    b.ToTable("UserMealIngredients");
                 });
 
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.WalletTransaction", b =>
@@ -664,7 +667,7 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("WalletTransactions", (string)null);
+                    b.ToTable("WalletTransactions");
 
                     b.HasData(
                         new

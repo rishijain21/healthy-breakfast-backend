@@ -19,6 +19,11 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
         {
             return await _context.Users.FindAsync(id);
         }
+public async Task UpdateUserAsync(User user)
+{
+    _context.Users.Update(user);
+    // SaveChangesAsync will be called by the service
+}
 
         public async Task<User?> GetByEmailAsync(string email)
         {

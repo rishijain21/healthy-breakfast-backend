@@ -2,6 +2,8 @@ using HealthyBreakfastApp.Application.Interfaces;
 using HealthyBreakfastApp.Domain.Entities;
 using HealthyBreakfastApp.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace HealthyBreakfastApp.Infrastructure.Repositories
@@ -15,7 +17,8 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
             _context = context;
         }
 
-        // REMOVE .Include() calls for now
+        // ==================== READ OPERATIONS ====================
+        
         public async Task<IEnumerable<Ingredient>> GetAllAsync()
         {
             return await _context.Ingredients.ToListAsync();
@@ -28,16 +31,6 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
                 .ToListAsync();
         }
 
-        public async Task AddIngredientAsync(Ingredient ingredient)
-        {
-            await _context.Ingredients.AddAsync(ingredient);
-        }
-
-        public async Task SaveChangesAsync()
-        {
-            await _context.SaveChangesAsync();
-        }
-
         public async Task<Ingredient?> GetByIdAsync(int id)
         {
             return await _context.Ingredients
@@ -47,7 +40,47 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
         public async Task<Ingredient?> GetByIdWithCategoryAsync(int id)
         {
             return await _context.Ingredients
+                .Include(i => i.IngredientCategory)
                 .FirstOrDefaultAsync(i => i.IngredientId == id);
+        }
+
+        // ==================== CREATE OPERATIONS ====================
+        
+        public async Task AddIngredientAsync(Ingredient ingredient)
+        {
+            await _context.Ingredients.AddAsync(ingredient);
+        }
+
+        // ==================== UPDATE OPERATIONS ====================
+        
+        public Task UpdateIngredientAsync(Ingredient ingredient)
+        {
+            _context.Ingredients.Update(ingredient);
+            return Task.CompletedTask;
+        }
+
+        // ==================== DELETE OPERATIONS ====================
+        
+        public Task DeleteIngredientAsync(Ingredient ingredient)
+        {
+            _context.Ingredients.Remove(ingredient);
+            return Task.CompletedTask;
+        }
+
+        // ==================== CHECK OPERATIONS ====================
+        
+        public async Task<bool> IsIngredientUsedInMealsAsync(int ingredientId)
+        {
+            // Check if ingredient is used in MealOptionIngredients
+            return await _context.MealOptionIngredients
+                .AnyAsync(moi => moi.IngredientId == ingredientId);
+        }
+
+        // ==================== SAVE ====================
+        
+        public async Task SaveChangesAsync()
+        {
+            await _context.SaveChangesAsync();
         }
     }
 }
