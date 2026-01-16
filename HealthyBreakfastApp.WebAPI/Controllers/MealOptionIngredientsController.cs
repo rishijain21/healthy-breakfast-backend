@@ -1,7 +1,6 @@
 using HealthyBreakfastApp.Application.DTOs;
 using HealthyBreakfastApp.Application.Interfaces;
 using Microsoft.AspNetCore.Mvc;
-using System.Threading.Tasks;
 
 namespace HealthyBreakfastApp.WebAPI.Controllers
 {
@@ -17,18 +16,19 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         }
 
         [HttpPost]
-        public async Task<IActionResult> Create([FromBody] CreateMealOptionIngredientDto dto)
+        public async Task<IActionResult> CreateMealOptionIngredient([FromBody] CreateMealOptionIngredientDto dto)
         {
             var id = await _service.CreateMealOptionIngredientAsync(dto);
-            return CreatedAtAction(nameof(GetById), new { id }, null);
+            return CreatedAtAction(nameof(CreateMealOptionIngredient), new { id }, null);
         }
 
-        [HttpGet("{id}")]
-        public async Task<IActionResult> GetById(int id)
-        {
-            var entity = await _service.GetMealOptionIngredientByIdAsync(id);
-            if (entity == null) return NotFound();
-            return Ok(entity);
-        }
+        // ✅ COMMENTED OUT - Not needed
+        // [HttpGet("{id}")]
+        // public async Task<IActionResult> GetMealOptionIngredientById(int id)
+        // {
+        //     var ingredient = await _service.GetMealOptionIngredientByIdAsync(id);
+        //     if (ingredient == null) return NotFound();
+        //     return Ok(ingredient);
+        // }
     }
 }

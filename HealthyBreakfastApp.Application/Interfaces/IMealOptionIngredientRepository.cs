@@ -5,8 +5,10 @@ namespace HealthyBreakfastApp.Application.Interfaces
 {
     public interface IMealOptionIngredientRepository
     {
-        Task AddAsync(MealOptionIngredient entity);
+        Task AddAsync(MealOptionIngredient mealOptionIngredient);
         Task SaveChangesAsync();
-        Task<MealOptionIngredient?> GetByIdAsync(int id);
+        
+        // NEW METHOD
+        Task DeleteByMealOptionIdAsync(int mealOptionId);
     }
 }

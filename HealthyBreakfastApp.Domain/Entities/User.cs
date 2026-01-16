@@ -12,11 +12,15 @@ namespace HealthyBreakfastApp.Domain.Entities
         public string Email { get; set; } = null!;
         public string Phone { get; set; } = null!;
 
+        // ✅ NEW FIELDS - Add these
+        public string? DeliveryAddress { get; set; }
+        public string AccountStatus { get; set; } = "Active"; // "Active", "Deactivated", "Deleted"
+
         public decimal WalletBalance { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
 
-        // ADD navigation property
+        // Navigation property
         public virtual UserAuthMapping? AuthMapping { get; set; }
     }
 }

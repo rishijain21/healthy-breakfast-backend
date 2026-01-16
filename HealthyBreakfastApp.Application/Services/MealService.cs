@@ -1,5 +1,7 @@
 using System;
 using System.Threading.Tasks;
+using System.Collections.Generic;
+using System.Linq;
 using HealthyBreakfastApp.Application.DTOs;
 using HealthyBreakfastApp.Application.Interfaces;
 using HealthyBreakfastApp.Domain.Entities;
@@ -11,21 +13,24 @@ namespace HealthyBreakfastApp.Application.Services
         private readonly IMealRepository _mealRepository;
         private readonly IIngredientRepository _ingredientRepository;
         private readonly IMealOptionRepository _mealOptionRepository;
-        private readonly IIngredientCategoryRepository _ingredientCategoryRepository; // ADDED THIS LINE
+        private readonly IIngredientCategoryRepository _ingredientCategoryRepository;
+        private readonly IMealOptionIngredientRepository _mealOptionIngredientRepository;
 
-        // UPDATED CONSTRUCTOR - Added IIngredientCategoryRepository parameter
         public MealService(
             IMealRepository mealRepository,
             IIngredientRepository ingredientRepository,
             IMealOptionRepository mealOptionRepository,
-            IIngredientCategoryRepository ingredientCategoryRepository) // ADDED THIS PARAMETER
+            IIngredientCategoryRepository ingredientCategoryRepository,
+            IMealOptionIngredientRepository mealOptionIngredientRepository)
         {
             _mealRepository = mealRepository;
             _ingredientRepository = ingredientRepository;
             _mealOptionRepository = mealOptionRepository;
-            _ingredientCategoryRepository = ingredientCategoryRepository; // ADDED THIS ASSIGNMENT
+            _ingredientCategoryRepository = ingredientCategoryRepository;
+            _mealOptionIngredientRepository = mealOptionIngredientRepository;
         }
 
+        // EXISTING METHODS
         public async Task<int> CreateMealAsync(CreateMealDto dto)
         {
             var meal = new Meal
@@ -33,6 +38,13 @@ namespace HealthyBreakfastApp.Application.Services
                 MealName = dto.MealName,
                 Description = dto.Description,
                 BasePrice = dto.BasePrice,
+                
+                // ✅ ADD NUTRITION FIELDS
+                ApproxCalories = dto.ApproxCalories,
+                ApproxProtein = dto.ApproxProtein,
+                ApproxCarbs = dto.ApproxCarbs,
+                ApproxFats = dto.ApproxFats,
+                
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
@@ -61,23 +73,16 @@ namespace HealthyBreakfastApp.Application.Services
 
         public async Task<MealPriceResponseDto> CalculateMealPriceAsync(MealPriceCalculationDto calculationDto)
         {
-            // Get meal details
             var meal = await _mealRepository.GetByIdAsync(calculationDto.MealId);
             if (meal == null)
                 throw new ArgumentException("Meal not found");
 
-            // Validate ingredient selection against meal options
             var isValidSelection = await ValidateIngredientSelectionAsync(calculationDto.MealId, calculationDto.SelectedIngredients);
             if (!isValidSelection)
                 throw new InvalidOperationException("Invalid ingredient selection based on meal options");
 
-            // Calculate ingredients price
             var ingredientsPrice = await GetIngredientsTotalPriceAsync(calculationDto.SelectedIngredients);
-            
-            // Get nutritional summary
             var (totalCalories, totalProtein, totalFiber) = await GetNutritionalSummaryAsync(calculationDto.SelectedIngredients);
-            
-            // Get ingredient breakdown
             var ingredientBreakdown = await GetIngredientBreakdownAsync(calculationDto.SelectedIngredients);
 
             return new MealPriceResponseDto
@@ -132,10 +137,7 @@ namespace HealthyBreakfastApp.Application.Services
 
         public async Task<bool> ValidateIngredientSelectionAsync(int mealId, List<SelectedIngredientDto> ingredients)
         {
-            // Get meal options for this meal
             var mealOptions = await _mealOptionRepository.GetByMealIdAsync(mealId);
-            
-            // Group selected ingredients by category
             var ingredientsByCategory = new Dictionary<int, List<SelectedIngredientDto>>();
             
             foreach (var selectedIngredient in ingredients)
@@ -150,16 +152,13 @@ namespace HealthyBreakfastApp.Application.Services
                 }
             }
 
-            // Validate against meal options
             foreach (var mealOption in mealOptions)
             {
                 var categoryIngredients = ingredientsByCategory.GetValueOrDefault(mealOption.CategoryId, new List<SelectedIngredientDto>());
                 
-                // Check if required category has selections
                 if (mealOption.IsRequired && !categoryIngredients.Any())
                     return false;
                 
-                // Check if selection doesn't exceed max selectable
                 if (categoryIngredients.Count > mealOption.MaxSelectable)
                     return false;
             }
@@ -167,14 +166,12 @@ namespace HealthyBreakfastApp.Application.Services
             return true;
         }
 
-        // UPDATED METHOD - Now uses GetByIdWithCategoryAsync
         private async Task<List<IngredientBreakdownDto>> GetIngredientBreakdownAsync(List<SelectedIngredientDto> selectedIngredients)
         {
             var breakdown = new List<IngredientBreakdownDto>();
 
             foreach (var selectedIngredient in selectedIngredients)
             {
-                // CHANGED: Use the new method that includes category navigation property
                 var ingredient = await _ingredientRepository.GetByIdWithCategoryAsync(selectedIngredient.IngredientId);
                 if (ingredient != null)
                 {
@@ -187,12 +184,289 @@ namespace HealthyBreakfastApp.Application.Services
                         TotalPrice = ingredient.Price * selectedIngredient.Quantity,
                         Calories = ingredient.Calories * selectedIngredient.Quantity,
                         Protein = ingredient.Protein * selectedIngredient.Quantity,
-                    
                     });
                 }
             }
 
             return breakdown;
+        }
+
+        // ========== ADMIN METHODS (UPDATED) ==========
+
+        public async Task<List<AdminMealListDto>> GetAllMealsForAdminAsync()
+        {
+            var meals = await _mealRepository.GetAllAsync();
+            var mealList = new List<AdminMealListDto>();
+
+            foreach (var meal in meals)
+            {
+                var mealOptions = await _mealOptionRepository.GetByMealIdAsync(meal.MealId);
+                
+                mealList.Add(new AdminMealListDto
+                {
+                    MealId = meal.MealId,
+                    MealName = meal.MealName,
+                    Description = meal.Description,
+                    BasePrice = meal.BasePrice,
+                    MealOptionsCount = mealOptions.Count(),
+                    IsComplete = mealOptions.Any(),
+                    
+                    // ✅ MAP NUTRITION FIELDS
+                    ApproxCalories = meal.ApproxCalories,
+                    ApproxProtein = meal.ApproxProtein,
+                    ApproxCarbs = meal.ApproxCarbs,
+                    ApproxFats = meal.ApproxFats,
+                    
+                    CreatedAt = meal.CreatedAt,
+                    UpdatedAt = meal.UpdatedAt
+                });
+            }
+
+            return mealList;
+        }
+
+        public async Task<AdminMealDetailDto?> GetMealDetailForAdminAsync(int id)
+        {
+            var meal = await _mealRepository.GetByIdWithOptionsAsync(id);
+            if (meal == null) return null;
+
+            var mealDetail = new AdminMealDetailDto
+            {
+                MealId = meal.MealId,
+                MealName = meal.MealName,
+                Description = meal.Description,
+                BasePrice = meal.BasePrice,
+                
+                // ✅ MAP NUTRITION FIELDS
+                ApproxCalories = meal.ApproxCalories,
+                ApproxProtein = meal.ApproxProtein,
+                ApproxCarbs = meal.ApproxCarbs,
+                ApproxFats = meal.ApproxFats,
+                
+                CreatedAt = meal.CreatedAt,
+                UpdatedAt = meal.UpdatedAt,
+                MealOptions = new List<AdminMealOptionDetailDto>()
+            };
+
+            foreach (var mealOption in meal.MealOptions)
+            {
+                var optionDetail = new AdminMealOptionDetailDto
+                {
+                    MealOptionId = mealOption.MealOptionId,
+                    CategoryId = mealOption.CategoryId,
+                    CategoryName = mealOption.IngredientCategory.CategoryName,
+                    IsRequired = mealOption.IsRequired,
+                    MaxSelectable = mealOption.MaxSelectable,
+                    Ingredients = new List<MealIngredientDto>()
+                };
+
+                foreach (var mealOptionIngredient in mealOption.MealOptionIngredients)
+                {
+                    optionDetail.Ingredients.Add(new MealIngredientDto
+                    {
+                        IngredientId = mealOptionIngredient.Ingredient.IngredientId,
+                        IngredientName = mealOptionIngredient.Ingredient.IngredientName,
+                        Price = mealOptionIngredient.Ingredient.Price,
+                        IconEmoji = mealOptionIngredient.Ingredient.IconEmoji,
+                        Available = mealOptionIngredient.Ingredient.Available,
+                        
+                        // ✅ OPTIONAL: Map ingredient nutrition
+                        Calories = mealOptionIngredient.Ingredient.Calories,
+                        Protein = mealOptionIngredient.Ingredient.Protein,
+                        Fiber = mealOptionIngredient.Ingredient.Fiber
+                    });
+                }
+
+                mealDetail.MealOptions.Add(optionDetail);
+            }
+
+            return mealDetail;
+        }
+
+        public async Task<int> CreateMealWithOptionsAsync(AdminCreateMealDto dto)
+        {
+            // Validate that all ingredients exist
+            foreach (var mealOption in dto.MealOptions)
+            {
+                foreach (var ingredientId in mealOption.IngredientIds)
+                {
+                    var ingredient = await _ingredientRepository.GetByIdAsync(ingredientId);
+                    if (ingredient == null)
+                        throw new ArgumentException($"Ingredient with ID {ingredientId} does not exist");
+                }
+            }
+
+            // Create meal
+            var meal = new Meal
+            {
+                MealName = dto.MealName,
+                Description = dto.Description,
+                BasePrice = dto.BasePrice,
+                
+                // ✅ MAP NUTRITION FIELDS
+                ApproxCalories = dto.ApproxCalories,
+                ApproxProtein = dto.ApproxProtein,
+                ApproxCarbs = dto.ApproxCarbs,
+                ApproxFats = dto.ApproxFats,
+                
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+
+            await _mealRepository.AddMealAsync(meal);
+            await _mealRepository.SaveChangesAsync();
+
+            // Create meal options
+            foreach (var optionDto in dto.MealOptions)
+            {
+                var mealOption = new MealOption
+                {
+                    MealId = meal.MealId,
+                    CategoryId = optionDto.CategoryId,
+                    IsRequired = optionDto.IsRequired,
+                    MaxSelectable = optionDto.MaxSelectable,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+
+                await _mealOptionRepository.AddAsync(mealOption);
+                await _mealOptionRepository.SaveChangesAsync();
+
+                // Create meal option ingredients
+                foreach (var ingredientId in optionDto.IngredientIds)
+                {
+                    var mealOptionIngredient = new MealOptionIngredient
+                    {
+                        MealOptionId = mealOption.MealOptionId,
+                        IngredientId = ingredientId,
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow
+                    };
+
+                    await _mealOptionIngredientRepository.AddAsync(mealOptionIngredient);
+                }
+
+                await _mealOptionIngredientRepository.SaveChangesAsync();
+            }
+
+            return meal.MealId;
+        }
+
+        public async Task<bool> UpdateMealAsync(int id, UpdateMealDto dto)
+        {
+            var meal = await _mealRepository.GetByIdWithOptionsAsync(id);
+            if (meal == null) return false;
+
+            // Validate that all ingredients exist
+            foreach (var mealOption in dto.MealOptions)
+            {
+                foreach (var ingredientId in mealOption.IngredientIds)
+                {
+                    var ingredient = await _ingredientRepository.GetByIdAsync(ingredientId);
+                    if (ingredient == null)
+                        throw new ArgumentException($"Ingredient with ID {ingredientId} does not exist");
+                }
+            }
+
+            // Update meal basic info
+            meal.MealName = dto.MealName;
+            meal.Description = dto.Description;
+            meal.BasePrice = dto.BasePrice;
+            
+            // ✅ UPDATE NUTRITION FIELDS
+            meal.ApproxCalories = dto.ApproxCalories;
+            meal.ApproxProtein = dto.ApproxProtein;
+            meal.ApproxCarbs = dto.ApproxCarbs;
+            meal.ApproxFats = dto.ApproxFats;
+            
+            meal.UpdatedAt = DateTime.UtcNow;
+
+            // Delete existing meal options and their ingredients
+            var existingOptions = await _mealOptionRepository.GetByMealIdAsync(id);
+            foreach (var option in existingOptions)
+            {
+                await _mealOptionIngredientRepository.DeleteByMealOptionIdAsync(option.MealOptionId);
+                await _mealOptionRepository.DeleteAsync(option);
+            }
+            await _mealOptionRepository.SaveChangesAsync();
+
+            // Create new meal options
+            foreach (var optionDto in dto.MealOptions)
+            {
+                var mealOption = new MealOption
+                {
+                    MealId = meal.MealId,
+                    CategoryId = optionDto.CategoryId,
+                    IsRequired = optionDto.IsRequired,
+                    MaxSelectable = optionDto.MaxSelectable,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+
+                await _mealOptionRepository.AddAsync(mealOption);
+                await _mealOptionRepository.SaveChangesAsync();
+
+                // Create meal option ingredients
+                foreach (var ingredientId in optionDto.IngredientIds)
+                {
+                    var mealOptionIngredient = new MealOptionIngredient
+                    {
+                        MealOptionId = mealOption.MealOptionId,
+                        IngredientId = ingredientId,
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow
+                    };
+
+                    await _mealOptionIngredientRepository.AddAsync(mealOptionIngredient);
+                }
+
+                await _mealOptionIngredientRepository.SaveChangesAsync();
+            }
+
+            await _mealRepository.UpdateMealAsync(meal);
+            return true;
+        }
+
+        public async Task<bool> DeleteMealAsync(int id)
+        {
+            var meal = await _mealRepository.GetByIdAsync(id);
+            if (meal == null) return false;
+
+            // Delete cascade will handle meal options and meal option ingredients
+            await _mealRepository.DeleteMealAsync(meal);
+            return true;
+        }
+
+        public async Task<List<CategoryWithIngredientsDto>> GetCategoriesWithIngredientsAsync()
+        {
+            var categories = await _ingredientCategoryRepository.GetAllAsync();
+            var result = new List<CategoryWithIngredientsDto>();
+
+            foreach (var category in categories)
+            {
+                var ingredients = await _ingredientRepository.GetByCategoryIdAsync(category.CategoryId);
+                
+                result.Add(new CategoryWithIngredientsDto
+                {
+                    CategoryId = category.CategoryId,
+                    CategoryName = category.CategoryName,
+                    Ingredients = ingredients.Select(i => new IngredientDto
+                    {
+                        IngredientId = i.IngredientId,
+                        CategoryId = i.CategoryId,
+                        IngredientName = i.IngredientName,
+                        Price = i.Price,
+                        Available = i.Available,
+                        Calories = i.Calories,
+                        Protein = i.Protein,
+                        Fiber = i.Fiber,
+                        IconEmoji = i.IconEmoji,
+                        Description = i.Description
+                    }).ToList()
+                });
+            }
+
+            return result;
         }
     }
 }

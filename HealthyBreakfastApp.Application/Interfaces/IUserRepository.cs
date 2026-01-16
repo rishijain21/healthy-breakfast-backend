@@ -14,6 +14,8 @@ namespace HealthyBreakfastApp.Application.Interfaces
         // ✅ ADD THESE TWO NEW METHODS
         Task<User?> GetByAuthIdAsync(Guid authId);
         Task<User?> GetUserByAuthIdAsync(Guid authId);
+        Task UpdateUserAsync(User user);
+
         Task<User> CreateUserWithAuthMappingAsync(User user, Guid authId);
     }
 }

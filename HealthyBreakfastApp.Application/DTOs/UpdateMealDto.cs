@@ -1,6 +1,6 @@
 namespace HealthyBreakfastApp.Application.DTOs
 {
-    public class CreateMealDto
+    public class UpdateMealDto
     {
         public string MealName { get; set; } = null!;
         public string Description { get; set; } = null!;
@@ -11,5 +11,7 @@ namespace HealthyBreakfastApp.Application.DTOs
         public decimal? ApproxProtein { get; set; }
         public decimal? ApproxCarbs { get; set; }
         public decimal? ApproxFats { get; set; }
+        
+        public List<AdminMealOptionDto> MealOptions { get; set; } = new();
     }
 }

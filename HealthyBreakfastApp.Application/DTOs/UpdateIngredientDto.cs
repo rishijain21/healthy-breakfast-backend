@@ -1,8 +1,7 @@
 namespace HealthyBreakfastApp.Application.DTOs
 {
-    public class IngredientDto
+    public class UpdateIngredientDto
     {
-        public int IngredientId { get; set; }
         public int CategoryId { get; set; }
         public string IngredientName { get; set; } = null!;
         public decimal Price { get; set; }
@@ -10,8 +9,7 @@ namespace HealthyBreakfastApp.Application.DTOs
         public int Calories { get; set; }
         public decimal Protein { get; set; }
         public decimal Fiber { get; set; }
-        public string IconEmoji { get; set; } = null!;
         public string Description { get; set; } = null!;
-        // Remove CreatedAt and UpdatedAt - they're not needed in DTOs
+        public string IconEmoji { get; set; } = null!;
     }
 }

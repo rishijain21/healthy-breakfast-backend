@@ -6,6 +6,6 @@ namespace HealthyBreakfastApp.Application.Interfaces
     public interface IMealOptionService
     {
         Task<int> CreateMealOptionAsync(CreateMealOptionDto dto);
-        Task<MealOptionDto?> GetMealOptionByIdAsync(int id);
+        // ✅ REMOVED: Task<MealOptionDto?> GetMealOptionByIdAsync(int id);
     }
 }

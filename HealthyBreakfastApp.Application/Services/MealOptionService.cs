@@ -33,21 +33,6 @@ namespace HealthyBreakfastApp.Application.Services
             return entity.MealOptionId;
         }
 
-        public async Task<MealOptionDto?> GetMealOptionByIdAsync(int id)
-        {
-            var entity = await _repository.GetByIdAsync(id);
-            if (entity == null) return null;
-
-            return new MealOptionDto
-            {
-                MealOptionId = entity.MealOptionId,
-                MealId = entity.MealId,
-                CategoryId = entity.CategoryId,
-                IsRequired = entity.IsRequired,
-                MaxSelectable = entity.MaxSelectable,
-                CreatedAt = entity.CreatedAt,
-                UpdatedAt = entity.UpdatedAt
-            };
-        }
+        // ✅ REMOVED GetMealOptionByIdAsync - not needed for admin meal feature
     }
 }

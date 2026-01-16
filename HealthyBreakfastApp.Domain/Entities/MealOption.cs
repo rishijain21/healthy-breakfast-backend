@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
@@ -23,5 +24,8 @@ namespace HealthyBreakfastApp.Domain.Entities
         // Navigation properties
         public Meal Meal { get; set; } = null!;
         public IngredientCategory IngredientCategory { get; set; } = null!;
+        
+        // ADD THIS: Navigation property
+        public ICollection<MealOptionIngredient> MealOptionIngredients { get; set; } = new List<MealOptionIngredient>();
     }
 }

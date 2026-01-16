@@ -13,7 +13,7 @@ namespace HealthyBreakfastApp.Application.Services
             _userRepository = userRepository;
         }
 
-        // ✅ EXISTING METHODS (unchanged)
+        // ✅ EXISTING METHODS (updated to include new fields)
         public async Task<int> CreateUserAsync(CreateUserDto dto)
         {
             var user = new User
@@ -22,6 +22,7 @@ namespace HealthyBreakfastApp.Application.Services
                 Email = dto.Email,
                 Phone = dto.Phone,
                 WalletBalance = 0,
+                AccountStatus = "Active",
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
@@ -36,16 +37,7 @@ namespace HealthyBreakfastApp.Application.Services
             var user = await _userRepository.GetByIdAsync(id);
             if (user == null) return null;
 
-            return new UserDto
-            {
-                UserId = user.UserId,
-                Name = user.Name,
-                Email = user.Email,
-                Phone = user.Phone,
-                WalletBalance = user.WalletBalance,
-                CreatedAt = user.CreatedAt,
-                UpdatedAt = user.UpdatedAt
-            };
+            return MapToUserDto(user);
         }
 
         public async Task<bool> UserExistsAsync(string email)
@@ -57,38 +49,17 @@ namespace HealthyBreakfastApp.Application.Services
         public async Task<List<UserDto>> GetAllUsersAsync()
         {
             var users = await _userRepository.GetAllAsync();
-            
-            return users.Select(user => new UserDto
-            {
-                UserId = user.UserId,
-                Name = user.Name,
-                Email = user.Email,
-                Phone = user.Phone,
-                WalletBalance = user.WalletBalance,
-                CreatedAt = user.CreatedAt,
-                UpdatedAt = user.UpdatedAt
-            }).ToList();
+            return users.Select(MapToUserDto).ToList();
         }
 
-        // ✅ Get user by email (returns DTO)
         public async Task<UserDto?> GetUserByEmailAsync(string email)
         {
             var user = await _userRepository.GetByEmailAsync(email);
             if (user == null) return null;
 
-            return new UserDto
-            {
-                UserId = user.UserId,
-                Name = user.Name,
-                Email = user.Email,
-                Phone = user.Phone,
-                WalletBalance = user.WalletBalance,
-                CreatedAt = user.CreatedAt,
-                UpdatedAt = user.UpdatedAt
-            };
+            return MapToUserDto(user);
         }
 
-        // ✅ Register user with AuthId mapping (only way to create users)
         public async Task<UserDto> RegisterUserAsync(RegisterUserRequest request)
         {
             // Check if user already exists with this AuthId
@@ -112,42 +83,84 @@ namespace HealthyBreakfastApp.Application.Services
                 Email = request.Email,
                 Phone = request.Phone ?? string.Empty,
                 WalletBalance = 0.00m,
+                AccountStatus = "Active",
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
 
             var createdUser = await _userRepository.CreateUserWithAuthMappingAsync(user, request.AuthId);
 
-            return new UserDto
-            {
-                UserId = createdUser.UserId,
-                Name = createdUser.Name,
-                Email = createdUser.Email,
-                Phone = createdUser.Phone,
-                WalletBalance = createdUser.WalletBalance,
-                CreatedAt = createdUser.CreatedAt,
-                UpdatedAt = createdUser.UpdatedAt
-            };
+            return MapToUserDto(createdUser);
         }
 
-        // ✅ Get user by Supabase AuthId (only finds, doesn't create)
         public async Task<UserDto?> GetUserByAuthIdAsync(Guid authId)
         {
             var user = await _userRepository.GetUserByAuthIdAsync(authId);
             if (user == null) return null;
 
+            return MapToUserDto(user);
+        }
+
+        // ✅ NEW: Get user profile by AuthId (for profile page)
+        public async Task<UserDto?> GetUserProfileByAuthIdAsync(Guid authId)
+        {
+            var user = await _userRepository.GetUserByAuthIdAsync(authId);
+            if (user == null) return null;
+
+            return MapToUserDto(user);
+        }
+
+        // ✅ NEW: Update user profile
+        public async Task<UserDto> UpdateUserProfileAsync(Guid authId, UpdateUserProfileDto dto)
+        {
+            var user = await _userRepository.GetUserByAuthIdAsync(authId);
+            if (user == null)
+            {
+                throw new InvalidOperationException("User not found");
+            }
+
+            // Update only provided fields (partial update)
+            if (!string.IsNullOrWhiteSpace(dto.Name))
+            {
+                user.Name = dto.Name.Trim();
+            }
+
+            if (dto.Phone != null) // Allow empty string to clear phone
+            {
+                user.Phone = dto.Phone.Trim();
+            }
+
+            if (dto.DeliveryAddress != null) // Allow empty string to clear address
+            {
+                user.DeliveryAddress = dto.DeliveryAddress.Trim();
+            }
+
+            user.UpdatedAt = DateTime.UtcNow;
+
+            await _userRepository.UpdateUserAsync(user);
+            await _userRepository.SaveChangesAsync();
+
+            return MapToUserDto(user);
+        }
+
+        // ✅ HELPER: Map User entity to UserDto
+        private UserDto MapToUserDto(User user)
+        {
             return new UserDto
             {
                 UserId = user.UserId,
                 Name = user.Name,
                 Email = user.Email,
                 Phone = user.Phone,
+                DeliveryAddress = user.DeliveryAddress,
+                AccountStatus = user.AccountStatus,
                 WalletBalance = user.WalletBalance,
                 CreatedAt = user.CreatedAt,
-                UpdatedAt = user.UpdatedAt
+                UpdatedAt = user.UpdatedAt,
+                ProfileComplete = !string.IsNullOrWhiteSpace(user.Name) &&
+                                !string.IsNullOrWhiteSpace(user.Phone) &&
+                                !string.IsNullOrWhiteSpace(user.DeliveryAddress)
             };
         }
-
-        // ❌ REMOVED: FindOrCreateUserByAuthIdAsync() - This was causing auto-creation bug
     }
 }

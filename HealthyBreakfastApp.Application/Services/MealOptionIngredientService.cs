@@ -31,19 +31,6 @@ namespace HealthyBreakfastApp.Application.Services
             return entity.MealOptionIngredientId;
         }
 
-        public async Task<MealOptionIngredientDto?> GetMealOptionIngredientByIdAsync(int id)
-        {
-            var entity = await _repository.GetByIdAsync(id);
-            if (entity == null) return null;
-
-            return new MealOptionIngredientDto
-            {
-                MealOptionIngredientId = entity.MealOptionIngredientId,
-                MealOptionId = entity.MealOptionId,
-                IngredientId = entity.IngredientId,
-                CreatedAt = entity.CreatedAt,
-                UpdatedAt = entity.UpdatedAt
-            };
-        }
+        // ✅ REMOVED GetMealOptionIngredientByIdAsync - not needed for admin meal feature
     }
 }

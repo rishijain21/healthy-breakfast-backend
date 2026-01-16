@@ -15,6 +15,8 @@ namespace HealthyBreakfastApp.Application.Interfaces
         Task<UserDto> RegisterUserAsync(RegisterUserRequest request);
         Task<UserDto?> GetUserByAuthIdAsync(Guid authId);
         
-        // ❌ REMOVED: FindOrCreateUserByAuthIdAsync() - Causes auto-creation bug
+        // ✅ NEW PROFILE METHODS
+        Task<UserDto?> GetUserProfileByAuthIdAsync(Guid authId);
+        Task<UserDto> UpdateUserProfileAsync(Guid authId, UpdateUserProfileDto dto);
     }
 }
