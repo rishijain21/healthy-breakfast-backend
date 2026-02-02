@@ -1,68 +1,147 @@
+using System.Security.Claims;
 using HealthyBreakfastApp.Application.DTOs;
 using HealthyBreakfastApp.Application.Interfaces;
+using HealthyBreakfastApp.Infrastructure.Data;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace HealthyBreakfastApp.WebAPI.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
+    [Authorize]
     public class SubscriptionsController : ControllerBase
     {
         private readonly ISubscriptionService _subscriptionService;
+        private readonly AppDbContext _context;
 
-        public SubscriptionsController(ISubscriptionService subscriptionService)
+        public SubscriptionsController(
+            ISubscriptionService subscriptionService,
+            AppDbContext context)
         {
             _subscriptionService = subscriptionService;
+            _context = context;
+        }
+
+        // Helper to get current userId from JWT + AuthMapping
+        private async Task<int?> GetCurrentUserIdAsync()
+        {
+            var authId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(authId))
+                return null;
+
+            var mapping = await _context.UserAuthMappings
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.AuthId.ToString() == authId);
+
+            return mapping?.UserId;
         }
 
         [HttpGet]
         public async Task<ActionResult<IEnumerable<SubscriptionDto>>> GetAllSubscriptions()
         {
-            var subscriptions = await _subscriptionService.GetAllSubscriptionsAsync();
+            var userId = await GetCurrentUserIdAsync();
+            if (userId == null)
+                return Unauthorized();
+
+            var subscriptions = await _subscriptionService.GetSubscriptionsByUserIdAsync(userId.Value);
             return Ok(subscriptions);
         }
 
         [HttpGet("{id}")]
         public async Task<ActionResult<SubscriptionDto>> GetSubscription(int id)
         {
+            var userId = await GetCurrentUserIdAsync();
+            if (userId == null)
+                return Unauthorized();
+
             var subscription = await _subscriptionService.GetSubscriptionByIdAsync(id);
             if (subscription == null)
                 return NotFound();
 
+            if (subscription.UserId != userId.Value)
+                return Forbid();
+
             return Ok(subscription);
         }
 
-        [HttpGet("user/{userId}")]
-        public async Task<ActionResult<IEnumerable<SubscriptionDto>>> GetUserSubscriptions(int userId)
+        [HttpGet("user/me")]
+        public async Task<ActionResult<IEnumerable<SubscriptionDto>>> GetMySubscriptions()
         {
-            var subscriptions = await _subscriptionService.GetSubscriptionsByUserIdAsync(userId);
+            var userId = await GetCurrentUserIdAsync();
+            if (userId == null)
+                return Unauthorized();
+
+            var subscriptions = await _subscriptionService.GetSubscriptionsByUserIdAsync(userId.Value);
             return Ok(subscriptions);
         }
 
         [HttpGet("active")]
         public async Task<ActionResult<IEnumerable<SubscriptionDto>>> GetActiveSubscriptions()
         {
+            var userId = await GetCurrentUserIdAsync();
+            if (userId == null)
+                return Unauthorized();
+
             var subscriptions = await _subscriptionService.GetActiveSubscriptionsAsync();
             return Ok(subscriptions);
         }
 
+        /// <summary>
+        /// ✅ UPDATED: Extracts userId from JWT token and maps to CreateSubscriptionInternalDto
+        /// </summary>
         [HttpPost]
         public async Task<ActionResult<SubscriptionDto>> CreateSubscription(CreateSubscriptionDto createSubscriptionDto)
         {
+            var userId = await GetCurrentUserIdAsync();
+            if (userId == null)
+                return Unauthorized();
+
             try
             {
-                var subscription = await _subscriptionService.CreateSubscriptionAsync(createSubscriptionDto);
-                return CreatedAtAction(nameof(GetSubscription), new { id = subscription.SubscriptionId }, subscription);
+                // ✅ Map CreateSubscriptionDto to CreateSubscriptionInternalDto with UserId from JWT
+                var internalDto = new CreateSubscriptionInternalDto
+                {
+                    UserId = userId.Value,
+                    UserMealId = createSubscriptionDto.UserMealId,
+                    Frequency = createSubscriptionDto.Frequency,
+                    StartDate = createSubscriptionDto.StartDate,
+                    EndDate = createSubscriptionDto.EndDate,
+                    Active = createSubscriptionDto.Active,
+                    WeeklySchedule = createSubscriptionDto.WeeklySchedule
+                };
+
+                var subscription = await _subscriptionService.CreateSubscriptionAsync(internalDto);
+
+                return CreatedAtAction(nameof(GetSubscription),
+                    new { id = subscription.SubscriptionId },
+                    subscription);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Conflict(new { message = ex.Message });
             }
             catch (ArgumentException ex)
             {
-                return BadRequest(ex.Message);
+                return BadRequest(new { message = ex.Message });
             }
         }
 
         [HttpPut("{id}")]
         public async Task<ActionResult<SubscriptionDto>> UpdateSubscription(int id, UpdateSubscriptionDto updateSubscriptionDto)
         {
+            var userId = await GetCurrentUserIdAsync();
+            if (userId == null)
+                return Unauthorized();
+
+            var existing = await _subscriptionService.GetSubscriptionByIdAsync(id);
+            if (existing == null)
+                return NotFound();
+
+            if (existing.UserId != userId.Value)
+                return Forbid();
+
             try
             {
                 var subscription = await _subscriptionService.UpdateSubscriptionAsync(id, updateSubscriptionDto);
@@ -73,13 +152,24 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             }
             catch (ArgumentException ex)
             {
-                return BadRequest(ex.Message);
+                return BadRequest(new { message = ex.Message });
             }
         }
 
         [HttpDelete("{id}")]
         public async Task<IActionResult> DeleteSubscription(int id)
         {
+            var userId = await GetCurrentUserIdAsync();
+            if (userId == null)
+                return Unauthorized();
+
+            var existing = await _subscriptionService.GetSubscriptionByIdAsync(id);
+            if (existing == null)
+                return NotFound();
+
+            if (existing.UserId != userId.Value)
+                return Forbid();
+
             var result = await _subscriptionService.DeleteSubscriptionAsync(id);
             if (!result)
                 return NotFound();
@@ -90,21 +180,31 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         [HttpPatch("{id}/activate")]
         public async Task<IActionResult> ActivateSubscription(int id)
         {
-            var result = await _subscriptionService.ActivateSubscriptionAsync(id);
-            if (!result)
-                return NotFound();
+            var userId = await GetCurrentUserIdAsync();
+            if (userId == null)
+                return Unauthorized();
 
-            return NoContent();
+            var existing = await _subscriptionService.GetSubscriptionByIdAsync(id);
+            if (existing == null || existing.UserId != userId.Value)
+                return Forbid();
+
+            var result = await _subscriptionService.ActivateSubscriptionAsync(id);
+            return result ? Ok(new { message = "Subscription activated" }) : NotFound();
         }
 
         [HttpPatch("{id}/deactivate")]
         public async Task<IActionResult> DeactivateSubscription(int id)
         {
-            var result = await _subscriptionService.DeactivateSubscriptionAsync(id);
-            if (!result)
-                return NotFound();
+            var userId = await GetCurrentUserIdAsync();
+            if (userId == null)
+                return Unauthorized();
 
-            return NoContent();
+            var existing = await _subscriptionService.GetSubscriptionByIdAsync(id);
+            if (existing == null || existing.UserId != userId.Value)
+                return Forbid();
+
+            var result = await _subscriptionService.DeactivateSubscriptionAsync(id);
+            return result ? Ok(new { message = "Subscription deactivated" }) : NotFound();
         }
     }
 }

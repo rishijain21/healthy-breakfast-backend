@@ -8,7 +8,7 @@ namespace HealthyBreakfastApp.Application.Interfaces
         Task<SubscriptionDto?> GetSubscriptionByIdAsync(int subscriptionId);
         Task<IEnumerable<SubscriptionDto>> GetSubscriptionsByUserIdAsync(int userId);
         Task<IEnumerable<SubscriptionDto>> GetActiveSubscriptionsAsync();
-        Task<SubscriptionDto> CreateSubscriptionAsync(CreateSubscriptionDto createSubscriptionDto);
+Task<SubscriptionDto> CreateSubscriptionAsync(CreateSubscriptionInternalDto dto);
         Task<SubscriptionDto?> UpdateSubscriptionAsync(int subscriptionId, UpdateSubscriptionDto updateSubscriptionDto);
         Task<bool> DeleteSubscriptionAsync(int subscriptionId);
         Task<bool> ActivateSubscriptionAsync(int subscriptionId);

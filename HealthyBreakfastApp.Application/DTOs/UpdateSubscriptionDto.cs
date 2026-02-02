@@ -1,16 +1,18 @@
-using System.ComponentModel.DataAnnotations;
+// HealthyBreakfastApp.Application/DTOs/UpdateSubscriptionDto.cs
+
+using System.Collections.Generic;
+using HealthyBreakfastApp.Domain.Enums;
 
 namespace HealthyBreakfastApp.Application.DTOs
 {
     public class UpdateSubscriptionDto
     {
-        [StringLength(50)]
-        public string? Frequency { get; set; }
-
+        public SubscriptionFrequency? Frequency { get; set; }
         public DateOnly? StartDate { get; set; }
-
         public DateOnly? EndDate { get; set; }
-
         public bool? Active { get; set; }
+        
+        // ✅ NEW: Update weekly schedule
+        public List<WeeklyScheduleDto>? WeeklySchedule { get; set; }
     }
 }

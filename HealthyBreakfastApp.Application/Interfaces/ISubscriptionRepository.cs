@@ -1,3 +1,5 @@
+// HealthyBreakfastApp.Application/Interfaces/ISubscriptionRepository.cs
+
 using HealthyBreakfastApp.Domain.Entities;
 
 namespace HealthyBreakfastApp.Application.Interfaces
@@ -11,5 +13,10 @@ namespace HealthyBreakfastApp.Application.Interfaces
         Task<Subscription> CreateAsync(Subscription subscription);
         Task<Subscription> UpdateAsync(Subscription subscription);
         Task<bool> DeleteAsync(int subscriptionId);
+        
+        // ✅ NEW: Schedule management
+        Task<IEnumerable<SubscriptionSchedule>> GetSchedulesBySubscriptionIdAsync(int subscriptionId);
+        Task AddSchedulesAsync(int subscriptionId, IEnumerable<SubscriptionSchedule> schedules);
+        Task RemoveSchedulesAsync(int subscriptionId);
     }
 }

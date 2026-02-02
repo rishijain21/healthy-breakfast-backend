@@ -72,6 +72,53 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                 return StatusCode(500, new { message = "An error occurred while creating the scheduled order", details = ex.Message });
             }
         }
+/// <summary>
+/// ✅ DUPLICATE SCHEDULED ORDER - POST /api/ScheduledOrders/{id}/duplicate
+/// </summary>
+[HttpPost("{id}/duplicate")]
+public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrder(int id)
+{
+    try
+    {
+        // Extract auth ID from JWT
+        var authIdClaim = User.FindFirst("sub")?.Value ??
+                         User.FindFirst("user_id")?.Value ??
+                         User.FindFirst("id")?.Value ??
+                         User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+        _logger.LogInformation($"🔄 POST /duplicate - Found authId: {authIdClaim}");
+
+        if (string.IsNullOrEmpty(authIdClaim))
+        {
+            var allClaims = User.Claims.Select(c => $"{c.Type}: {c.Value}").ToList();
+            return Unauthorized($"Missing authentication claims. Available: {string.Join(", ", allClaims)}");
+        }
+
+        if (!Guid.TryParse(authIdClaim, out var authId))
+        {
+            return Unauthorized($"Invalid user identifier format: {authIdClaim}");
+        }
+
+        var result = await _scheduledOrderService.DuplicateScheduledOrderAsync(authId, id);
+        
+        _logger.LogInformation($"✅ Successfully duplicated order #{id} → #{result.ScheduledOrderId}");
+        
+        return Ok(result);
+    }
+    catch (InvalidOperationException ex)
+    {
+        _logger.LogWarning($"⚠️ Duplication failed: {ex.Message}");
+        return BadRequest(new { message = ex.Message });
+    }
+    catch (Exception ex)
+    {
+        _logger.LogError(ex, $"❌ Error duplicating scheduled order {id}");
+        return StatusCode(500, new { 
+            message = "An error occurred while duplicating the order", 
+            details = ex.Message 
+        });
+    }
+}
 
         [HttpGet("tomorrow")]
         public async Task<ActionResult<List<ScheduledOrderResponseDto>>> GetTomorrowScheduledOrders()

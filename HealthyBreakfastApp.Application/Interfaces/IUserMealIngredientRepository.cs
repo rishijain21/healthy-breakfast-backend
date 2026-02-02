@@ -1,4 +1,7 @@
+// HealthyBreakfastApp.Application/Interfaces/IUserMealIngredientRepository.cs
+
 using HealthyBreakfastApp.Domain.Entities;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 
 namespace HealthyBreakfastApp.Application.Interfaces
@@ -8,5 +11,8 @@ namespace HealthyBreakfastApp.Application.Interfaces
         Task AddAsync(UserMealIngredient entity);
         Task SaveChangesAsync();
         Task<UserMealIngredient?> GetByIdAsync(int id);
+        
+        // ✅ NEW: Get all ingredients for a specific UserMeal
+        Task<IEnumerable<UserMealIngredient>> GetByUserMealIdAsync(int userMealId);
     }
 }

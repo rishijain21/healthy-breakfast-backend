@@ -1,6 +1,10 @@
+// HealthyBreakfastApp.Domain/Entities/Subscription.cs
+
 using System;
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using HealthyBreakfastApp.Domain.Enums;
 
 namespace HealthyBreakfastApp.Domain.Entities
 {
@@ -15,14 +19,22 @@ namespace HealthyBreakfastApp.Domain.Entities
         [ForeignKey("UserMeal")]
         public int UserMealId { get; set; }
 
-        public string Frequency { get; set; } = null!;
+        public SubscriptionFrequency Frequency { get; set; }
+        
         public DateOnly StartDate { get; set; }
         public DateOnly EndDate { get; set; }
         public bool Active { get; set; }
+        
+        public DateOnly? NextScheduledDate { get; set; }
+        
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
 
+        // Navigation properties
         public User User { get; set; } = null!;
         public UserMeal UserMeal { get; set; } = null!;
+        
+        // ✅ NEW: Weekly delivery schedule
+        public ICollection<SubscriptionSchedule> WeeklySchedule { get; set; } = new List<SubscriptionSchedule>();
     }
 }

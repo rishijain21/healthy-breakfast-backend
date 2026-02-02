@@ -3,6 +3,7 @@ using System;
 using HealthyBreakfastApp.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace HealthyBreakfastApp.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260120114343_AddNextScheduledDateToSubscription")]
+    partial class AddNextScheduledDateToSubscription
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -495,45 +498,6 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                     b.ToTable("Subscriptions");
                 });
 
-            modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.SubscriptionSchedule", b =>
-                {
-                    b.Property<int>("ScheduleId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("ScheduleId"));
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("DayOfWeek")
-                        .HasColumnType("integer")
-                        .HasComment("Day of week: 0=Sunday, 1=Monday, 2=Tuesday, 3=Wednesday, 4=Thursday, 5=Friday, 6=Saturday");
-
-                    b.Property<int>("Quantity")
-                        .HasColumnType("integer")
-                        .HasComment("Number of items to deliver on this day");
-
-                    b.Property<int>("SubscriptionId")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("ScheduleId");
-
-                    b.HasIndex("SubscriptionId", "DayOfWeek")
-                        .IsUnique()
-                        .HasDatabaseName("IX_SubscriptionSchedules_Subscription_DayOfWeek");
-
-                    b.ToTable("SubscriptionSchedules", t =>
-                        {
-                            t.HasCheckConstraint("CK_SubscriptionSchedules_DayOfWeek", "\"DayOfWeek\" >= 0 AND \"DayOfWeek\" <= 6");
-
-                            t.HasCheckConstraint("CK_SubscriptionSchedules_Quantity", "\"Quantity\" > 0");
-                        });
-                });
-
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.User", b =>
                 {
                     b.Property<int>("UserId")
@@ -865,17 +829,6 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                     b.Navigation("UserMeal");
                 });
 
-            modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.SubscriptionSchedule", b =>
-                {
-                    b.HasOne("HealthyBreakfastApp.Domain.Entities.Subscription", "Subscription")
-                        .WithMany("WeeklySchedule")
-                        .HasForeignKey("SubscriptionId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Subscription");
-                });
-
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.UserAuthMapping", b =>
                 {
                     b.HasOne("HealthyBreakfastApp.Domain.Entities.User", "User")
@@ -954,11 +907,6 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.ScheduledOrder", b =>
                 {
                     b.Navigation("Ingredients");
-                });
-
-            modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.Subscription", b =>
-                {
-                    b.Navigation("WeeklySchedule");
                 });
 
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.User", b =>

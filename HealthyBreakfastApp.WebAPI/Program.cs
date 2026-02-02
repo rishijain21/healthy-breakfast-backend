@@ -1,9 +1,10 @@
+// HealthyBreakfastApp.WebAPI/Program.cs
+
 using HealthyBreakfastApp.Application.Interfaces;
 using HealthyBreakfastApp.Application.Services;
 using HealthyBreakfastApp.Infrastructure.Data;
 using HealthyBreakfastApp.Infrastructure.Repositories;
 using HealthyBreakfastApp.WebAPI.Middleware;
-using HealthyBreakfastApp.WebAPI.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -81,8 +82,8 @@ builder.Services.AddScoped<IWalletTransactionRepository, WalletTransactionReposi
 builder.Services.AddScoped<IScheduledOrderRepository, ScheduledOrderRepository>();
 builder.Services.AddScoped<IScheduledOrderService, ScheduledOrderService>();
 
-// ⚠️ REMOVE OLD BACKGROUND SERVICE (Hangfire replaces it)
-// builder.Services.AddHostedService<OrderConfirmationService>();
+// ✅ NEW: Subscription scheduling service
+builder.Services.AddScoped<ISubscriptionSchedulingService, SubscriptionSchedulingService>();
 
 // ========================================
 // 🌐 UTILITIES & HELPERS
@@ -188,7 +189,7 @@ builder.Services.AddSwaggerGen(c =>
     {
         Title = "HealthyBreakfastApp API",
         Version = "v1",
-        Description = "Production-ready API for Healthy Breakfast Delivery App with Hangfire Background Jobs"
+        Description = "Production-ready API for Healthy Breakfast Delivery App with Hangfire Background Jobs & Subscriptions"
     });
 
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
@@ -249,11 +250,25 @@ try
 {
     var recurringJobManager = app.Services.GetRequiredService<IRecurringJobManager>();
     
-    // ✅ MIDNIGHT ORDER CONFIRMATION JOB (12:00 AM IST)
+    // ✅ SUBSCRIPTION SCHEDULING JOB (12:01 AM IST - Creates orders for TODAY)
+    // Generates scheduled orders from active subscriptions for today's delivery
+    recurringJobManager.AddOrUpdate<ISubscriptionSchedulingService>(
+        "subscription-order-generation",
+        service => service.GenerateScheduledOrdersFromSubscriptionsAsync(),
+        "1 0 * * *",  // ✅ CHANGED: Every day at 12:01 AM IST (1 minute after midnight)
+        new RecurringJobOptions
+        {
+            TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata")
+        });
+    
+    logger.LogInformation("✅ Hangfire job scheduled: Subscription order generation (12:01 AM IST)");
+    
+    // ✅ MIDNIGHT ORDER CONFIRMATION JOB (12:00 AM IST next day)
+    // Confirms all scheduled orders for today's delivery and sends to kitchen
     recurringJobManager.AddOrUpdate<IScheduledOrderService>(
         "midnight-order-confirmation",
         service => service.ConfirmAllScheduledOrdersAsync(),
-        "0 0 * * *",  // Every day at 12:00 AM
+        "0 0 * * *",  // Every day at 12:00 AM IST
         new RecurringJobOptions
         {
             TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata")
@@ -269,6 +284,9 @@ catch (Exception ex)
 logger.LogInformation("🚀 HealthyBreakfastApp API started successfully");
 logger.LogInformation($"🔗 Swagger UI: http://localhost:5257/swagger");
 logger.LogInformation($"🎛️ Hangfire Dashboard: http://localhost:5257/hangfire");
+logger.LogInformation("📅 Scheduled Jobs (MilkBasket Style):");
+logger.LogInformation("   - Subscription generation: 12:01 AM IST daily (creates orders for TODAY)");
+logger.LogInformation("   - Order confirmation: 12:00 AM IST daily (confirms previous day's orders)");
 
 app.Run();
 

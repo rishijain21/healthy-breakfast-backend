@@ -4,10 +4,13 @@ using HealthyBreakfastApp.Domain.Enums;
 
 namespace HealthyBreakfastApp.Application.DTOs
 {
-    public class CreateSubscriptionDto
+    /// <summary>
+    /// Internal DTO used by service layer (includes UserId from JWT token)
+    /// </summary>
+    public class CreateSubscriptionInternalDto
     {
-        // ❌ REMOVED: public int UserId { get; set; }
-        
+        public int UserId { get; set; }  // Set by controller from JWT
+
         [Required]
         public int UserMealId { get; set; }
 

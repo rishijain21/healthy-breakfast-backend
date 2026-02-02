@@ -5,6 +5,8 @@ namespace HealthyBreakfastApp.Application.DTOs
 {
     public class CreateScheduledOrderDto
     {
+        public string? MealName { get; set; }
+        public decimal? MealPrice { get; set; }  // ✅ Better placement
         public List<ScheduledOrderIngredientDto> SelectedIngredients { get; set; } = new();
         public DateTime ScheduledFor { get; set; }
         public string DeliveryTimeSlot { get; set; } = "10:00 AM";

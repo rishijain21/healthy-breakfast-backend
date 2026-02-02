@@ -1,3 +1,7 @@
+// HealthyBreakfastApp.Infrastructure/Repositories/UserMealIngredientRepository.cs
+
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using HealthyBreakfastApp.Application.Interfaces;
 using HealthyBreakfastApp.Domain.Entities;
@@ -27,7 +31,17 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
 
         public async Task<UserMealIngredient?> GetByIdAsync(int id)
         {
-            return await _context.UserMealIngredients.FirstOrDefaultAsync(umi => umi.UserMealIngredientId == id);
+            return await _context.UserMealIngredients
+                .FirstOrDefaultAsync(umi => umi.UserMealIngredientId == id);
+        }
+
+        // ✅ NEW: Get all ingredients for a specific UserMeal with Ingredient details
+        public async Task<IEnumerable<UserMealIngredient>> GetByUserMealIdAsync(int userMealId)
+        {
+            return await _context.UserMealIngredients
+                .Include(umi => umi.Ingredient)  // Include ingredient details
+                .Where(umi => umi.UserMealId == userMealId)
+                .ToListAsync();
         }
     }
 }

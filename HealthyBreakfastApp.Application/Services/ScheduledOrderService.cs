@@ -44,21 +44,20 @@ namespace HealthyBreakfastApp.Application.Services
             if (user == null)
                 throw new InvalidOperationException("User not found");
 
-            // ✅ MILKBASKET LOGIC: Orders placed today are for TOMORROW's delivery
             var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
             var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
-            var tomorrowIst = istNow.Date.AddDays(1); // TOMORROW
+            var tomorrowIst = istNow.Date.AddDays(1);
 
             _logger.LogInformation($"📦 Order placed at: {istNow:yyyy-MM-dd HH:mm:ss} IST");
             _logger.LogInformation($"🚚 Delivery scheduled for: {tomorrowIst:yyyy-MM-dd} (next morning)");
 
-            // Set delivery date to tomorrow (ignore what frontend sends)
             var deliveryDate = DateTime.SpecifyKind(tomorrowIst, DateTimeKind.Utc);
 
-            // Calculate price
+            // ✅ NEW: Price calculation logic
+            decimal totalPrice;
             var ingredients = new List<(Ingredient ingredient, int quantity)>();
-            decimal totalPrice = 0;
 
+            // Load ingredients first (needed for cart display)
             foreach (var ingredientDto in dto.SelectedIngredients)
             {
                 var ingredient = await _ingredientRepository.GetByIdAsync(ingredientDto.IngredientId);
@@ -66,28 +65,40 @@ namespace HealthyBreakfastApp.Application.Services
                     throw new InvalidOperationException($"Ingredient {ingredientDto.IngredientId} not found");
 
                 ingredients.Add((ingredient, ingredientDto.Quantity));
-                totalPrice += ingredient.Price * ingredientDto.Quantity;
+            }
+
+            // ✅ FEATURED MEAL: Use fixed price if provided
+            if (dto.MealPrice.HasValue && dto.MealPrice.Value > 0)
+            {
+                totalPrice = dto.MealPrice.Value;
+                _logger.LogInformation($"💰 Using featured meal fixed price: ₹{totalPrice}");
+            }
+            else
+            {
+                // ✅ CUSTOM MEAL: Calculate from ingredients
+                totalPrice = ingredients.Sum(i => i.ingredient.Price * i.quantity);
+                _logger.LogInformation($"💰 Calculated price from ingredients: ₹{totalPrice}");
             }
 
             // Check wallet balance
             if (!await CheckWalletBalanceAsync(authId, totalPrice))
                 throw new InvalidOperationException("Insufficient wallet balance");
 
-            // Create ScheduledOrder (goes to cart)
+            // Create ScheduledOrder
             var scheduledOrder = new ScheduledOrder
             {
                 UserId = user.UserId,
                 AuthId = authId,
-                MealName = "Custom Overnight Oats",
-                ScheduledFor = deliveryDate, // TOMORROW
+                MealName = dto.MealName ?? "Custom Overnight Oats",
+                ScheduledFor = deliveryDate,
                 DeliveryTimeSlot = dto.DeliveryTimeSlot ?? "8:00 AM",
                 TotalPrice = totalPrice,
                 NutritionalSummary = dto.NutritionalSummary != null
                     ? JsonSerializer.Serialize(dto.NutritionalSummary)
                     : null,
-                OrderStatus = "scheduled", // In cart
-                CanModify = true, // Editable until 11:59 PM
-                ExpiresAt = deliveryDate.AddDays(1), // Editable until day after delivery
+                OrderStatus = "scheduled",
+                CanModify = true,
+                ExpiresAt = deliveryDate.AddDays(1),
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
@@ -106,9 +117,129 @@ namespace HealthyBreakfastApp.Application.Services
             var createdOrder = await _scheduledOrderRepository.CreateAsync(scheduledOrder);
             
             _logger.LogInformation($"✅ Order #{createdOrder.ScheduledOrderId} created for {tomorrowIst:yyyy-MM-dd} delivery");
+            _logger.LogInformation($"   💳 Total price: ₹{totalPrice}");
             
             return await MapToResponseDto(createdOrder);
         }
+
+        // ----------------------------------------------------------------------------------------
+        // ✅ DUPLICATE SCHEDULED ORDER - Creates exact copy without navigation
+        // ----------------------------------------------------------------------------------------
+    // ----------------------------------------------------------------------------------------
+// ✅ DUPLICATE SCHEDULED ORDER - Creates exact copy without navigation
+// ----------------------------------------------------------------------------------------
+/// <summary>
+/// ✅ DUPLICATE SCHEDULED ORDER - Fixed for PostgreSQL UTC
+/// </summary>
+public async Task<ScheduledOrderResponseDto> DuplicateScheduledOrderAsync(Guid authId, int scheduledOrderId)
+{
+    try
+    {
+        _logger.LogInformation($"🔄 Duplicating order #{scheduledOrderId} for user {authId}");
+
+        // 1. Find original order
+        var originalOrder = await _scheduledOrderRepository.GetByIdAndAuthIdAsync(scheduledOrderId, authId);
+        if (originalOrder == null)
+        {
+            _logger.LogWarning($"❌ Order #{scheduledOrderId} not found");
+            throw new InvalidOperationException("Scheduled order not found");
+        }
+
+        _logger.LogInformation($"✅ Found original order: {originalOrder.MealName}");
+
+        // 2. Validate order can be duplicated
+        if (originalOrder.OrderStatus.ToLower() != "scheduled")
+        {
+            _logger.LogWarning($"❌ Cannot duplicate order with status: {originalOrder.OrderStatus}");
+            throw new InvalidOperationException($"Cannot duplicate order with status '{originalOrder.OrderStatus}'");
+        }
+
+        // 3. Check wallet balance
+        if (!await CheckWalletBalanceAsync(authId, originalOrder.TotalPrice))
+        {
+            _logger.LogWarning($"❌ Insufficient balance for duplication");
+            throw new InvalidOperationException("Insufficient wallet balance");
+        }
+
+        // 4. Verify user exists
+        var user = await _userRepository.GetByAuthIdAsync(authId);
+        if (user == null)
+        {
+            _logger.LogWarning($"❌ User not found");
+            throw new InvalidOperationException("User not found");
+        }
+
+        // 5. Validate all ingredients still exist
+        if (originalOrder.Ingredients == null || originalOrder.Ingredients.Count == 0)
+        {
+            _logger.LogWarning($"❌ Original order has no ingredients");
+            throw new InvalidOperationException("Original order has no ingredients");
+        }
+
+        foreach (var ingredient in originalOrder.Ingredients)
+        {
+            var currentIngredient = await _ingredientRepository.GetByIdAsync(ingredient.IngredientId);
+            if (currentIngredient == null)
+            {
+                _logger.LogWarning($"❌ Ingredient {ingredient.IngredientId} not available");
+                throw new InvalidOperationException("Some ingredients are no longer available");
+            }
+        }
+
+        _logger.LogInformation($"✅ All validations passed, creating duplicate...");
+
+        // 6. Create duplicate order with UTC DateTimes
+        var duplicateOrder = new ScheduledOrder
+        {
+            UserId = user.UserId,
+            AuthId = authId,
+            MealName = originalOrder.MealName,
+            ScheduledFor = DateTime.SpecifyKind(originalOrder.ScheduledFor, DateTimeKind.Utc), // ✅ FIX
+            DeliveryTimeSlot = originalOrder.DeliveryTimeSlot,
+            TotalPrice = originalOrder.TotalPrice,
+            NutritionalSummary = originalOrder.NutritionalSummary,
+            OrderStatus = "scheduled",
+            CanModify = true,
+            ExpiresAt = DateTime.SpecifyKind(originalOrder.ExpiresAt, DateTimeKind.Utc), // ✅ FIX
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+
+        // 7. Copy ingredients
+        foreach (var originalIngredient in originalOrder.Ingredients)
+        {
+            duplicateOrder.Ingredients.Add(new ScheduledOrderIngredient
+            {
+                IngredientId = originalIngredient.IngredientId,
+                Quantity = originalIngredient.Quantity,
+                UnitPrice = originalIngredient.UnitPrice,
+                TotalPrice = originalIngredient.TotalPrice,
+                CreatedAt = DateTime.UtcNow
+            });
+        }
+
+        _logger.LogInformation($"✅ Duplicate prepared with {duplicateOrder.Ingredients.Count} ingredients");
+
+        // 8. Save to database
+        var createdOrder = await _scheduledOrderRepository.CreateAsync(duplicateOrder);
+
+        _logger.LogInformation(
+            $"✅ Duplicated order #{scheduledOrderId} → #{createdOrder.ScheduledOrderId} " +
+            $"for {createdOrder.ScheduledFor:yyyy-MM-dd} (₹{createdOrder.TotalPrice})");
+
+        return await MapToResponseDto(createdOrder);
+    }
+    catch (InvalidOperationException ex)
+    {
+        _logger.LogWarning($"⚠️ Duplication validation failed: {ex.Message}");
+        throw; // Re-throw validation errors as-is
+    }
+    catch (Exception ex)
+    {
+        _logger.LogError(ex, $"❌ Unexpected error duplicating order #{scheduledOrderId}");
+        throw new InvalidOperationException("Failed to duplicate order. Please try again.", ex);
+    }
+}
 
         // ----------------------------------------------------------------------------------------
         // GET SCHEDULED ORDERS FOR SPECIFIC DATE

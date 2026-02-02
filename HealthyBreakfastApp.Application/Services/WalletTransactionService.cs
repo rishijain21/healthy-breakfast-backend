@@ -13,6 +13,10 @@ namespace HealthyBreakfastApp.Application.Services
         private readonly IWalletTransactionRepository _walletTransactionRepository;
         private readonly IUserRepository _userRepository;
 
+        // ✅ UPDATED: Removed MAX_TOPUP_AMOUNT
+        private const decimal MAX_WALLET_BALANCE = 50000m;
+        private const decimal MIN_TOPUP_AMOUNT = 50m;
+
         public WalletTransactionService(
             IWalletTransactionRepository walletTransactionRepository,
             IUserRepository userRepository)
@@ -61,10 +65,34 @@ namespace HealthyBreakfastApp.Application.Services
             };
         }
 
+        // ✅ UPDATED: Removed MAX_TOPUP_AMOUNT validation
         public async Task<WalletTransactionDto> CreateTransactionAsync(CreateWalletTransactionDto dto)
         {
             var user = await _userRepository.GetByIdAsync(dto.UserId) ?? throw new ArgumentException("User not found");
-            if (dto.Type != "Credit" && dto.Type != "Debit") throw new ArgumentException("Transaction type must be 'Credit' or 'Debit'");
+            
+            if (dto.Type != "Credit" && dto.Type != "Debit") 
+                throw new ArgumentException("Transaction type must be 'Credit' or 'Debit'");
+
+            // ✅ Validate wallet limit for Credit transactions
+            if (dto.Type == "Credit")
+            {
+                var currentBalance = await GetUserBalanceAsync(dto.UserId);
+                var newBalance = currentBalance + dto.Amount;
+
+                if (dto.Amount < MIN_TOPUP_AMOUNT)
+                    throw new InvalidOperationException($"Minimum top-up amount is ₹{MIN_TOPUP_AMOUNT}");
+
+                if (newBalance > MAX_WALLET_BALANCE)
+                {
+                    var remaining = MAX_WALLET_BALANCE - currentBalance;
+                    throw new InvalidOperationException(
+                        $"Cannot add ₹{dto.Amount}. Maximum wallet balance is ₹{MAX_WALLET_BALANCE}. " +
+                        $"Current balance: ₹{currentBalance}. You can add up to ₹{remaining}."
+                    );
+                }
+            }
+
+            // ✅ Validate sufficient balance for Debit transactions
             if (dto.Type == "Debit" && !await HasSufficientBalanceAsync(dto.UserId, dto.Amount))
                 throw new InvalidOperationException("Insufficient wallet balance");
 
@@ -83,8 +111,25 @@ namespace HealthyBreakfastApp.Application.Services
             return MapToDto(transactionFromDb);
         }
 
+        // ✅ UPDATED: Removed MAX_TOPUP_AMOUNT validation
         public async Task<UserDto> TopUpWalletAsync(int userId, decimal amount, string description = "Wallet top-up")
         {
+            // Validate minimum amount
+            if (amount < MIN_TOPUP_AMOUNT)
+                throw new InvalidOperationException($"Minimum top-up amount is ₹{MIN_TOPUP_AMOUNT}");
+
+            var currentBalance = await GetUserBalanceAsync(userId);
+            var newBalance = currentBalance + amount;
+
+            if (newBalance > MAX_WALLET_BALANCE)
+            {
+                var remaining = MAX_WALLET_BALANCE - currentBalance;
+                throw new InvalidOperationException(
+                    $"Cannot add ₹{amount}. Maximum wallet balance is ₹{MAX_WALLET_BALANCE}. " +
+                    $"Current balance: ₹{currentBalance}. You can add up to ₹{remaining}."
+                );
+            }
+
             var transactionDto = await CreateTransactionAsync(new CreateWalletTransactionDto
             {
                 UserId = userId,
@@ -111,7 +156,7 @@ namespace HealthyBreakfastApp.Application.Services
                 UserId = userId,
                 Amount = topUpDto.Amount,
                 Type = "Credit",
-                Description = topUpDto.Description ?? $"Wallet top-up of {topUpDto.Amount}"
+                Description = topUpDto.Description ?? $"Wallet top-up of ₹{topUpDto.Amount}"
             });
 
         public async Task<WalletTransactionDto> DebitWalletAsync(int userId, decimal amount, string description)
@@ -129,7 +174,6 @@ namespace HealthyBreakfastApp.Application.Services
         public async Task<decimal> GetWalletBalanceAsync(int userId)
             => await GetUserBalanceAsync(userId);
 
-        // ✅ OPTIMIZED: Removed UserName and UserEmail mapping
         private static WalletTransactionDto MapToDto(WalletTransaction t)
             => new WalletTransactionDto
             {
@@ -139,7 +183,6 @@ namespace HealthyBreakfastApp.Application.Services
                 Type = t.Type,
                 Description = t.Description,
                 CreatedAt = t.CreatedAt
-                // ✅ REMOVED: UserName and UserEmail (no longer needed)
             };
     }
 }

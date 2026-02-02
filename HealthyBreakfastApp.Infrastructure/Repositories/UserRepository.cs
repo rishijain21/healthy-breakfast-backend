@@ -14,16 +14,19 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
             _context = context;
         }
 
-        // ✅ EXISTING METHODS
+        // ✅ FIXED: Now includes AuthMapping
         public async Task<User?> GetByIdAsync(int id)
         {
-            return await _context.Users.FindAsync(id);
+            return await _context.Users
+                .Include(u => u.AuthMapping)
+                .FirstOrDefaultAsync(u => u.UserId == id);
         }
-public async Task UpdateUserAsync(User user)
-{
-    _context.Users.Update(user);
-    // SaveChangesAsync will be called by the service
-}
+
+        public async Task UpdateUserAsync(User user)
+        {
+            _context.Users.Update(user);
+            // SaveChangesAsync will be called by the service
+        }
 
         public async Task<User?> GetByEmailAsync(string email)
         {
