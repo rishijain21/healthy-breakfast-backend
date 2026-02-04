@@ -191,6 +191,33 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             var result = await _subscriptionService.ActivateSubscriptionAsync(id);
             return result ? Ok(new { message = "Subscription activated" }) : NotFound();
         }
+/// <summary>
+/// ✅ NEW: Manual endpoint to force update all subscription NextScheduledDates
+/// </summary>
+[HttpPost("sync-dates")]
+public async Task<IActionResult> SyncSubscriptionDates()
+{
+    try
+    {
+        await _subscriptionService.UpdateNextScheduledDatesAsync();
+        
+        return Ok(new 
+        { 
+            success = true,
+            message = "Subscription dates synchronized successfully",
+            timestamp = DateTime.UtcNow
+        });
+    }
+    catch (Exception ex)
+    {
+        return StatusCode(500, new 
+        { 
+            success = false,
+            message = "Failed to sync subscription dates", 
+            error = ex.Message 
+        });
+    }
+}
 
         [HttpPatch("{id}/deactivate")]
         public async Task<IActionResult> DeactivateSubscription(int id)

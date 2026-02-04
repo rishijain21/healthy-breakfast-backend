@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("HealthyBreakfastApp.WebAPI")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+20cfe732ceaf1d114a4068c052cc54444b4ab355")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+46471d20918d6d2dcf7f90e555e9e654cd96a234")]
 [assembly: System.Reflection.AssemblyProductAttribute("HealthyBreakfastApp.WebAPI")]
 [assembly: System.Reflection.AssemblyTitleAttribute("HealthyBreakfastApp.WebAPI")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

@@ -1,42 +1,95 @@
 using HealthyBreakfastApp.Application.DTOs;
 using HealthyBreakfastApp.Application.Interfaces;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System.Threading.Tasks;
-using System.Collections.Generic;
 
 namespace HealthyBreakfastApp.WebAPI.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
+    [Authorize]
     public class UserMealsController : ControllerBase
     {
-        private readonly IUserMealService _service;
+        private readonly IUserMealService _userMealService;
+        private readonly ILogger<UserMealsController> _logger;
 
-        public UserMealsController(IUserMealService service)
+        public UserMealsController(
+            IUserMealService userMealService,
+            ILogger<UserMealsController> logger)
         {
-            _service = service;
+            _userMealService = userMealService;
+            _logger = logger;
         }
 
+        /// <summary>
+        /// Creates a new UserMeal (for subscription meal template)
+        /// </summary>
         [HttpPost]
         public async Task<IActionResult> Create([FromBody] CreateUserMealDto dto)
         {
-            var id = await _service.CreateUserMealAsync(dto);
-            return CreatedAtAction(nameof(GetById), new { id }, null);
+            try
+            {
+                // ✅ Get UserId from HttpContext (set by AuthMiddleware)
+                if (!HttpContext.Items.ContainsKey("UserId"))
+                {
+                    _logger.LogWarning("❌ UserId not found in HttpContext. User not authenticated.");
+                    return Unauthorized(new { message = "User not authenticated" });
+                }
+
+                var userId = (int)HttpContext.Items["UserId"]!;
+                _logger.LogInformation($"✅ Creating UserMeal for UserId: {userId}");
+
+                // ✅ FIX: Set UserId from authenticated context - don't trust client input
+                dto.UserId = userId;
+
+                var userMealId = await _userMealService.CreateUserMealAsync(dto);
+                return Ok(new { userMealId, message = "UserMeal created successfully" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ Error creating UserMeal");
+                return StatusCode(500, new { message = ex.Message });
+            }
         }
 
+        /// <summary>
+        /// Gets a specific UserMeal by ID
+        /// </summary>
         [HttpGet("{id}")]
         public async Task<IActionResult> GetById(int id)
         {
-            var entity = await _service.GetUserMealByIdAsync(id);
-            if (entity == null) return NotFound();
-            return Ok(entity);
+            try
+            {
+                var userMeal = await _userMealService.GetUserMealByIdAsync(id);
+                if (userMeal == null)
+                {
+                    return NotFound();
+                }
+                return Ok(userMeal);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"❌ Error fetching UserMeal {id}");
+                return StatusCode(500, new { message = ex.Message });
+            }
         }
 
+        /// <summary>
+        /// Gets all UserMeals for a specific user
+        /// </summary>
         [HttpGet("ByUser/{userId}")]
         public async Task<IActionResult> GetByUserId(int userId)
         {
-            var entities = await _service.GetUserMealsByUserIdAsync(userId);
-            return Ok(entities);
+            try
+            {
+                var userMeals = await _userMealService.GetUserMealsByUserIdAsync(userId);
+                return Ok(userMeals);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"❌ Error fetching UserMeals for user {userId}");
+                return StatusCode(500, new { message = ex.Message });
+            }
         }
     }
 }

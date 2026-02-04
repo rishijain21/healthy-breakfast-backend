@@ -236,8 +236,8 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
 });
 
 app.UseAuthentication();
-app.UseAuthorization();
 app.UseMiddleware<AuthMiddleware>();
+app.UseAuthorization();
 
 app.MapControllers();
 
@@ -250,12 +250,12 @@ try
 {
     var recurringJobManager = app.Services.GetRequiredService<IRecurringJobManager>();
     
-    // ✅ SUBSCRIPTION SCHEDULING JOB (12:01 AM IST - Creates orders for TODAY)
-    // Generates scheduled orders from active subscriptions for today's delivery
+    // ✅ JOB 1: SUBSCRIPTION ORDER GENERATION (12:01 AM IST)
+    // Generates scheduled orders from active subscriptions for TOMORROW's delivery
     recurringJobManager.AddOrUpdate<ISubscriptionSchedulingService>(
         "subscription-order-generation",
         service => service.GenerateScheduledOrdersFromSubscriptionsAsync(),
-        "1 0 * * *",  // ✅ CHANGED: Every day at 12:01 AM IST (1 minute after midnight)
+        "1 0 * * *",  // Every day at 12:01 AM IST (1 minute after midnight)
         new RecurringJobOptions
         {
             TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata")
@@ -263,8 +263,8 @@ try
     
     logger.LogInformation("✅ Hangfire job scheduled: Subscription order generation (12:01 AM IST)");
     
-    // ✅ MIDNIGHT ORDER CONFIRMATION JOB (12:00 AM IST next day)
-    // Confirms all scheduled orders for today's delivery and sends to kitchen
+    // ✅ JOB 2: MIDNIGHT ORDER CONFIRMATION (12:00 AM IST)
+    // Confirms all scheduled orders for TODAY's delivery and sends to kitchen
     recurringJobManager.AddOrUpdate<IScheduledOrderService>(
         "midnight-order-confirmation",
         service => service.ConfirmAllScheduledOrdersAsync(),
@@ -275,6 +275,20 @@ try
         });
     
     logger.LogInformation("✅ Hangfire job scheduled: Midnight order confirmation (12:00 AM IST)");
+    
+    // ✅ JOB 3: SUBSCRIPTION DATE SYNC (11:59 PM IST)
+    // Updates NextScheduledDate for all active subscriptions
+    // Keeps subscription cards showing accurate "Next Delivery" dates
+    recurringJobManager.AddOrUpdate<ISubscriptionService>(
+        "sync-subscription-dates",
+        service => service.UpdateNextScheduledDatesAsync(),
+        "59 23 * * *",  // Every day at 11:59 PM IST (1 minute before midnight)
+        new RecurringJobOptions
+        {
+            TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata")
+        });
+    
+    logger.LogInformation("✅ Hangfire job scheduled: Subscription date sync (11:59 PM IST)");
 }
 catch (Exception ex)
 {
@@ -285,8 +299,9 @@ logger.LogInformation("🚀 HealthyBreakfastApp API started successfully");
 logger.LogInformation($"🔗 Swagger UI: http://localhost:5257/swagger");
 logger.LogInformation($"🎛️ Hangfire Dashboard: http://localhost:5257/hangfire");
 logger.LogInformation("📅 Scheduled Jobs (MilkBasket Style):");
-logger.LogInformation("   - Subscription generation: 12:01 AM IST daily (creates orders for TODAY)");
-logger.LogInformation("   - Order confirmation: 12:00 AM IST daily (confirms previous day's orders)");
+logger.LogInformation("   - Subscription generation: 12:01 AM IST daily (creates orders for TOMORROW)");
+logger.LogInformation("   - Order confirmation: 12:00 AM IST daily (confirms TODAY's orders)");
+logger.LogInformation("   - Subscription date sync: 11:59 PM IST daily (updates NextScheduledDate)");
 
 app.Run();
 

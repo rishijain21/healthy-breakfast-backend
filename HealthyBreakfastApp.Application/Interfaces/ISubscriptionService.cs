@@ -1,3 +1,5 @@
+// HealthyBreakfastApp.Application/Interfaces/ISubscriptionService.cs
+
 using HealthyBreakfastApp.Application.DTOs;
 
 namespace HealthyBreakfastApp.Application.Interfaces
@@ -8,10 +10,13 @@ namespace HealthyBreakfastApp.Application.Interfaces
         Task<SubscriptionDto?> GetSubscriptionByIdAsync(int subscriptionId);
         Task<IEnumerable<SubscriptionDto>> GetSubscriptionsByUserIdAsync(int userId);
         Task<IEnumerable<SubscriptionDto>> GetActiveSubscriptionsAsync();
-Task<SubscriptionDto> CreateSubscriptionAsync(CreateSubscriptionInternalDto dto);
+        Task<SubscriptionDto> CreateSubscriptionAsync(CreateSubscriptionInternalDto dto);
         Task<SubscriptionDto?> UpdateSubscriptionAsync(int subscriptionId, UpdateSubscriptionDto updateSubscriptionDto);
         Task<bool> DeleteSubscriptionAsync(int subscriptionId);
         Task<bool> ActivateSubscriptionAsync(int subscriptionId);
         Task<bool> DeactivateSubscriptionAsync(int subscriptionId);
+        
+        // ✅ NEW: Update NextScheduledDate for all active subscriptions
+        Task UpdateNextScheduledDatesAsync();
     }
 }
