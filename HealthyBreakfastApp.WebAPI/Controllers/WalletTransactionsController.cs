@@ -28,77 +28,16 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             _logger = logger;
         }
 
-        [HttpGet]
-        public async Task<ActionResult<IEnumerable<WalletTransactionDto>>> GetAllTransactions()
-        {
-            var transactions = await _walletTransactionService.GetAllTransactionsAsync();
-            return Ok(transactions);
-        }
+        // ==================== USER ENDPOINTS ====================
 
-        [HttpGet("{id}")]
-        public async Task<ActionResult<WalletTransactionDto>> GetTransaction(int id)
-        {
-            var transaction = await _walletTransactionService.GetTransactionByIdAsync(id);
-            if (transaction == null) return NotFound();
-            return Ok(transaction);
-        }
-
-        [HttpGet("user/{userId}")]
-        public async Task<ActionResult<IEnumerable<WalletTransactionDto>>> GetUserTransactions(int userId)
-        {
-            var transactions = await _walletTransactionService.GetUserTransactionsAsync(userId);
-            return Ok(transactions);
-        }
-
-        [HttpGet("user/{userId}/type/{type}")]
-        public async Task<ActionResult<IEnumerable<WalletTransactionDto>>> GetUserTransactionsByType(int userId, string type)
-        {
-            var transactions = await _walletTransactionService.GetUserTransactionsByTypeAsync(userId, type);
-            return Ok(transactions);
-        }
-
-        [HttpGet("user/{userId}/balance")]
-        public async Task<ActionResult<object>> GetUserBalance(int userId)
-        {
-            var balance = await _walletTransactionService.GetUserBalanceAsync(userId);
-            return Ok(new { userId, balance });
-        }
-
-        [HttpGet("user/{userId}/summary")]
-        public async Task<ActionResult<UserWalletSummaryDto>> GetUserWalletSummary(int userId)
-        {
-            var summary = await _walletTransactionService.GetUserWalletSummaryAsync(userId);
-            if (summary == null) return NotFound();
-            return Ok(summary);
-        }
-
-        [HttpPost("user/{userId}/topup")]
-        public async Task<ActionResult<WalletTransactionDto>> TopUpWallet(int userId, WalletTopUpDto topUpDto)
-        {
-            var transaction = await _walletTransactionService.TopUpWalletAsync(userId, topUpDto);
-            return CreatedAtAction(nameof(GetTransaction), new { id = transaction.TransactionId }, transaction);
-        }
-
-        [HttpPost("user/{userId}/debit")]
-        public async Task<ActionResult<WalletTransactionDto>> DebitWallet(int userId, [FromBody] DebitWalletDto debitDto)
-        {
-            var transaction = await _walletTransactionService.DebitWalletAsync(userId, debitDto.Amount, debitDto.Description);
-            return CreatedAtAction(nameof(GetTransaction), new { id = transaction.TransactionId }, transaction);
-        }
-
-        [HttpGet("user/{userId}/balance/check")]
-        public async Task<ActionResult<object>> CheckSufficientBalance(int userId, [FromQuery] decimal amount)
-        {
-            var hasSufficientBalance = await _walletTransactionService.HasSufficientBalanceAsync(userId, amount);
-            return Ok(new { userId, amount, hasSufficientBalance });
-        }
-
-        [HttpGet("balance-by-auth")]
-        public async Task<ActionResult<object>> GetWalletBalanceByAuth([FromQuery] string? authId = null)
+        /// <summary>
+        /// ✅ SECURE: Gets wallet balance for the authenticated user
+        /// </summary>
+        [HttpGet("my-balance")]
+        public async Task<ActionResult<object>> GetMyBalance()
         {
             try
             {
-                // ✅ UNIFIED: Get auth ID using consistent method
                 var currentAuthId = GetCurrentAuthId();
                 _logger.LogInformation($"📋 WALLET: Retrieved authId: {currentAuthId}");
                 
@@ -112,7 +51,6 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                     return Unauthorized($"Invalid user identifier format: {currentAuthId}");
                 }
 
-                // ✅ FIXED: Only find user, don't create
                 var userDto = await _userService.GetUserByAuthIdAsync(validatedAuthId);
                 if (userDto == null)
                 {
@@ -131,8 +69,11 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             }
         }
 
-        [HttpGet("transactions-by-auth")]
-        public async Task<ActionResult<IEnumerable<WalletTransactionDto>>> GetUserTransactionsByAuth()
+        /// <summary>
+        /// ✅ SECURE: Gets wallet transactions for the authenticated user
+        /// </summary>
+        [HttpGet("my-transactions")]
+        public async Task<ActionResult<IEnumerable<WalletTransactionDto>>> GetMyTransactions()
         {
             try
             {
@@ -142,7 +83,6 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                     return Unauthorized("User not authenticated");
                 }
 
-                // ✅ FIXED: Only find user, don't create
                 var userDto = await _userService.GetUserByAuthIdAsync(authGuid);
                 if (userDto == null)
                 {
@@ -159,8 +99,11 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             }
         }
 
-        [HttpPost("topup-by-auth")]
-        public async Task<ActionResult<WalletTransactionDto>> TopUpWalletByAuth([FromBody] WalletTopUpDto topUpDto)
+        /// <summary>
+        /// ✅ SECURE: Top up wallet for the authenticated user
+        /// </summary>
+        [HttpPost("topup")]
+        public async Task<ActionResult<WalletTransactionDto>> TopUpMyWallet([FromBody] WalletTopUpDto topUpDto)
         {
             try
             {
@@ -170,11 +113,15 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                     return Unauthorized("User not authenticated");
                 }
 
-                // ✅ FIXED: Only find user, don't create
                 var userDto = await _userService.GetUserByAuthIdAsync(authGuid);
                 if (userDto == null)
                 {
                     return Unauthorized(new { message = "User not found. Please complete registration first." });
+                }
+
+                if (topUpDto.Amount <= 0)
+                {
+                    return BadRequest(new { message = "Amount must be greater than 0" });
                 }
 
                 var transaction = await _walletTransactionService.TopUpWalletAsync(userDto.UserId, topUpDto);
@@ -185,6 +132,128 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                 _logger.LogError($"❌ WALLET TOPUP Error: {ex.Message}");
                 return StatusCode(500, new { message = "An error occurred while topping up wallet", details = ex.Message });
             }
+        }
+
+        /// <summary>
+        /// ✅ SECURE: Check if authenticated user has sufficient balance
+        /// </summary>
+        [HttpGet("check-balance")]
+        public async Task<ActionResult<object>> CheckBalance([FromQuery] decimal amount)
+        {
+            try
+            {
+                var currentAuthId = GetCurrentAuthId();
+                if (string.IsNullOrEmpty(currentAuthId) || !Guid.TryParse(currentAuthId, out var authGuid))
+                {
+                    return Unauthorized("User not authenticated");
+                }
+
+                var userDto = await _userService.GetUserByAuthIdAsync(authGuid);
+                if (userDto == null)
+                {
+                    return Unauthorized(new { message = "User not found. Please complete registration first." });
+                }
+
+                var hasSufficientBalance = await _walletTransactionService.HasSufficientBalanceAsync(userDto.UserId, amount);
+                var currentBalance = await _walletTransactionService.GetUserBalanceAsync(userDto.UserId);
+
+                return Ok(new
+                {
+                    hasSufficientBalance,
+                    currentBalance,
+                    requiredAmount = amount,
+                    shortfall = hasSufficientBalance ? 0 : amount - currentBalance
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"❌ WALLET CHECK Error: {ex.Message}");
+                return StatusCode(500, new { message = "An error occurred while checking balance", details = ex.Message });
+            }
+        }
+
+        // ==================== ADMIN ENDPOINTS ====================
+
+        /// <summary>
+        /// Admin endpoint: Get all wallet transactions
+        /// </summary>
+        [HttpGet("admin/all")]
+        [Authorize(Roles = "Admin")]
+        public async Task<ActionResult<IEnumerable<WalletTransactionDto>>> GetAllTransactions()
+        {
+            var transactions = await _walletTransactionService.GetAllTransactionsAsync();
+            return Ok(transactions);
+        }
+
+        /// <summary>
+        /// Admin endpoint: Get specific user's balance
+        /// </summary>
+        [HttpGet("admin/user/{userId}/balance")]
+        [Authorize(Roles = "Admin")]
+        public async Task<ActionResult<object>> GetUserBalance(int userId)
+        {
+            try
+            {
+                var balance = await _walletTransactionService.GetUserBalanceAsync(userId);
+                return Ok(new { userId, balance });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Admin endpoint: Get specific user's transactions
+        /// </summary>
+        [HttpGet("admin/user/{userId}/transactions")]
+        [Authorize(Roles = "Admin")]
+        public async Task<ActionResult<IEnumerable<WalletTransactionDto>>> GetUserTransactions(int userId)
+        {
+            try
+            {
+                var transactions = await _walletTransactionService.GetUserTransactionsAsync(userId);
+                return Ok(transactions);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Admin endpoint: Credit specific user's wallet
+        /// </summary>
+        [HttpPost("admin/user/{userId}/credit")]
+        [Authorize(Roles = "Admin")]
+        public async Task<ActionResult<WalletTransactionDto>> CreditUserWallet(int userId, [FromBody] WalletTopUpDto dto)
+        {
+            try
+            {
+                if (dto.Amount <= 0)
+                {
+                    return BadRequest(new { message = "Amount must be greater than 0" });
+                }
+
+                var transaction = await _walletTransactionService.TopUpWalletAsync(userId, dto);
+                return CreatedAtAction(nameof(GetTransaction), new { id = transaction.TransactionId }, transaction);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Admin endpoint: Get transaction by ID
+        /// </summary>
+        [HttpGet("admin/{transactionId}")]
+        [Authorize(Roles = "Admin")]
+        public async Task<ActionResult<WalletTransactionDto>> GetTransaction(int transactionId)
+        {
+            var transaction = await _walletTransactionService.GetTransactionByIdAsync(transactionId);
+            if (transaction == null) return NotFound();
+            return Ok(transaction);
         }
 
         // ✅ HELPER: Unified method to get auth ID from multiple sources
@@ -229,11 +298,5 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                 return null;
             }
         }
-    }
-
-    public class DebitWalletDto
-    {
-        public decimal Amount { get; set; }
-        public string Description { get; set; } = null!;
     }
 }

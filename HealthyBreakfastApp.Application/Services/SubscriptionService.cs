@@ -12,6 +12,7 @@ namespace HealthyBreakfastApp.Application.Services
         private readonly ISubscriptionRepository _subscriptionRepository;
         private readonly IUserRepository _userRepository;
         private readonly IUserMealRepository _userMealRepository;
+        private readonly IUserAddressRepository _userAddressRepository;
 
         // ✅ FIX: Use IST timezone for consistent date calculations
         private static readonly TimeZoneInfo IstTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
@@ -19,11 +20,13 @@ namespace HealthyBreakfastApp.Application.Services
         public SubscriptionService(
             ISubscriptionRepository subscriptionRepository,
             IUserRepository userRepository,
-            IUserMealRepository userMealRepository)
+            IUserMealRepository userMealRepository,
+            IUserAddressRepository userAddressRepository)
         {
             _subscriptionRepository = subscriptionRepository;
             _userRepository = userRepository;
             _userMealRepository = userMealRepository;
+            _userAddressRepository = userAddressRepository;
         }
 
         public async Task<IEnumerable<SubscriptionDto>> GetAllSubscriptionsAsync()
@@ -59,6 +62,15 @@ namespace HealthyBreakfastApp.Application.Services
             var userMeal = await _userMealRepository.GetByIdAsync(dto.UserMealId);
             if (userMeal == null)
                 throw new ArgumentException("User meal not found");
+
+            // ✅ ADD: Get user's primary address
+            var primaryAddress = await _userAddressRepository.GetPrimaryAddressAsync(dto.UserId);
+            if (primaryAddress == null)
+            {
+                throw new InvalidOperationException(
+                    "Please set a default delivery address before creating a subscription"
+                );
+            }
 
             if (dto.StartDate >= dto.EndDate)
                 throw new ArgumentException("Start date must be before end date");
@@ -99,6 +111,7 @@ namespace HealthyBreakfastApp.Application.Services
                 StartDate = dto.StartDate,
                 EndDate = dto.EndDate,
                 Active = dto.Active,
+                DeliveryAddressId = primaryAddress.Id, // ✅ ADD: Link to primary address
                 NextScheduledDate = CalculateInitialNextDeliveryDate(dto.StartDate, dto.Frequency, dto.WeeklySchedule)
             };
 

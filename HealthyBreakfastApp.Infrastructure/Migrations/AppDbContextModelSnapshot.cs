@@ -279,6 +279,9 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int?>("DeliveryAddressId")
+                        .HasColumnType("integer");
+
                     b.Property<bool>("IsPrepared")
                         .HasColumnType("boolean");
 
@@ -305,6 +308,8 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                         .HasColumnType("integer");
 
                     b.HasKey("OrderId");
+
+                    b.HasIndex("DeliveryAddressId");
 
                     b.HasIndex("UserId");
 
@@ -371,6 +376,9 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int?>("DeliveryAddressId")
+                        .HasColumnType("integer");
+
                     b.Property<string>("DeliveryTimeSlot")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -410,6 +418,8 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                         .HasColumnType("integer");
 
                     b.HasKey("ScheduledOrderId");
+
+                    b.HasIndex("DeliveryAddressId");
 
                     b.HasIndex("UserId");
 
@@ -451,6 +461,69 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                     b.ToTable("ScheduledOrderIngredients");
                 });
 
+            modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.ServiceableLocation", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Area")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("City")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DeliveryTimeSlot")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("LandmarkOrSociety")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<decimal?>("Latitude")
+                        .HasPrecision(10, 7)
+                        .HasColumnType("numeric(10,7)");
+
+                    b.Property<string>("Locality")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<decimal?>("Longitude")
+                        .HasPrecision(10, 7)
+                        .HasColumnType("numeric(10,7)");
+
+                    b.Property<string>("Pincode")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Pincode");
+
+                    b.HasIndex("City", "Area");
+
+                    b.ToTable("ServiceableLocations");
+                });
+
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.Subscription", b =>
                 {
                     b.Property<int>("SubscriptionId")
@@ -464,6 +537,9 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("DeliveryAddressId")
+                        .HasColumnType("integer");
 
                     b.Property<DateOnly>("EndDate")
                         .HasColumnType("date");
@@ -487,6 +563,8 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                         .HasColumnType("integer");
 
                     b.HasKey("SubscriptionId");
+
+                    b.HasIndex("DeliveryAddressId");
 
                     b.HasIndex("UserId");
 
@@ -586,6 +664,71 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                             UpdatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             WalletBalance = 625m
                         });
+                });
+
+            modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.UserAddress", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("AdditionalInstructions")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("Block")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FlatNumber")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("Floor")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsPrimary")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Label")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<int>("ServiceableLocationId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Wing")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ServiceableLocationId");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("UserId", "IsPrimary")
+                        .IsUnique()
+                        .HasDatabaseName("IX_UserAddresses_Primary_Unique")
+                        .HasFilter("\"IsPrimary\" = true AND \"IsActive\" = true");
+
+                    b.ToTable("UserAddresses");
                 });
 
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.UserAuthMapping", b =>
@@ -782,6 +925,11 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
 
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.Order", b =>
                 {
+                    b.HasOne("HealthyBreakfastApp.Domain.Entities.UserAddress", "DeliveryAddress")
+                        .WithMany("Orders")
+                        .HasForeignKey("DeliveryAddressId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("HealthyBreakfastApp.Domain.Entities.User", "User")
                         .WithMany()
                         .HasForeignKey("UserId")
@@ -791,6 +939,8 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                     b.HasOne("HealthyBreakfastApp.Domain.Entities.UserMeal", "UserMeal")
                         .WithMany()
                         .HasForeignKey("UserMealId");
+
+                    b.Navigation("DeliveryAddress");
 
                     b.Navigation("User");
 
@@ -818,11 +968,18 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
 
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.ScheduledOrder", b =>
                 {
+                    b.HasOne("HealthyBreakfastApp.Domain.Entities.UserAddress", "DeliveryAddress")
+                        .WithMany()
+                        .HasForeignKey("DeliveryAddressId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("HealthyBreakfastApp.Domain.Entities.User", "User")
                         .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("DeliveryAddress");
 
                     b.Navigation("User");
                 });
@@ -848,6 +1005,11 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
 
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.Subscription", b =>
                 {
+                    b.HasOne("HealthyBreakfastApp.Domain.Entities.UserAddress", "DeliveryAddress")
+                        .WithMany("Subscriptions")
+                        .HasForeignKey("DeliveryAddressId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("HealthyBreakfastApp.Domain.Entities.User", "User")
                         .WithMany()
                         .HasForeignKey("UserId")
@@ -859,6 +1021,8 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                         .HasForeignKey("UserMealId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.Navigation("DeliveryAddress");
 
                     b.Navigation("User");
 
@@ -874,6 +1038,25 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                         .IsRequired();
 
                     b.Navigation("Subscription");
+                });
+
+            modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.UserAddress", b =>
+                {
+                    b.HasOne("HealthyBreakfastApp.Domain.Entities.ServiceableLocation", "ServiceableLocation")
+                        .WithMany("UserAddresses")
+                        .HasForeignKey("ServiceableLocationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("HealthyBreakfastApp.Domain.Entities.User", "User")
+                        .WithMany("Addresses")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ServiceableLocation");
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.UserAuthMapping", b =>
@@ -956,6 +1139,11 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                     b.Navigation("Ingredients");
                 });
 
+            modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.ServiceableLocation", b =>
+                {
+                    b.Navigation("UserAddresses");
+                });
+
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.Subscription", b =>
                 {
                     b.Navigation("WeeklySchedule");
@@ -963,7 +1151,16 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
 
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.User", b =>
                 {
+                    b.Navigation("Addresses");
+
                     b.Navigation("AuthMapping");
+                });
+
+            modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.UserAddress", b =>
+                {
+                    b.Navigation("Orders");
+
+                    b.Navigation("Subscriptions");
                 });
 
             modelBuilder.Entity("HealthyBreakfastApp.Domain.Entities.UserMeal", b =>

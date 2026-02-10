@@ -14,26 +14,30 @@ namespace HealthyBreakfastApp.Application.Services
         private readonly IWalletTransactionService _walletService;
         private readonly IUserMealService _userMealService;
         private readonly IUserMealIngredientService _userMealIngredientService;
+        private readonly IUserAddressRepository _userAddressRepository; // ✅ ADDED
 
         public OrderService(
             IOrderRepository orderRepository,
             IMealService mealService,
             IWalletTransactionService walletService,
             IUserMealService userMealService,
-            IUserMealIngredientService userMealIngredientService)
+            IUserMealIngredientService userMealIngredientService,
+            IUserAddressRepository userAddressRepository) // ✅ ADDED
         {
             _orderRepository = orderRepository;
             _mealService = mealService;
             _walletService = walletService;
             _userMealService = userMealService;
             _userMealIngredientService = userMealIngredientService;
+            _userAddressRepository = userAddressRepository; // ✅ ADDED
         }
 
-        public async Task<int> CreateOrderAsync(CreateOrderDto dto)
+        // ✅ SECURE: Create order with userId from JWT token
+        public async Task<int> CreateOrderAsync(CreateOrderDto dto, int userId)
         {
             var entity = new Order
             {
-                UserId = dto.UserId,
+                UserId = userId,
                 OrderStatus = OrderStatus.Pending,
                 TotalPrice = dto.TotalPrice,
                 OrderDate = DateTime.UtcNow,
@@ -165,8 +169,28 @@ namespace HealthyBreakfastApp.Application.Services
             });
         }
 
-        public async Task<OrderCreationResponseDto> CreateOrderFromMealBuilderAsync(CreateOrderFromMealBuilderDto dto)
+        // ✅ SECURE: Create order from meal builder using userId from JWT token
+        public async Task<OrderCreationResponseDto> CreateOrderFromMealBuilderAsync(CreateOrderFromMealBuilderDto dto, int userId)
         {
+            // ✅ STEP 0: Validate Primary Address (using userId from token)
+            var primaryAddress = await _userAddressRepository.GetPrimaryAddressByUserIdAsync(userId);
+            
+            if (primaryAddress == null)
+            {
+                throw new InvalidOperationException(
+                    "Please add a delivery address before placing an order. Go to Profile → Manage Addresses."
+                );
+            }
+
+            // ✅ Validate location is serviceable
+            if (primaryAddress.ServiceableLocation == null || !primaryAddress.ServiceableLocation.IsActive)
+            {
+                throw new InvalidOperationException(
+                    $"Sorry, we don't currently deliver to {primaryAddress.ServiceableLocation?.Area ?? "your location"}. " +
+                    $"Please update your delivery address to a serviceable location."
+                );
+            }
+
             // ✅ STEP 1: Calculate meal price and validate ingredients
             var priceCalculation = await _mealService.CalculateMealPriceAsync(new MealPriceCalculationDto
             {
@@ -175,25 +199,26 @@ namespace HealthyBreakfastApp.Application.Services
             });
 
             // ✅ STEP 2: Check wallet balance
-            var walletBalanceBefore = await _walletService.GetUserBalanceAsync(dto.UserId);
-            var hasSufficientBalance = await _walletService.HasSufficientBalanceAsync(dto.UserId, priceCalculation.TotalPrice);
+            var walletBalanceBefore = await _walletService.GetUserBalanceAsync(userId);
+            var hasSufficientBalance = await _walletService.HasSufficientBalanceAsync(userId, priceCalculation.TotalPrice);
             
             if (!hasSufficientBalance)
             {
-                throw new InvalidOperationException($"Insufficient wallet balance. Required: ₹{priceCalculation.TotalPrice}, Available: ₹{walletBalanceBefore}");
+                throw new InvalidOperationException(
+                    $"Insufficient wallet balance. Required: ₹{priceCalculation.TotalPrice}, Available: ₹{walletBalanceBefore}"
+                );
             }
 
-            // ✅ STEP 3: Create UserMeal record
+            // ✅ STEP 3: Create UserMeal record (UserId passed separately, not in DTO)
             var userMealDto = new CreateUserMealDto
             {
-                UserId = dto.UserId,
                 MealId = dto.MealId,
                 MealName = priceCalculation.MealName,
                 TotalPrice = priceCalculation.TotalPrice,
                 CreatedAt = DateTime.UtcNow
             };
 
-            var createdUserMealId = await _userMealService.CreateUserMealAsync(userMealDto);
+            var createdUserMealId = await _userMealService.CreateUserMealAsync(userMealDto, userId);
 
             // ✅ STEP 4: Create UserMealIngredient records for each selected ingredient
             foreach (var selectedIngredient in dto.SelectedIngredients)
@@ -216,11 +241,12 @@ namespace HealthyBreakfastApp.Application.Services
                 }
             }
 
-            // ✅ STEP 5: Create Order with UserMeal link
+            // ✅ STEP 5: Create Order with UserMeal link AND DeliveryAddressId
             var order = new Order
             {
-                UserId = dto.UserId,
-                UserMealId = createdUserMealId, // ✅ CRITICAL: Link enables rich data retrieval
+                UserId = userId,
+                UserMealId = createdUserMealId,
+                DeliveryAddressId = primaryAddress.Id, // ✅ ADDED: Auto-filled from primary address
                 OrderStatus = OrderStatus.Pending,
                 TotalPrice = priceCalculation.TotalPrice,
                 OrderDate = DateTime.UtcNow,
@@ -234,7 +260,7 @@ namespace HealthyBreakfastApp.Application.Services
 
             // ✅ STEP 6: Process payment via wallet
             var walletTransaction = await _walletService.DebitWalletAsync(
-                dto.UserId,
+                userId,
                 priceCalculation.TotalPrice,
                 $"Order #{order.OrderId} - {priceCalculation.MealName}"
             );
@@ -244,7 +270,154 @@ namespace HealthyBreakfastApp.Application.Services
             order.UpdatedAt = DateTime.UtcNow;
             await _orderRepository.UpdateAsync(order);
 
-            var walletBalanceAfter = await _walletService.GetUserBalanceAsync(dto.UserId);
+            var walletBalanceAfter = await _walletService.GetUserBalanceAsync(userId);
+
+            // ✅ STEP 8: Return comprehensive order creation response
+            return new OrderCreationResponseDto
+            {
+                OrderId = order.OrderId,
+                UserMealId = createdUserMealId,
+                MealName = priceCalculation.MealName,
+                TotalPrice = priceCalculation.TotalPrice,
+                WalletBalanceBefore = walletBalanceBefore,
+                WalletBalanceAfter = walletBalanceAfter,
+                OrderStatus = order.OrderStatus.ToString(),
+                TransactionId = walletTransaction.TransactionId,
+                OrderDate = order.OrderDate,
+                ScheduledFor = order.ScheduledFor,
+                IngredientBreakdown = priceCalculation.IngredientBreakdown
+            };
+        }
+
+        // ✅ NEW: Overload with explicit DeliveryAddressId (for scheduled order confirmation)
+        public async Task<OrderCreationResponseDto> CreateOrderFromMealBuilderAsync(
+            CreateOrderFromMealBuilderDto dto, 
+            int userId, 
+            int? deliveryAddressId)
+        {
+            // ✅ If deliveryAddressId is provided, use it directly
+            // Otherwise, fall back to getting primary address
+            int? addressIdToUse = deliveryAddressId;
+            
+            if (addressIdToUse.HasValue)
+            {
+                // Validate the provided address exists and is serviceable
+                var address = await _userAddressRepository.GetByIdAsync(addressIdToUse.Value);
+                if (address == null || address.UserId != userId)
+                {
+                    throw new InvalidOperationException("Invalid delivery address");
+                }
+                
+                if (address.ServiceableLocation == null || !address.ServiceableLocation.IsActive)
+                {
+                    throw new InvalidOperationException(
+                        $"Sorry, we don't currently deliver to {address.ServiceableLocation?.Area ?? "your location"}. " +
+                        "Please update your delivery address."
+                    );
+                }
+            }
+            else
+            {
+                // Fall back to getting primary address (original behavior)
+                var primaryAddress = await _userAddressRepository.GetPrimaryAddressByUserIdAsync(userId);
+                if (primaryAddress == null)
+                {
+                    throw new InvalidOperationException(
+                        "Please add a delivery address before placing an order. Go to Profile → Manage Addresses."
+                    );
+                }
+                
+                if (primaryAddress.ServiceableLocation == null || !primaryAddress.ServiceableLocation.IsActive)
+                {
+                    throw new InvalidOperationException(
+                        $"Sorry, we don't currently deliver to {primaryAddress.ServiceableLocation?.Area ?? "your location"}. " +
+                        "Please update your delivery address."
+                    );
+                }
+                
+                addressIdToUse = primaryAddress.Id;
+            }
+
+            // ✅ STEP 1: Calculate meal price and validate ingredients
+            var priceCalculation = await _mealService.CalculateMealPriceAsync(new MealPriceCalculationDto
+            {
+                MealId = dto.MealId,
+                SelectedIngredients = dto.SelectedIngredients
+            });
+
+            // ✅ STEP 2: Check wallet balance
+            var walletBalanceBefore = await _walletService.GetUserBalanceAsync(userId);
+            var hasSufficientBalance = await _walletService.HasSufficientBalanceAsync(userId, priceCalculation.TotalPrice);
+            
+            if (!hasSufficientBalance)
+            {
+                throw new InvalidOperationException(
+                    $"Insufficient wallet balance. Required: ₹{priceCalculation.TotalPrice}, Available: ₹{walletBalanceBefore}"
+                );
+            }
+
+            // ✅ STEP 3: Create UserMeal record
+            var userMealDto = new CreateUserMealDto
+            {
+                MealId = dto.MealId,
+                MealName = priceCalculation.MealName,
+                TotalPrice = priceCalculation.TotalPrice,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            var createdUserMealId = await _userMealService.CreateUserMealAsync(userMealDto, userId);
+
+            // ✅ STEP 4: Create UserMealIngredient records for each selected ingredient
+            foreach (var selectedIngredient in dto.SelectedIngredients)
+            {
+                var ingredientDetail = priceCalculation.IngredientBreakdown
+                    .FirstOrDefault(i => i.IngredientId == selectedIngredient.IngredientId);
+                
+                if (ingredientDetail != null)
+                {
+                    var userMealIngredient = new CreateUserMealIngredientDto
+                    {
+                        UserMealId = createdUserMealId,
+                        IngredientId = selectedIngredient.IngredientId,
+                        Quantity = selectedIngredient.Quantity,
+                        UnitPrice = ingredientDetail.UnitPrice,
+                        TotalPrice = ingredientDetail.TotalPrice
+                    };
+
+                    await _userMealIngredientService.CreateUserMealIngredientAsync(userMealIngredient);
+                }
+            }
+
+            // ✅ STEP 5: Create Order with explicit DeliveryAddressId
+            var order = new Order
+            {
+                UserId = userId,
+                UserMealId = createdUserMealId,
+                DeliveryAddressId = addressIdToUse.Value,
+                OrderStatus = OrderStatus.Pending,
+                TotalPrice = priceCalculation.TotalPrice,
+                OrderDate = DateTime.UtcNow,
+                ScheduledFor = dto.ScheduledFor ?? DateTime.UtcNow.AddHours(2),
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+
+            await _orderRepository.AddAsync(order);
+            await _orderRepository.SaveChangesAsync();
+
+            // ✅ STEP 6: Process payment via wallet
+            var walletTransaction = await _walletService.DebitWalletAsync(
+                userId,
+                priceCalculation.TotalPrice,
+                $"Order #{order.OrderId} - {priceCalculation.MealName}"
+            );
+
+            // ✅ STEP 7: Confirm order after successful payment
+            order.OrderStatus = OrderStatus.Confirmed;
+            order.UpdatedAt = DateTime.UtcNow;
+            await _orderRepository.UpdateAsync(order);
+
+            var walletBalanceAfter = await _walletService.GetUserBalanceAsync(userId);
 
             // ✅ STEP 8: Return comprehensive order creation response
             return new OrderCreationResponseDto

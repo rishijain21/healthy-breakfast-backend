@@ -18,6 +18,7 @@ namespace HealthyBreakfastApp.Application.Services
         private readonly IWalletTransactionService _walletService;
         private readonly IOrderService _orderService;
         private readonly ILogger<ScheduledOrderService> _logger;
+        private readonly IUserAddressRepository _userAddressRepository; // ✅ ADDED
 
         public ScheduledOrderService(
             IScheduledOrderRepository scheduledOrderRepository,
@@ -25,7 +26,8 @@ namespace HealthyBreakfastApp.Application.Services
             IIngredientRepository ingredientRepository,
             IWalletTransactionService walletService,
             IOrderService orderService,
-            ILogger<ScheduledOrderService> logger)
+            ILogger<ScheduledOrderService> logger,
+            IUserAddressRepository userAddressRepository) // ✅ ADDED
         {
             _scheduledOrderRepository = scheduledOrderRepository;
             _userRepository = userRepository;
@@ -33,6 +35,7 @@ namespace HealthyBreakfastApp.Application.Services
             _walletService = walletService;
             _orderService = orderService;
             _logger = logger;
+            _userAddressRepository = userAddressRepository; // ✅ ADDED
         }
 
         // ----------------------------------------------------------------------------------------
@@ -43,6 +46,43 @@ namespace HealthyBreakfastApp.Application.Services
             var user = await _userRepository.GetByAuthIdAsync(authId);
             if (user == null)
                 throw new InvalidOperationException("User not found");
+
+            // ✅ Determine delivery address: use DTO's address or fall back to primary
+            int? deliveryAddressId = dto.DeliveryAddressId;
+            UserAddress? primaryAddress = null;
+            
+            if (deliveryAddressId == null)
+            {
+                // Get primary address if not specified
+                primaryAddress = await _userAddressRepository.GetPrimaryAddressByUserIdAsync(user.UserId);
+                
+                if (primaryAddress == null)
+                {
+                    throw new InvalidOperationException(
+                        "Please add a delivery address before scheduling an order. Go to Profile → Manage Addresses."
+                    );
+                }
+                deliveryAddressId = primaryAddress.Id;
+            }
+            else
+            {
+                // Validate the provided address belongs to user
+                primaryAddress = await _userAddressRepository.GetByIdAsync(deliveryAddressId.Value);
+                if (primaryAddress == null || primaryAddress.UserId != user.UserId)
+                {
+                    throw new InvalidOperationException("Invalid delivery address");
+                }
+            }
+
+            if (primaryAddress.ServiceableLocation == null || !primaryAddress.ServiceableLocation.IsActive)
+            {
+                throw new InvalidOperationException(
+                    $"Sorry, we don't deliver to {primaryAddress.ServiceableLocation?.Area ?? "your location"} currently. " +
+                    "Please update your delivery address."
+                );
+            }
+
+            _logger.LogInformation($"✅ Delivery address validated: {primaryAddress.ServiceableLocation.Area}, {primaryAddress.ServiceableLocation.City}");
 
             var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
             var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
@@ -100,7 +140,8 @@ namespace HealthyBreakfastApp.Application.Services
                 CanModify = true,
                 ExpiresAt = deliveryDate.AddDays(1),
                 CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
+                UpdatedAt = DateTime.UtcNow,
+                DeliveryAddressId = deliveryAddressId // ✅ ADD: Link to delivery address
             };
 
             foreach (var (ingredient, quantity) in ingredients)
@@ -125,121 +166,130 @@ namespace HealthyBreakfastApp.Application.Services
         // ----------------------------------------------------------------------------------------
         // ✅ DUPLICATE SCHEDULED ORDER - Creates exact copy without navigation
         // ----------------------------------------------------------------------------------------
-    // ----------------------------------------------------------------------------------------
-// ✅ DUPLICATE SCHEDULED ORDER - Creates exact copy without navigation
-// ----------------------------------------------------------------------------------------
-/// <summary>
-/// ✅ DUPLICATE SCHEDULED ORDER - Fixed for PostgreSQL UTC
-/// </summary>
-public async Task<ScheduledOrderResponseDto> DuplicateScheduledOrderAsync(Guid authId, int scheduledOrderId)
-{
-    try
-    {
-        _logger.LogInformation($"🔄 Duplicating order #{scheduledOrderId} for user {authId}");
-
-        // 1. Find original order
-        var originalOrder = await _scheduledOrderRepository.GetByIdAndAuthIdAsync(scheduledOrderId, authId);
-        if (originalOrder == null)
+        public async Task<ScheduledOrderResponseDto> DuplicateScheduledOrderAsync(Guid authId, int scheduledOrderId)
         {
-            _logger.LogWarning($"❌ Order #{scheduledOrderId} not found");
-            throw new InvalidOperationException("Scheduled order not found");
-        }
-
-        _logger.LogInformation($"✅ Found original order: {originalOrder.MealName}");
-
-        // 2. Validate order can be duplicated
-        if (originalOrder.OrderStatus.ToLower() != "scheduled")
-        {
-            _logger.LogWarning($"❌ Cannot duplicate order with status: {originalOrder.OrderStatus}");
-            throw new InvalidOperationException($"Cannot duplicate order with status '{originalOrder.OrderStatus}'");
-        }
-
-        // 3. Check wallet balance
-        if (!await CheckWalletBalanceAsync(authId, originalOrder.TotalPrice))
-        {
-            _logger.LogWarning($"❌ Insufficient balance for duplication");
-            throw new InvalidOperationException("Insufficient wallet balance");
-        }
-
-        // 4. Verify user exists
-        var user = await _userRepository.GetByAuthIdAsync(authId);
-        if (user == null)
-        {
-            _logger.LogWarning($"❌ User not found");
-            throw new InvalidOperationException("User not found");
-        }
-
-        // 5. Validate all ingredients still exist
-        if (originalOrder.Ingredients == null || originalOrder.Ingredients.Count == 0)
-        {
-            _logger.LogWarning($"❌ Original order has no ingredients");
-            throw new InvalidOperationException("Original order has no ingredients");
-        }
-
-        foreach (var ingredient in originalOrder.Ingredients)
-        {
-            var currentIngredient = await _ingredientRepository.GetByIdAsync(ingredient.IngredientId);
-            if (currentIngredient == null)
+            try
             {
-                _logger.LogWarning($"❌ Ingredient {ingredient.IngredientId} not available");
-                throw new InvalidOperationException("Some ingredients are no longer available");
+                _logger.LogInformation($"🔄 Duplicating order #{scheduledOrderId} for user {authId}");
+
+                // 1. Find original order
+                var originalOrder = await _scheduledOrderRepository.GetByIdAndAuthIdAsync(scheduledOrderId, authId);
+                if (originalOrder == null)
+                {
+                    _logger.LogWarning($"❌ Order #{scheduledOrderId} not found");
+                    throw new InvalidOperationException("Scheduled order not found");
+                }
+
+                _logger.LogInformation($"✅ Found original order: {originalOrder.MealName}");
+
+                // 2. Validate order can be duplicated
+                if (originalOrder.OrderStatus.ToLower() != "scheduled")
+                {
+                    _logger.LogWarning($"❌ Cannot duplicate order with status: {originalOrder.OrderStatus}");
+                    throw new InvalidOperationException($"Cannot duplicate order with status '{originalOrder.OrderStatus}'");
+                }
+
+                // 3. Check wallet balance
+                if (!await CheckWalletBalanceAsync(authId, originalOrder.TotalPrice))
+                {
+                    _logger.LogWarning($"❌ Insufficient balance for duplication");
+                    throw new InvalidOperationException("Insufficient wallet balance");
+                }
+
+                // 4. Verify user exists
+                var user = await _userRepository.GetByAuthIdAsync(authId);
+                if (user == null)
+                {
+                    _logger.LogWarning($"❌ User not found");
+                    throw new InvalidOperationException("User not found");
+                }
+
+                // ✅ ADDED: Validate primary address
+                var primaryAddress = await _userAddressRepository.GetPrimaryAddressByUserIdAsync(user.UserId);
+                if (primaryAddress == null)
+                {
+                    _logger.LogWarning($"❌ No primary address for user");
+                    throw new InvalidOperationException("Please add a delivery address before duplicating order");
+                }
+
+                if (!primaryAddress.ServiceableLocation.IsActive)
+                {
+                    _logger.LogWarning($"❌ Location inactive");
+                    throw new InvalidOperationException($"We don't deliver to {primaryAddress.ServiceableLocation.Area} currently");
+                }
+
+                // 5. Validate all ingredients still exist
+                if (originalOrder.Ingredients == null || originalOrder.Ingredients.Count == 0)
+                {
+                    _logger.LogWarning($"❌ Original order has no ingredients");
+                    throw new InvalidOperationException("Original order has no ingredients");
+                }
+
+                foreach (var ingredient in originalOrder.Ingredients)
+                {
+                    var currentIngredient = await _ingredientRepository.GetByIdAsync(ingredient.IngredientId);
+                    if (currentIngredient == null)
+                    {
+                        _logger.LogWarning($"❌ Ingredient {ingredient.IngredientId} not available");
+                        throw new InvalidOperationException("Some ingredients are no longer available");
+                    }
+                }
+
+                _logger.LogInformation($"✅ All validations passed, creating duplicate...");
+
+                // 6. Create duplicate order with UTC DateTimes
+                var duplicateOrder = new ScheduledOrder
+                {
+                    UserId = user.UserId,
+                    AuthId = authId,
+                    MealName = originalOrder.MealName,
+                    ScheduledFor = DateTime.SpecifyKind(originalOrder.ScheduledFor, DateTimeKind.Utc),
+                    DeliveryTimeSlot = originalOrder.DeliveryTimeSlot,
+                    TotalPrice = originalOrder.TotalPrice,
+                    NutritionalSummary = originalOrder.NutritionalSummary,
+                    OrderStatus = "scheduled",
+                    CanModify = true,
+                    ExpiresAt = DateTime.SpecifyKind(originalOrder.ExpiresAt, DateTimeKind.Utc),
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow,
+                    DeliveryAddressId = originalOrder.DeliveryAddressId // ✅ Preserve original address
+                };
+
+                // 7. Copy ingredients
+                foreach (var originalIngredient in originalOrder.Ingredients)
+                {
+                    duplicateOrder.Ingredients.Add(new ScheduledOrderIngredient
+                    {
+                        IngredientId = originalIngredient.IngredientId,
+                        Quantity = originalIngredient.Quantity,
+                        UnitPrice = originalIngredient.UnitPrice,
+                        TotalPrice = originalIngredient.TotalPrice,
+                        CreatedAt = DateTime.UtcNow
+                    });
+                }
+
+                _logger.LogInformation($"✅ Duplicate prepared with {duplicateOrder.Ingredients.Count} ingredients");
+
+                // 8. Save to database
+                var createdOrder = await _scheduledOrderRepository.CreateAsync(duplicateOrder);
+
+                _logger.LogInformation(
+                    $"✅ Duplicated order #{scheduledOrderId} → #{createdOrder.ScheduledOrderId} " +
+                    $"for {createdOrder.ScheduledFor:yyyy-MM-dd} (₹{createdOrder.TotalPrice})");
+
+                return await MapToResponseDto(createdOrder);
+            }
+            catch (InvalidOperationException ex)
+            {
+                _logger.LogWarning($"⚠️ Duplication validation failed: {ex.Message}");
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"❌ Unexpected error duplicating order #{scheduledOrderId}");
+                throw new InvalidOperationException("Failed to duplicate order. Please try again.", ex);
             }
         }
-
-        _logger.LogInformation($"✅ All validations passed, creating duplicate...");
-
-        // 6. Create duplicate order with UTC DateTimes
-        var duplicateOrder = new ScheduledOrder
-        {
-            UserId = user.UserId,
-            AuthId = authId,
-            MealName = originalOrder.MealName,
-            ScheduledFor = DateTime.SpecifyKind(originalOrder.ScheduledFor, DateTimeKind.Utc), // ✅ FIX
-            DeliveryTimeSlot = originalOrder.DeliveryTimeSlot,
-            TotalPrice = originalOrder.TotalPrice,
-            NutritionalSummary = originalOrder.NutritionalSummary,
-            OrderStatus = "scheduled",
-            CanModify = true,
-            ExpiresAt = DateTime.SpecifyKind(originalOrder.ExpiresAt, DateTimeKind.Utc), // ✅ FIX
-            CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow
-        };
-
-        // 7. Copy ingredients
-        foreach (var originalIngredient in originalOrder.Ingredients)
-        {
-            duplicateOrder.Ingredients.Add(new ScheduledOrderIngredient
-            {
-                IngredientId = originalIngredient.IngredientId,
-                Quantity = originalIngredient.Quantity,
-                UnitPrice = originalIngredient.UnitPrice,
-                TotalPrice = originalIngredient.TotalPrice,
-                CreatedAt = DateTime.UtcNow
-            });
-        }
-
-        _logger.LogInformation($"✅ Duplicate prepared with {duplicateOrder.Ingredients.Count} ingredients");
-
-        // 8. Save to database
-        var createdOrder = await _scheduledOrderRepository.CreateAsync(duplicateOrder);
-
-        _logger.LogInformation(
-            $"✅ Duplicated order #{scheduledOrderId} → #{createdOrder.ScheduledOrderId} " +
-            $"for {createdOrder.ScheduledFor:yyyy-MM-dd} (₹{createdOrder.TotalPrice})");
-
-        return await MapToResponseDto(createdOrder);
-    }
-    catch (InvalidOperationException ex)
-    {
-        _logger.LogWarning($"⚠️ Duplication validation failed: {ex.Message}");
-        throw; // Re-throw validation errors as-is
-    }
-    catch (Exception ex)
-    {
-        _logger.LogError(ex, $"❌ Unexpected error duplicating order #{scheduledOrderId}");
-        throw new InvalidOperationException("Failed to duplicate order. Please try again.", ex);
-    }
-}
 
         // ----------------------------------------------------------------------------------------
         // GET SCHEDULED ORDERS FOR SPECIFIC DATE
@@ -349,7 +399,7 @@ public async Task<ScheduledOrderResponseDto> DuplicateScheduledOrderAsync(Guid a
         {
             var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
             var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
-            var today = istNow.Date; // TODAY
+            var today = istNow.Date;
 
             _logger.LogInformation($"🌙 [MIDNIGHT JOB] Started at {istNow:yyyy-MM-dd HH:mm:ss} IST");
             _logger.LogInformation($"🚚 Processing orders for TODAY's delivery: {today:yyyy-MM-dd}");
@@ -358,7 +408,6 @@ public async Task<ScheduledOrderResponseDto> DuplicateScheduledOrderAsync(Guid a
 
             _logger.LogInformation($"📦 Found {scheduledOrders.Count} total orders for {today:yyyy-MM-dd}");
 
-            // Filter only "scheduled" status orders
             var pendingOrders = scheduledOrders
                 .Where(o => o.OrderStatus.ToLower() == "scheduled")
                 .ToList();
@@ -374,11 +423,36 @@ public async Task<ScheduledOrderResponseDto> DuplicateScheduledOrderAsync(Guid a
                 {
                     _logger.LogInformation($"🔄 Processing order #{scheduledOrder.ScheduledOrderId}");
 
-                    // Get fresh user data
                     var user = await _userRepository.GetByAuthIdAsync(scheduledOrder.AuthId);
                     if (user == null)
                     {
                         _logger.LogWarning($"❌ User not found for order #{scheduledOrder.ScheduledOrderId}");
+                        scheduledOrder.OrderStatus = "failed";
+                        scheduledOrder.CanModify = false;
+                        await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
+                        failedCount++;
+                        continue;
+                    }
+
+                    // ✅ Use the scheduled order's DeliveryAddressId (preserve original address)
+                    var deliveryAddressId = scheduledOrder.DeliveryAddressId;
+                    
+                    if (deliveryAddressId == null)
+                    {
+                        _logger.LogWarning($"❌ No delivery address for order #{scheduledOrder.ScheduledOrderId}");
+                        scheduledOrder.OrderStatus = "failed";
+                        scheduledOrder.CanModify = false;
+                        await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
+                        failedCount++;
+                        continue;
+                    }
+
+                    // Validate the address is still serviceable
+                    var address = await _userAddressRepository.GetByIdAsync(deliveryAddressId.Value);
+                    if (address == null || address.ServiceableLocation == null || !address.ServiceableLocation.IsActive)
+                    {
+                        _logger.LogWarning(
+                            $"❌ Address {deliveryAddressId} inactive for order #{scheduledOrder.ScheduledOrderId}");
                         scheduledOrder.OrderStatus = "failed";
                         scheduledOrder.CanModify = false;
                         await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
@@ -400,28 +474,29 @@ public async Task<ScheduledOrderResponseDto> DuplicateScheduledOrderAsync(Guid a
                         continue;
                     }
 
-                    // ✅ Create the actual Order (goes to Orders table → Kitchen Dashboard)
+                    // ✅ Create the actual Order using the scheduled order's DeliveryAddressId
                     var createOrderDto = new CreateOrderFromMealBuilderDto
                     {
-                        UserId = scheduledOrder.UserId,
                         MealId = 1,
                         SelectedIngredients = scheduledOrder.Ingredients.Select(i => new SelectedIngredientDto
                         {
                             IngredientId = i.IngredientId,
                             Quantity = i.Quantity
                         }).ToList(),
-                        ScheduledFor = DateTime.SpecifyKind(scheduledOrder.ScheduledFor, DateTimeKind.Utc),
-                        DeliveryAddress = "Default Address",
-                        SpecialInstructions = $"Auto-confirmed at midnight from cart order #{scheduledOrder.ScheduledOrderId}"
+                        ScheduledFor = DateTime.SpecifyKind(scheduledOrder.ScheduledFor, DateTimeKind.Utc)
                     };
 
-                    var orderResponse = await _orderService.CreateOrderFromMealBuilderAsync(createOrderDto);
+                    // ✅ Pass the scheduled order's DeliveryAddressId to preserve the original delivery address
+                    var orderResponse = await _orderService.CreateOrderFromMealBuilderAsync(
+                        createOrderDto, 
+                        scheduledOrder.UserId, 
+                        scheduledOrder.DeliveryAddressId);
 
                     _logger.LogInformation(
                         $"✅ Confirmed! Created Order #{orderResponse.OrderId} from cart order #{scheduledOrder.ScheduledOrderId}");
+                    _logger.LogInformation($"   📍 Delivers to address ID: {scheduledOrder.DeliveryAddressId}");
                     _logger.LogInformation($"   💰 Amount charged: ₹{scheduledOrder.TotalPrice}");
 
-                    // ✅ Mark scheduled order as processed (no longer in cart)
                     scheduledOrder.OrderStatus = "processed";
                     scheduledOrder.CanModify = false;
                     scheduledOrder.ConfirmedAt = DateTime.UtcNow;
@@ -448,25 +523,35 @@ public async Task<ScheduledOrderResponseDto> DuplicateScheduledOrderAsync(Guid a
         // ----------------------------------------------------------------------------------------
         // TIME TILL MIDNIGHT (IST)
         // ----------------------------------------------------------------------------------------
-        public Task<int> GetTimeUntilMidnightMinutesAsync()
+        public static TimeSpan GetTimeTillMidnightIST()
         {
             var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
             var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
-            var midnightIst = istNow.Date.AddDays(1);
-            
-            return Task.FromResult((int)(midnightIst - istNow).TotalMinutes);
+            var midnight = istNow.Date.AddDays(1);
+            return midnight - istNow;
         }
 
         // ----------------------------------------------------------------------------------------
-        // MAPPER
+        // ✅ TIME TILL MIDNIGHT IN MINUTES (for countdown display)
         // ----------------------------------------------------------------------------------------
-        private Task<ScheduledOrderResponseDto> MapToResponseDto(ScheduledOrder order)
+        public async Task<int> GetTimeUntilMidnightMinutesAsync()
         {
-            var nutritional = !string.IsNullOrEmpty(order.NutritionalSummary)
-                ? JsonSerializer.Deserialize<NutritionalSummaryDto>(order.NutritionalSummary)
-                : null;
+            var timeTillMidnight = GetTimeTillMidnightIST();
+            return (int)timeTillMidnight.TotalMinutes;
+        }
 
-            var dto = new ScheduledOrderResponseDto
+        // ----------------------------------------------------------------------------------------
+        // PRIVATE MAPPING METHODS
+        // ----------------------------------------------------------------------------------------
+        private async Task<ScheduledOrderResponseDto> MapToResponseDto(ScheduledOrder order)
+        {
+            // Fetch ingredients if not loaded
+            if (order.Ingredients == null || !order.Ingredients.Any())
+            {
+                // This would need a repository method to fetch ingredients
+            }
+
+            return new ScheduledOrderResponseDto
             {
                 ScheduledOrderId = order.ScheduledOrderId,
                 MealName = order.MealName,
@@ -474,23 +559,17 @@ public async Task<ScheduledOrderResponseDto> DuplicateScheduledOrderAsync(Guid a
                 DeliveryTimeSlot = order.DeliveryTimeSlot,
                 TotalPrice = order.TotalPrice,
                 OrderStatus = order.OrderStatus,
-                CanModify = order.CanModify && order.OrderStatus == "scheduled",
+                CanModify = order.CanModify,
                 CreatedAt = order.CreatedAt,
                 ExpiresAt = order.ExpiresAt,
-                NutritionalSummary = nutritional,
-                Ingredients = order.Ingredients.Select(i => new ScheduledOrderIngredientDetailDto
+                Ingredients = order.Ingredients?.Select(i => new ScheduledOrderIngredientDetailDto
                 {
                     IngredientId = i.IngredientId,
-                    IngredientName = i.Ingredient.IngredientName,
                     Quantity = i.Quantity,
                     UnitPrice = i.UnitPrice,
-                    TotalPrice = i.TotalPrice,
-                    Category = i.Ingredient.IngredientCategory?.CategoryName ?? "Other",
-                    ImageUrl = i.Ingredient.IconEmoji ?? "🥗"
-                }).ToList()
+                    TotalPrice = i.TotalPrice
+                }).ToList() ?? new List<ScheduledOrderIngredientDetailDto>()
             };
-
-            return Task.FromResult(dto);
         }
     }
 }

@@ -26,6 +26,9 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
                     .ThenInclude(um => um.UserMealIngredients)
                     .ThenInclude(umi => umi.Ingredient)
                         .ThenInclude(i => i.IngredientCategory)
+                // ✅ NEW: Include DeliveryAddress and ServiceableLocation for batch grouping
+                .Include(o => o.DeliveryAddress)
+                    .ThenInclude(da => da.ServiceableLocation)
                 .Where(o => o.ScheduledFor.Date == date.Date && !o.IsPrepared)
                 .OrderBy(o => o.CreatedAt)
                 .ToListAsync();
@@ -38,6 +41,9 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
                 .Include(o => o.UserMeal)
                     .ThenInclude(um => um.UserMealIngredients)
                     .ThenInclude(umi => umi.Ingredient)
+                // ✅ NEW: Include DeliveryAddress for order details
+                .Include(o => o.DeliveryAddress)
+                    .ThenInclude(da => da.ServiceableLocation)
                 .FirstOrDefaultAsync(o => o.OrderId == orderId);
         }
 

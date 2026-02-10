@@ -11,6 +11,8 @@ namespace HealthyBreakfastApp.Domain.Entities
         public string Name { get; set; } = null!;
         public string Email { get; set; } = null!;
         public string Phone { get; set; } = null!;
+// Add this line after the AuthMapping property
+public ICollection<UserAddress> Addresses { get; set; } = new List<UserAddress>();
 
         // ✅ NEW FIELDS - Add these
         public string? DeliveryAddress { get; set; }

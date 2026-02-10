@@ -28,19 +28,21 @@ namespace HealthyBreakfastApp.Infrastructure.Data
         public DbSet<WalletTransaction> WalletTransactions { get; set; }
         public DbSet<UserAuthMapping> UserAuthMappings { get; set; }
         
-        // ✅ Scheduled order tables
+        // Scheduled order tables
         public DbSet<ScheduledOrder> ScheduledOrders { get; set; }
         public DbSet<ScheduledOrderIngredient> ScheduledOrderIngredients { get; set; }
         
-        // ✅ NEW: Subscription schedule table
+        // Subscription schedule table
         public DbSet<SubscriptionSchedule> SubscriptionSchedules { get; set; }
+        
+        // ✅ Location feature tables
+        public DbSet<ServiceableLocation> ServiceableLocations { get; set; }
+        public DbSet<UserAddress> UserAddresses { get; set; }
 
-        // ✅ IST TIMEZONE: Configure for Indian timezone handling
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {
             if (!optionsBuilder.IsConfigured)
             {
-                // Enable legacy timestamp behavior for IST support
                 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
             }
             
@@ -74,15 +76,21 @@ namespace HealthyBreakfastApp.Infrastructure.Data
                 entity.Property(e => e.CreatedAt).HasColumnName("created_at");
             });
 
-            // Map OrderStatus property to "Status" column in Orders table
+            // ✅ Order configuration with delivery address
             modelBuilder.Entity<Order>(entity =>
             {
                 entity.Property(e => e.OrderStatus)
                     .HasColumnName("Status")
                     .IsRequired();
+                
+                // ✅ ADD: Delivery address relationship
+                entity.HasOne(e => e.DeliveryAddress)
+                    .WithMany(a => a.Orders)
+                    .HasForeignKey(e => e.DeliveryAddressId)
+                    .OnDelete(DeleteBehavior.SetNull);
             });
 
-            // ✅ ScheduledOrder configuration
+            // ScheduledOrder configuration
             modelBuilder.Entity<ScheduledOrder>(entity =>
             {
                 entity.HasKey(e => e.ScheduledOrderId);
@@ -92,7 +100,6 @@ namespace HealthyBreakfastApp.Infrastructure.Data
                 entity.Property(e => e.TotalPrice).HasColumnType("decimal(10,2)");
                 entity.Property(e => e.ScheduledFor).HasColumnType("date");
                 
-                // NEW FIELDS
                 entity.Property(e => e.IsProcessedToOrder).HasDefaultValue(false);
                 entity.Property(e => e.ConfirmedOrderId).IsRequired(false);
                 
@@ -100,9 +107,15 @@ namespace HealthyBreakfastApp.Infrastructure.Data
                     .WithMany()
                     .HasForeignKey(e => e.UserId)
                     .OnDelete(DeleteBehavior.Cascade);
+
+                // ✅ ADD: Delivery address relationship
+                entity.HasOne(e => e.DeliveryAddress)
+                    .WithMany()
+                    .HasForeignKey(e => e.DeliveryAddressId)
+                    .OnDelete(DeleteBehavior.SetNull);
             });
 
-            // ✅ ScheduledOrderIngredient configuration
+            // ScheduledOrderIngredient configuration
             modelBuilder.Entity<ScheduledOrderIngredient>(entity =>
             {
                 entity.HasKey(e => e.Id);
@@ -120,12 +133,11 @@ namespace HealthyBreakfastApp.Infrastructure.Data
                     .OnDelete(DeleteBehavior.Restrict);
             });
 
-            // ✅ Subscription configuration with enum conversion
+            // ✅ Subscription configuration with delivery address
             modelBuilder.Entity<Subscription>(entity =>
             {
                 entity.HasKey(e => e.SubscriptionId);
                 
-                // Convert SubscriptionFrequency enum to integer for database storage
                 entity.Property(e => e.Frequency)
                     .HasConversion<int>()
                     .IsRequired();
@@ -144,9 +156,15 @@ namespace HealthyBreakfastApp.Infrastructure.Data
                     .WithMany()
                     .HasForeignKey(e => e.UserMealId)
                     .OnDelete(DeleteBehavior.Restrict);
+                
+                // ✅ ADD: Delivery address relationship
+                entity.HasOne(e => e.DeliveryAddress)
+                    .WithMany(a => a.Subscriptions)
+                    .HasForeignKey(e => e.DeliveryAddressId)
+                    .OnDelete(DeleteBehavior.SetNull);
             });
 
-            // ✅ NEW: SubscriptionSchedule configuration (for weekly subscriptions)
+            // SubscriptionSchedule configuration
             modelBuilder.Entity<SubscriptionSchedule>(entity =>
             {
                 entity.HasKey(e => e.ScheduleId);
@@ -162,18 +180,15 @@ namespace HealthyBreakfastApp.Infrastructure.Data
                 entity.Property(e => e.CreatedAt).IsRequired();
                 entity.Property(e => e.UpdatedAt).IsRequired();
                 
-                // Foreign key relationship
                 entity.HasOne(e => e.Subscription)
                     .WithMany(s => s.WeeklySchedule)
                     .HasForeignKey(e => e.SubscriptionId)
                     .OnDelete(DeleteBehavior.Cascade);
                 
-                // Prevent duplicate days for same subscription
                 entity.HasIndex(e => new { e.SubscriptionId, e.DayOfWeek })
                     .IsUnique()
                     .HasDatabaseName("IX_SubscriptionSchedules_Subscription_DayOfWeek");
                 
-                // Check constraints
                 entity.ToTable(t => t.HasCheckConstraint(
                     "CK_SubscriptionSchedules_DayOfWeek", 
                     "\"DayOfWeek\" >= 0 AND \"DayOfWeek\" <= 6"));
@@ -183,10 +198,45 @@ namespace HealthyBreakfastApp.Infrastructure.Data
                     "\"Quantity\" > 0"));
             });
 
+            // ✅ ServiceableLocation configuration
+            modelBuilder.Entity<ServiceableLocation>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                
+                entity.HasIndex(e => e.Pincode);
+                entity.HasIndex(e => new { e.City, e.Area });
+                
+                entity.Property(e => e.Latitude).HasPrecision(10, 7);
+                entity.Property(e => e.Longitude).HasPrecision(10, 7);
+            });
+
+            // ✅ UserAddress configuration
+            modelBuilder.Entity<UserAddress>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                
+                entity.HasIndex(e => e.UserId);
+                
+                // ✅ Unique constraint: Only ONE primary address per user
+                entity.HasIndex(e => new { e.UserId, e.IsPrimary })
+                    .IsUnique()
+                    .HasFilter($"\"IsPrimary\" = true AND \"IsActive\" = true")
+                    .HasDatabaseName("IX_UserAddresses_Primary_Unique");
+                
+                entity.HasOne(e => e.User)
+                    .WithMany(u => u.Addresses)
+                    .HasForeignKey(e => e.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                
+                entity.HasOne(e => e.ServiceableLocation)
+                    .WithMany(s => s.UserAddresses)
+                    .HasForeignKey(e => e.ServiceableLocationId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
             // ========== SEED DATA ==========
             var seedDate = new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
-            // Seed Ingredient Categories
             modelBuilder.Entity<IngredientCategory>().HasData(
                 new IngredientCategory { CategoryId = 1, CategoryName = "Oats", CreatedAt = seedDate, UpdatedAt = seedDate },
                 new IngredientCategory { CategoryId = 2, CategoryName = "Seeds", CreatedAt = seedDate, UpdatedAt = seedDate },
@@ -195,14 +245,12 @@ namespace HealthyBreakfastApp.Infrastructure.Data
                 new IngredientCategory { CategoryId = 5, CategoryName = "Sweetener", CreatedAt = seedDate, UpdatedAt = seedDate }
             );
 
-            // Seed Meals
             modelBuilder.Entity<Meal>().HasData(
                 new Meal { MealId = 1, MealName = "Classic Overnight Oats", Description = "Traditional overnight oats base", BasePrice = 40, CreatedAt = seedDate, UpdatedAt = seedDate },
                 new Meal { MealId = 2, MealName = "Custom Breakfast Bowl", Description = "Build your perfect breakfast", BasePrice = 50, CreatedAt = seedDate, UpdatedAt = seedDate },
                 new Meal { MealId = 3, MealName = "Protein Power Bowl", Description = "High protein breakfast option", BasePrice = 60, CreatedAt = seedDate, UpdatedAt = seedDate }
             );
 
-            // Seed Test User
             modelBuilder.Entity<User>().HasData(
                 new User
                 {
@@ -216,7 +264,6 @@ namespace HealthyBreakfastApp.Infrastructure.Data
                 }
             );
 
-            // Seed Initial Wallet Balance
             modelBuilder.Entity<WalletTransaction>().HasData(
                 new WalletTransaction
                 {

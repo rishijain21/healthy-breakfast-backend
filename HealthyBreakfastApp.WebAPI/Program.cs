@@ -75,6 +75,13 @@ builder.Services.AddScoped<ISubscriptionRepository, SubscriptionRepository>();
 
 builder.Services.AddScoped<IWalletTransactionService, WalletTransactionService>();
 builder.Services.AddScoped<IWalletTransactionRepository, WalletTransactionRepository>();
+// ========================================
+// 📍 LOCATION SERVICES
+// ========================================
+builder.Services.AddScoped<IServiceableLocationRepository, ServiceableLocationRepository>();
+builder.Services.AddScoped<IServiceableLocationService, ServiceableLocationService>();
+builder.Services.AddScoped<IUserAddressRepository, UserAddressRepository>();
+builder.Services.AddScoped<IUserAddressService, UserAddressService>();
 
 // ========================================
 // ⏰ SCHEDULED ORDER SERVICES

@@ -14,14 +14,26 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
     public class SubscriptionsController : ControllerBase
     {
         private readonly ISubscriptionService _subscriptionService;
+        private readonly ISubscriptionSchedulingService _subscriptionSchedulingService;
+        private readonly IScheduledOrderService _scheduledOrderService;
+        private readonly IScheduledOrderRepository _scheduledOrderRepository;
         private readonly AppDbContext _context;
+        private readonly ILogger<SubscriptionsController> _logger;
 
         public SubscriptionsController(
             ISubscriptionService subscriptionService,
-            AppDbContext context)
+            ISubscriptionSchedulingService subscriptionSchedulingService,
+            IScheduledOrderService scheduledOrderService,
+            IScheduledOrderRepository scheduledOrderRepository,
+            AppDbContext context,
+            ILogger<SubscriptionsController> logger)
         {
             _subscriptionService = subscriptionService;
+            _subscriptionSchedulingService = subscriptionSchedulingService;
+            _scheduledOrderService = scheduledOrderService;
+            _scheduledOrderRepository = scheduledOrderRepository;
             _context = context;
+            _logger = logger;
         }
 
         // Helper to get current userId from JWT + AuthMapping
@@ -36,6 +48,14 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                 .FirstOrDefaultAsync(x => x.AuthId.ToString() == authId);
 
             return mapping?.UserId;
+        }
+
+        private async Task<Guid?> GetCurrentAuthIdAsync()
+        {
+            var authId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(authId) || !Guid.TryParse(authId, out var guid))
+                return null;
+            return guid;
         }
 
         [HttpGet]
@@ -89,18 +109,22 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         }
 
         /// <summary>
-        /// ✅ UPDATED: Extracts userId from JWT token and maps to CreateSubscriptionInternalDto
+        /// ✅ UPDATED: Creates subscription AND generates tomorrow's order immediately
         /// </summary>
         [HttpPost]
         public async Task<ActionResult<SubscriptionDto>> CreateSubscription(CreateSubscriptionDto createSubscriptionDto)
         {
             var userId = await GetCurrentUserIdAsync();
-            if (userId == null)
+            var authId = await GetCurrentAuthIdAsync();
+            
+            if (userId == null || authId == null)
                 return Unauthorized();
 
             try
             {
-                // ✅ Map CreateSubscriptionDto to CreateSubscriptionInternalDto with UserId from JWT
+                _logger.LogInformation($"📦 Creating subscription for user {userId}");
+
+                // 1. Create subscription
                 var internalDto = new CreateSubscriptionInternalDto
                 {
                     UserId = userId.Value,
@@ -113,6 +137,27 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                 };
 
                 var subscription = await _subscriptionService.CreateSubscriptionAsync(internalDto);
+
+                _logger.LogInformation($"✅ Subscription #{subscription.SubscriptionId} created");
+
+                // 2. ✅ NEW: Generate tomorrow's order immediately if active
+                if (subscription.Active)
+                {
+                    try
+                    {
+                        await _subscriptionSchedulingService.GenerateOrderForSubscriptionAsync(
+                            subscription.SubscriptionId, 
+                            authId.Value
+                        );
+                        
+                        _logger.LogInformation($"✅ Generated immediate order for subscription #{subscription.SubscriptionId}");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, $"⚠️ Failed to generate immediate order for subscription #{subscription.SubscriptionId}");
+                        // Don't fail the subscription creation, just log the warning
+                    }
+                }
 
                 return CreatedAtAction(nameof(GetSubscription),
                     new { id = subscription.SubscriptionId },
@@ -160,7 +205,9 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         public async Task<IActionResult> DeleteSubscription(int id)
         {
             var userId = await GetCurrentUserIdAsync();
-            if (userId == null)
+            var authId = await GetCurrentAuthIdAsync();
+            
+            if (userId == null || authId == null)
                 return Unauthorized();
 
             var existing = await _subscriptionService.GetSubscriptionByIdAsync(id);
@@ -170,6 +217,17 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             if (existing.UserId != userId.Value)
                 return Forbid();
 
+            // ✅ NEW: Cancel tomorrow's scheduled order when deleting subscription
+            try
+            {
+                await _subscriptionSchedulingService.CancelOrderForSubscriptionAsync(id, authId.Value);
+                _logger.LogInformation($"✅ Cancelled scheduled order for deleted subscription #{id}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, $"⚠️ Failed to cancel order for subscription #{id}");
+            }
+
             var result = await _subscriptionService.DeleteSubscriptionAsync(id);
             if (!result)
                 return NotFound();
@@ -177,61 +235,103 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             return NoContent();
         }
 
+        /// <summary>
+        /// ✅ UPDATED: Activates subscription AND generates tomorrow's order immediately
+        /// </summary>
         [HttpPatch("{id}/activate")]
         public async Task<IActionResult> ActivateSubscription(int id)
         {
             var userId = await GetCurrentUserIdAsync();
-            if (userId == null)
+            var authId = await GetCurrentAuthIdAsync();
+            
+            if (userId == null || authId == null)
                 return Unauthorized();
 
             var existing = await _subscriptionService.GetSubscriptionByIdAsync(id);
             if (existing == null || existing.UserId != userId.Value)
                 return Forbid();
 
-            var result = await _subscriptionService.ActivateSubscriptionAsync(id);
-            return result ? Ok(new { message = "Subscription activated" }) : NotFound();
-        }
-/// <summary>
-/// ✅ NEW: Manual endpoint to force update all subscription NextScheduledDates
-/// </summary>
-[HttpPost("sync-dates")]
-public async Task<IActionResult> SyncSubscriptionDates()
-{
-    try
-    {
-        await _subscriptionService.UpdateNextScheduledDatesAsync();
-        
-        return Ok(new 
-        { 
-            success = true,
-            message = "Subscription dates synchronized successfully",
-            timestamp = DateTime.UtcNow
-        });
-    }
-    catch (Exception ex)
-    {
-        return StatusCode(500, new 
-        { 
-            success = false,
-            message = "Failed to sync subscription dates", 
-            error = ex.Message 
-        });
-    }
-}
+            _logger.LogInformation($"▶️ Resuming subscription #{id}");
 
+            var result = await _subscriptionService.ActivateSubscriptionAsync(id);
+            
+            if (!result)
+                return NotFound();
+
+            // ✅ NEW: Generate tomorrow's order immediately when resuming
+            try
+            {
+                await _subscriptionSchedulingService.GenerateOrderForSubscriptionAsync(id, authId.Value);
+                _logger.LogInformation($"✅ Generated order for resumed subscription #{id}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, $"⚠️ Failed to generate order for resumed subscription #{id}");
+            }
+
+            return Ok(new { message = "Subscription activated and order generated" });
+        }
+
+        /// <summary>
+        /// ✅ UPDATED: Deactivates subscription AND cancels tomorrow's order
+        /// </summary>
         [HttpPatch("{id}/deactivate")]
         public async Task<IActionResult> DeactivateSubscription(int id)
         {
             var userId = await GetCurrentUserIdAsync();
-            if (userId == null)
+            var authId = await GetCurrentAuthIdAsync();
+            
+            if (userId == null || authId == null)
                 return Unauthorized();
 
             var existing = await _subscriptionService.GetSubscriptionByIdAsync(id);
             if (existing == null || existing.UserId != userId.Value)
                 return Forbid();
 
+            _logger.LogInformation($"⏸️ Pausing subscription #{id}");
+
+            // ✅ NEW: Cancel tomorrow's order when pausing
+            try
+            {
+                await _subscriptionSchedulingService.CancelOrderForSubscriptionAsync(id, authId.Value);
+                _logger.LogInformation($"✅ Cancelled order for paused subscription #{id}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, $"⚠️ Failed to cancel order for subscription #{id}");
+            }
+
             var result = await _subscriptionService.DeactivateSubscriptionAsync(id);
-            return result ? Ok(new { message = "Subscription deactivated" }) : NotFound();
+            
+            return result ? Ok(new { message = "Subscription paused and order cancelled" }) : NotFound();
+        }
+
+        /// <summary>
+        /// ✅ Manual endpoint to sync all subscription dates
+        /// </summary>
+        [HttpPost("sync-dates")]
+        public async Task<IActionResult> SyncSubscriptionDates()
+        {
+            try
+            {
+                await _subscriptionService.UpdateNextScheduledDatesAsync();
+                
+                return Ok(new 
+                { 
+                    success = true,
+                    message = "Subscription dates synchronized successfully",
+                    timestamp = DateTime.UtcNow
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new 
+                { 
+                    success = false,
+                    message = "Failed to sync subscription dates", 
+                    error = ex.Message 
+                });
+            }
         }
     }
 }

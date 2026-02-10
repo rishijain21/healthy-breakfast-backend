@@ -1,0 +1,457 @@
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
+using HealthyBreakfastApp.Application.Interfaces;
+using System;
+using System.Threading.Tasks;
+
+namespace HealthyBreakfastApp.WebAPI.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    [Authorize]
+    public class KitchenController : ControllerBase
+    {
+        private readonly IKitchenService _kitchenService;
+        private readonly ILogger<KitchenController> _logger;
+
+        public KitchenController(
+            IKitchenService kitchenService,
+            ILogger<KitchenController> logger)
+        {
+            _kitchenService = kitchenService;
+            _logger = logger;
+        }
+
+        /// <summary>
+        /// Get all orders that need to be prepared for TODAY's delivery (Kitchen Dashboard)
+        /// Shows orders confirmed at midnight for today's morning (7-9 AM) delivery
+        /// </summary>
+        [HttpGet("today")]
+        public async Task<IActionResult> GetTodaysOrders()
+        {
+            try
+            {
+                var orders = await _kitchenService.GetOrdersForPreparationAsync();
+                return Ok(orders);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error fetching today's kitchen orders");
+                return StatusCode(500, "Error loading kitchen orders");
+            }
+        }
+
+        /// <summary>
+        /// ✨ NEW: Get orders confirmed for TOMORROW's delivery (Pre-planning view)
+        /// Shows orders that were just confirmed tonight for next day delivery
+        /// </summary>
+        [HttpGet("tomorrow")]
+        public async Task<IActionResult> GetTomorrowOrders()
+        {
+            try
+            {
+                var orders = await _kitchenService.GetOrdersForTomorrowAsync();
+                return Ok(orders);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error fetching tomorrow's kitchen orders");
+                return StatusCode(500, "Error loading kitchen orders");
+            }
+        }
+
+        /// <summary>
+        /// Get orders for a specific date (for planning)
+        /// Format: YYYY-MM-DD (e.g., 2026-01-10)
+        /// </summary>
+        [HttpGet("date/{dateString}")]
+        public async Task<IActionResult> GetOrdersByDate(string dateString)
+        {
+            try
+            {
+                if (!DateTime.TryParse(dateString, out DateTime date))
+                {
+                    return BadRequest(new 
+                    { 
+                        success = false, 
+                        message = "Invalid date format. Please use YYYY-MM-DD format (e.g., 2026-01-10)" 
+                    });
+                }
+
+                _logger.LogInformation($"📅 Fetching kitchen orders for date: {date:yyyy-MM-dd}");
+
+                var orders = await _kitchenService.GetOrdersForDateAsync(date);
+                return Ok(orders);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error fetching orders for date: {Date}", dateString);
+                return StatusCode(500, "Error loading orders");
+            }
+        }
+
+        /// <summary>
+        /// Mark order as prepared by kitchen
+        /// </summary>
+        [HttpPut("{orderId}/mark-prepared")]
+        public async Task<IActionResult> MarkOrderPrepared(int orderId)
+        {
+            try
+            {
+                await _kitchenService.MarkOrderAsPreparedAsync(orderId);
+                
+                _logger.LogInformation($"✅ Order #{orderId} marked as prepared");
+                
+                return Ok(new 
+                { 
+                    success = true, 
+                    message = $"Order #{orderId} marked as prepared",
+                    orderId = orderId,
+                    timestamp = DateTime.UtcNow
+                });
+            }
+            catch (InvalidOperationException ex)
+            {
+                _logger.LogWarning(ex, "Invalid operation for order {OrderId}", orderId);
+                return BadRequest(new { success = false, message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error marking order {OrderId} as prepared", orderId);
+                return StatusCode(500, new { success = false, message = "Error updating order status" });
+            }
+        }
+
+        /// <summary>
+        /// Get aggregated statistics for kitchen dashboard
+        /// Shows stats for today's delivery orders
+        /// </summary>
+        [HttpGet("stats/today")]
+        public async Task<IActionResult> GetTodayStats()
+        {
+            try
+            {
+                var stats = await _kitchenService.GetTodayStatsAsync();
+                return Ok(stats);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error fetching kitchen stats");
+                return StatusCode(500, "Error loading stats");
+            }
+        }
+
+        /// <summary>
+        /// ✨ NEW: Get aggregated statistics for TOMORROW's delivery orders
+        /// </summary>
+        [HttpGet("stats/tomorrow")]
+        public async Task<IActionResult> GetTomorrowStats()
+        {
+            try
+            {
+                var stats = await _kitchenService.GetTomorrowStatsAsync();
+                return Ok(stats);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error fetching tomorrow's kitchen stats");
+                return StatusCode(500, "Error loading stats");
+            }
+        }
+    }
+}
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
+using HealthyBreakfastApp.Application.Interfaces;
+using HealthyBreakfastApp.Application.DTOs;
+
+namespace HealthyBreakfastApp.Application.Services
+{
+    public class KitchenService : IKitchenService
+    {
+        private readonly IKitchenRepository _kitchenRepository;
+        private readonly ILogger<KitchenService> _logger;
+
+        public KitchenService(
+            IKitchenRepository kitchenRepository,
+            ILogger<KitchenService> logger)
+        {
+            _kitchenRepository = kitchenRepository;
+            _logger = logger;
+        }
+
+        // ============================================================================
+        // ✅ GET TODAY'S CONFIRMED ORDERS (MILKBASKET LOGIC)
+        // Shows orders confirmed at midnight for TODAY's delivery
+        // ============================================================================
+        public async Task<List<KitchenOrderDto>> GetOrdersForPreparationAsync()
+        {
+            var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
+            var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
+            
+            // ✅ MILKBASKET: Kitchen shows TODAY's confirmed deliveries
+            var deliveryDate = DateTime.SpecifyKind(istNow.Date, DateTimeKind.Utc); // TODAY
+
+            _logger.LogInformation($"🍳 Kitchen Dashboard: TODAY's delivery ({istNow.Date:yyyy-MM-dd})");
+
+            var orders = await _kitchenRepository.GetOrdersForPreparationAsync(deliveryDate);
+
+            var result = orders.Select(o => new KitchenOrderDto
+            {
+                OrderId = o.OrderId,
+                UserId = o.UserId,
+                CustomerName = o.User?.Name ?? "Unknown",
+                ScheduledFor = o.ScheduledFor,
+                DeliveryTimeSlot = "7:00 AM - 9:00 AM",
+                TotalPrice = o.TotalPrice,
+                IsPrepared = o.IsPrepared,
+                CreatedAt = o.CreatedAt,
+                Ingredients = o.UserMeal?.UserMealIngredients.Select(umi => new KitchenIngredientDto
+                {
+                    IngredientId = umi.IngredientId,
+                    IngredientName = umi.Ingredient.IngredientName,
+                    Quantity = umi.Quantity,
+                    Category = umi.Ingredient.IngredientCategory?.CategoryName ?? "Other",
+                    IconEmoji = umi.Ingredient.IconEmoji ?? "🥗"
+                }).ToList() ?? new List<KitchenIngredientDto>()
+            }).ToList();
+
+            _logger.LogInformation($"📦 Kitchen: {result.Count} orders to prepare for TODAY");
+
+            return result;
+        }
+
+        // ============================================================================
+        // ✨ NEW: GET TOMORROW'S CONFIRMED ORDERS (PRE-PLANNING VIEW)
+        // Shows orders already confirmed tonight for TOMORROW's delivery
+        // ============================================================================
+        public async Task<List<KitchenOrderDto>> GetOrdersForTomorrowAsync()
+        {
+            var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
+            var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
+            
+            // ✅ Get TOMORROW's orders (already confirmed tonight for next day)
+            var tomorrowDate = DateTime.SpecifyKind(istNow.Date.AddDays(1), DateTimeKind.Utc); // TOMORROW
+
+            _logger.LogInformation($"🍳 Kitchen Preview: TOMORROW's delivery ({istNow.Date.AddDays(1):yyyy-MM-dd})");
+
+            var orders = await _kitchenRepository.GetOrdersForPreparationAsync(tomorrowDate);
+
+            var result = orders.Select(o => new KitchenOrderDto
+            {
+                OrderId = o.OrderId,
+                UserId = o.UserId,
+                CustomerName = o.User?.Name ?? "Unknown",
+                ScheduledFor = o.ScheduledFor,
+                DeliveryTimeSlot = "7:00 AM - 9:00 AM",
+                TotalPrice = o.TotalPrice,
+                IsPrepared = o.IsPrepared,
+                CreatedAt = o.CreatedAt,
+                Ingredients = o.UserMeal?.UserMealIngredients.Select(umi => new KitchenIngredientDto
+                {
+                    IngredientId = umi.IngredientId,
+                    IngredientName = umi.Ingredient.IngredientName,
+                    Quantity = umi.Quantity,
+                    Category = umi.Ingredient.IngredientCategory?.CategoryName ?? "Other",
+                    IconEmoji = umi.Ingredient.IconEmoji ?? "🥗"
+                }).ToList() ?? new List<KitchenIngredientDto>()
+            }).ToList();
+
+            _logger.LogInformation($"📦 Kitchen: {result.Count} orders confirmed for TOMORROW");
+
+            return result;
+        }
+
+        public async Task<List<KitchenOrderDto>> GetOrdersForDateAsync(DateTime date)
+        {
+            var utcDate = DateTime.SpecifyKind(date.Date, DateTimeKind.Utc);
+            
+            var orders = await _kitchenRepository.GetOrdersForPreparationAsync(utcDate);
+
+            return orders.Select(o => new KitchenOrderDto
+            {
+                OrderId = o.OrderId,
+                UserId = o.UserId,
+                CustomerName = o.User?.Name ?? "Unknown",
+                ScheduledFor = o.ScheduledFor,
+                DeliveryTimeSlot = "7:00 AM - 9:00 AM",
+                TotalPrice = o.TotalPrice,
+                IsPrepared = o.IsPrepared,
+                CreatedAt = o.CreatedAt,
+                Ingredients = o.UserMeal?.UserMealIngredients.Select(umi => new KitchenIngredientDto
+                {
+                    IngredientId = umi.IngredientId,
+                    IngredientName = umi.Ingredient.IngredientName,
+                    Quantity = umi.Quantity,
+                    Category = umi.Ingredient.IngredientCategory?.CategoryName ?? "Other",
+                    IconEmoji = umi.Ingredient.IconEmoji ?? "🥗"
+                }).ToList() ?? new List<KitchenIngredientDto>()
+            }).ToList();
+        }
+
+        public async Task MarkOrderAsPreparedAsync(int orderId)
+        {
+            var order = await _kitchenRepository.GetOrderByIdAsync(orderId);
+            
+            if (order == null)
+                throw new InvalidOperationException("Order not found");
+
+            if (order.IsPrepared)
+                throw new InvalidOperationException("Order already marked as prepared");
+
+            order.IsPrepared = true;
+            order.UpdatedAt = DateTime.UtcNow;
+
+            await _kitchenRepository.UpdateOrderAsync(order);
+
+            _logger.LogInformation($"✅ Order #{orderId} marked as prepared");
+        }
+
+        public async Task<KitchenStatsDto> GetTodayStatsAsync()
+        {
+            var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
+            var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
+            
+            var deliveryDate = DateTime.SpecifyKind(istNow.Date, DateTimeKind.Utc); // TODAY
+
+            var todayOrders = await _kitchenRepository.GetOrdersForPreparationAsync(deliveryDate);
+
+            var stats = new KitchenStatsDto
+            {
+                TotalOrders = todayOrders.Count,
+                PreparedOrders = todayOrders.Count(o => o.IsPrepared),
+                PendingOrders = todayOrders.Count(o => !o.IsPrepared),
+                TotalRevenue = todayOrders.Sum(o => o.TotalPrice),
+                IngredientSummary = todayOrders
+                    .SelectMany(o => o.UserMeal?.UserMealIngredients ?? new List<Domain.Entities.UserMealIngredient>())
+                    .GroupBy(umi => umi.Ingredient.IngredientName)
+                    .ToDictionary(g => g.Key, g => g.Sum(umi => umi.Quantity))
+            };
+
+            return stats;
+        }
+
+        // ============================================================================
+        // ✨ NEW: GET TOMORROW'S KITCHEN STATISTICS
+        // ============================================================================
+        public async Task<KitchenStatsDto> GetTomorrowStatsAsync()
+        {
+            var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
+            var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
+            
+            var tomorrowDate = DateTime.SpecifyKind(istNow.Date.AddDays(1), DateTimeKind.Utc); // TOMORROW
+
+            var tomorrowOrders = await _kitchenRepository.GetOrdersForPreparationAsync(tomorrowDate);
+
+            var stats = new KitchenStatsDto
+            {
+                TotalOrders = tomorrowOrders.Count,
+                PreparedOrders = tomorrowOrders.Count(o => o.IsPrepared),
+                PendingOrders = tomorrowOrders.Count(o => !o.IsPrepared),
+                TotalRevenue = tomorrowOrders.Sum(o => o.TotalPrice),
+                IngredientSummary = tomorrowOrders
+                    .SelectMany(o => o.UserMeal?.UserMealIngredients ?? new List<Domain.Entities.UserMealIngredient>())
+                    .GroupBy(umi => umi.Ingredient.IngredientName)
+                    .ToDictionary(g => g.Key, g => g.Sum(umi => umi.Quantity))
+            };
+
+            return stats;
+        }
+    }
+}
+using System;
+using System.Collections.Generic;
+
+namespace HealthyBreakfastApp.Application.DTOs
+{
+    public class KitchenOrderDto
+    {
+        public int OrderId { get; set; }
+        public int UserId { get; set; }
+        public string CustomerName { get; set; }
+        public DateTime ScheduledFor { get; set; }
+        public string DeliveryTimeSlot { get; set; }
+        public decimal TotalPrice { get; set; }
+        public bool IsPrepared { get; set; }
+        public DateTime CreatedAt { get; set; }
+        
+        // Ingredients needed for preparation
+        public List<KitchenIngredientDto> Ingredients { get; set; } = new();
+        
+        // For grouping by society/delivery route
+        public string DeliveryAddress { get; set; }
+        public int? SocietyId { get; set; }
+        public string SocietyName { get; set; }
+    }
+
+    public class KitchenIngredientDto
+    {
+        public int IngredientId { get; set; }
+        public string IngredientName { get; set; }
+        public int Quantity { get; set; }
+        public string Category { get; set; }
+        public string IconEmoji { get; set; }
+    }
+
+    public class KitchenStatsDto
+    {
+        public int TotalOrders { get; set; }
+        public int PreparedOrders { get; set; }
+        public int PendingOrders { get; set; }
+        public decimal TotalRevenue { get; set; }
+        public Dictionary<string, int> IngredientSummary { get; set; } = new();
+    }
+}
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
+using HealthyBreakfastApp.Application.Interfaces;
+using HealthyBreakfastApp.Domain.Entities;
+using HealthyBreakfastApp.Infrastructure.Data;
+
+namespace HealthyBreakfastApp.Infrastructure.Repositories
+{
+    public class KitchenRepository : IKitchenRepository
+    {
+        private readonly AppDbContext _context;
+
+        public KitchenRepository(AppDbContext context)
+        {
+            _context = context;
+        }
+
+        public async Task<List<Order>> GetOrdersForPreparationAsync(DateTime date)
+        {
+            return await _context.Orders
+                .Include(o => o.User)
+                .Include(o => o.UserMeal)
+                    .ThenInclude(um => um.UserMealIngredients)
+                    .ThenInclude(umi => umi.Ingredient)
+                        .ThenInclude(i => i.IngredientCategory)
+                .Where(o => o.ScheduledFor.Date == date.Date && !o.IsPrepared)
+                .OrderBy(o => o.CreatedAt)
+                .ToListAsync();
+        }
+
+        public async Task<Order> GetOrderByIdAsync(int orderId)
+        {
+            return await _context.Orders
+                .Include(o => o.User)
+                .Include(o => o.UserMeal)
+                    .ThenInclude(um => um.UserMealIngredients)
+                    .ThenInclude(umi => umi.Ingredient)
+                .FirstOrDefaultAsync(o => o.OrderId == orderId);
+        }
+
+        public async Task UpdateOrderAsync(Order order)
+        {
+            _context.Orders.Update(order);
+            await _context.SaveChangesAsync();
+        }
+    }
+}

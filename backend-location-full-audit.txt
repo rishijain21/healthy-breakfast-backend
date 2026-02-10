@@ -1,0 +1,852 @@
+==================== CreateUserAddressDto.cs ====================
+using System.ComponentModel.DataAnnotations;
+
+namespace HealthyBreakfastApp.Application.DTOs
+{
+    public class CreateUserAddressDto
+    {
+        [Required]
+        public int ServiceableLocationId { get; set; }
+        
+        [MaxLength(50)]
+        public string? Wing { get; set; }
+        
+        [MaxLength(50)]
+        public string? Block { get; set; }
+        
+        [Required]
+        [MaxLength(50)]
+        public string FlatNumber { get; set; } = string.Empty;
+        
+        [MaxLength(20)]
+        public string? Floor { get; set; }
+        
+        [MaxLength(500)]
+        public string? AdditionalInstructions { get; set; }
+        
+        [MaxLength(50)]
+        public string? Label { get; set; }
+        
+        public bool SetAsPrimary { get; set; } = false;
+    }
+}
+
+
+==================== UpdateUserAddressDto.cs ====================
+using System.ComponentModel.DataAnnotations;
+
+namespace HealthyBreakfastApp.Application.DTOs
+{
+    public class UpdateUserAddressDto
+    {
+        [MaxLength(50)]
+        public string? Wing { get; set; }
+        
+        [MaxLength(50)]
+        public string? Block { get; set; }
+        
+        [MaxLength(50)]
+        public string? FlatNumber { get; set; }
+        
+        [MaxLength(20)]
+        public string? Floor { get; set; }
+        
+        [MaxLength(500)]
+        public string? AdditionalInstructions { get; set; }
+        
+        [MaxLength(50)]
+        public string? Label { get; set; }
+    }
+}
+
+
+==================== UserAddressDetailDto.cs ====================
+namespace HealthyBreakfastApp.Application.DTOs
+{
+    public class UserAddressDetailDto
+    {
+        public int Id { get; set; }
+        public int UserId { get; set; }
+        public string? Wing { get; set; }
+        public string? Block { get; set; }
+        public string FlatNumber { get; set; } = string.Empty;
+        public string? Floor { get; set; }
+        public string? AdditionalInstructions { get; set; }
+        public string? Label { get; set; }
+        public bool IsPrimary { get; set; }
+        public bool IsActive { get; set; }
+        public string CompleteAddress { get; set; } = string.Empty;
+        
+        public ServiceableLocationDto ServiceableLocation { get; set; } = null!;
+        
+        public DateTime CreatedAt { get; set; }
+        public DateTime? UpdatedAt { get; set; }
+    }
+}
+
+
+==================== UserAddressesController.cs ====================
+using HealthyBreakfastApp.Application.DTOs;
+using HealthyBreakfastApp.Application.Interfaces;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+
+namespace HealthyBreakfastApp.WebAPI.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    [Authorize]
+    public class UserAddressesController : ControllerBase
+    {
+        private readonly IUserAddressService _addressService;
+        private readonly ICurrentUserService _currentUserService;
+
+        public UserAddressesController(
+            IUserAddressService addressService,
+            ICurrentUserService currentUserService)
+        {
+            _addressService = addressService;
+            _currentUserService = currentUserService;
+        }
+
+        /// <summary>
+        /// Get all addresses for current user
+        /// </summary>
+        [HttpGet]
+        public async Task<ActionResult<IEnumerable<UserAddressDetailDto>>> GetMyAddresses()
+        {
+            var userIdResult = await _currentUserService.GetCurrentUserIdAsync();
+            if (!userIdResult.HasValue)
+                return Unauthorized(new { message = "User not authenticated" });
+
+            var userId = userIdResult.Value;
+            var addresses = await _addressService.GetActiveUserAddressesAsync(userId);
+            return Ok(addresses);
+        }
+
+        /// <summary>
+        /// Get specific address by ID
+        /// </summary>
+        [HttpGet("{id}")]
+        public async Task<ActionResult<UserAddressDetailDto>> GetById(int id)
+        {
+            var userIdResult = await _currentUserService.GetCurrentUserIdAsync();
+            if (!userIdResult.HasValue)
+                return Unauthorized(new { message = "User not authenticated" });
+
+            var userId = userIdResult.Value;
+            var address = await _addressService.GetByIdAsync(id);
+            
+            if (address == null)
+                return NotFound(new { message = "Address not found" });
+
+            if (address.UserId != userId)
+                return Forbid();
+
+            return Ok(address);
+        }
+
+        /// <summary>
+        /// Get primary address for current user
+        /// </summary>
+        [HttpGet("primary")]
+        public async Task<ActionResult<UserAddressDetailDto>> GetPrimaryAddress()
+        {
+            var userIdResult = await _currentUserService.GetCurrentUserIdAsync();
+            if (!userIdResult.HasValue)
+                return Unauthorized(new { message = "User not authenticated" });
+
+            var userId = userIdResult.Value;
+            var address = await _addressService.GetPrimaryAddressAsync(userId);
+            
+            if (address == null)
+                return NotFound(new { message = "No primary address found. Please add an address." });
+
+            return Ok(address);
+        }
+
+        /// <summary>
+        /// Create new address
+        /// </summary>
+        [HttpPost]
+        public async Task<ActionResult<UserAddressDetailDto>> Create(
+            [FromBody] CreateUserAddressDto dto)
+        {
+            try
+            {
+                var userIdResult = await _currentUserService.GetCurrentUserIdAsync();
+                if (!userIdResult.HasValue)
+                    return Unauthorized(new { message = "User not authenticated" });
+
+                var userId = userIdResult.Value;
+                var created = await _addressService.CreateAsync(userId, dto);
+                return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Update existing address
+        /// </summary>
+        [HttpPut("{id}")]
+        public async Task<ActionResult<UserAddressDetailDto>> Update(
+            int id, 
+            [FromBody] UpdateUserAddressDto dto)
+        {
+            try
+            {
+                var userIdResult = await _currentUserService.GetCurrentUserIdAsync();
+                if (!userIdResult.HasValue)
+                    return Unauthorized(new { message = "User not authenticated" });
+
+                var userId = userIdResult.Value;
+                var updated = await _addressService.UpdateAsync(userId, id, dto);
+                return Ok(updated);
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return NotFound(new { message = ex.Message });
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return Forbid();
+            }
+        }
+
+        /// <summary>
+        /// Set address as primary
+        /// </summary>
+        [HttpPut("{id}/set-primary")]
+        public async Task<ActionResult> SetPrimary(int id)
+        {
+            try
+            {
+                var userIdResult = await _currentUserService.GetCurrentUserIdAsync();
+                if (!userIdResult.HasValue)
+                    return Unauthorized(new { message = "User not authenticated" });
+
+                var userId = userIdResult.Value;
+                var result = await _addressService.SetPrimaryAddressAsync(userId, id);
+                
+                if (!result)
+                    return NotFound(new { message = "Address not found" });
+
+                return Ok(new { message = "Primary address updated successfully" });
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return NotFound(new { message = ex.Message });
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return Forbid();
+            }
+        }
+
+        /// <summary>
+        /// Delete address
+        /// </summary>
+        [HttpDelete("{id}")]
+        public async Task<ActionResult> Delete(int id)
+        {
+            try
+            {
+                var userIdResult = await _currentUserService.GetCurrentUserIdAsync();
+                if (!userIdResult.HasValue)
+                    return Unauthorized(new { message = "User not authenticated" });
+
+                var userId = userIdResult.Value;
+                var result = await _addressService.DeleteAsync(userId, id);
+                
+                if (!result)
+                    return NotFound(new { message = "Address not found" });
+
+                return Ok(new { message = "Address deleted successfully" });
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return Forbid();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Validate address for delivery
+        /// </summary>
+        [HttpGet("{id}/validate")]
+        public async Task<ActionResult<ValidateAddressDto>> ValidateAddress(int id)
+        {
+            var userIdResult = await _currentUserService.GetCurrentUserIdAsync();
+            if (!userIdResult.HasValue)
+                return Unauthorized(new { message = "User not authenticated" });
+
+            var userId = userIdResult.Value;
+            var result = await _addressService.ValidateAddressChangeAsync(userId, id);
+            return Ok(result);
+        }
+    }
+}
+
+
+==================== ServiceableLocationsController.cs ====================
+using HealthyBreakfastApp.Application.DTOs;
+using HealthyBreakfastApp.Application.Interfaces;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+
+namespace HealthyBreakfastApp.WebAPI.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    public class ServiceableLocationsController : ControllerBase
+    {
+        private readonly IServiceableLocationService _service;
+
+        public ServiceableLocationsController(IServiceableLocationService service)
+        {
+            _service = service;
+        }
+
+        /// <summary>
+        /// Get all active serviceable locations
+        /// </summary>
+        [HttpGet]
+        [AllowAnonymous]
+        public async Task<ActionResult<IEnumerable<ServiceableLocationDto>>> GetAll()
+        {
+            var locations = await _service.GetActiveLocationsAsync();
+            return Ok(locations);
+        }
+
+        /// <summary>
+        /// Get serviceable location by ID
+        /// </summary>
+        [HttpGet("{id}")]
+        [AllowAnonymous]
+        public async Task<ActionResult<ServiceableLocationDto>> GetById(int id)
+        {
+            var location = await _service.GetByIdAsync(id);
+            if (location == null)
+                return NotFound(new { message = "Serviceable location not found" });
+
+            return Ok(location);
+        }
+
+        /// <summary>
+        /// Search locations by pincode
+        /// </summary>
+        [HttpGet("search/pincode/{pincode}")]
+        [AllowAnonymous]
+        public async Task<ActionResult<IEnumerable<ServiceableLocationDto>>> SearchByPincode(string pincode)
+        {
+            var locations = await _service.SearchByPincodeAsync(pincode);
+            return Ok(locations);
+        }
+
+        /// <summary>
+        /// Search locations by city
+        /// </summary>
+        [HttpGet("search/city/{city}")]
+        [AllowAnonymous]
+        public async Task<ActionResult<IEnumerable<ServiceableLocationDto>>> SearchByCity(string city)
+        {
+            var locations = await _service.SearchByCityAsync(city);
+            return Ok(locations);
+        }
+
+        /// <summary>
+        /// Search locations by city and area
+        /// </summary>
+        [HttpGet("search")]
+        [AllowAnonymous]
+        public async Task<ActionResult<IEnumerable<ServiceableLocationDto>>> SearchByArea(
+            [FromQuery] string city, 
+            [FromQuery] string area)
+        {
+            if (string.IsNullOrEmpty(city) || string.IsNullOrEmpty(area))
+                return BadRequest(new { message = "City and area are required" });
+
+            var locations = await _service.SearchByAreaAsync(city, area);
+            return Ok(locations);
+        }
+
+        /// <summary>
+        /// Validate if a location is serviceable
+        /// </summary>
+        [HttpGet("validate/{locationId}")]
+        [AllowAnonymous]
+        public async Task<ActionResult<ValidateAddressDto>> ValidateLocation(int locationId)
+        {
+            var result = await _service.ValidateLocationAsync(locationId);
+            return Ok(result);
+        }
+
+        // ========================================
+        // ADMIN ENDPOINTS
+        // ========================================
+
+        /// <summary>
+        /// Create new serviceable location (Admin only)
+        /// </summary>
+        [HttpPost]
+        [Authorize(Roles = "Admin")]
+        public async Task<ActionResult<ServiceableLocationDto>> Create(
+            [FromBody] CreateServiceableLocationDto dto)
+        {
+            try
+            {
+                var created = await _service.CreateAsync(dto);
+                return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Update serviceable location (Admin only)
+        /// </summary>
+        [HttpPut("{id}")]
+        [Authorize(Roles = "Admin")]
+        public async Task<ActionResult<ServiceableLocationDto>> Update(
+            int id, 
+            [FromBody] UpdateServiceableLocationDto dto)
+        {
+            try
+            {
+                var updated = await _service.UpdateAsync(id, dto);
+                return Ok(updated);
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return NotFound(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Delete serviceable location (Admin only)
+        /// </summary>
+        [HttpDelete("{id}")]
+        [Authorize(Roles = "Admin")]
+        public async Task<ActionResult> Delete(int id)
+        {
+            var result = await _service.DeleteAsync(id);
+            if (!result)
+                return NotFound(new { message = "Serviceable location not found" });
+
+            return Ok(new { message = "Serviceable location deleted successfully" });
+        }
+    }
+}
+
+
+==================== UserAddress.cs ====================
+using System.ComponentModel.DataAnnotations;
+
+namespace HealthyBreakfastApp.Domain.Entities
+{
+    public class UserAddress
+    {
+        public int Id { get; set; }
+        
+        [Required]
+        public int UserId { get; set; }
+        
+        [Required]
+        public int ServiceableLocationId { get; set; }
+        
+        // Building details
+        [MaxLength(50)]
+        public string? Wing { get; set; }
+        
+        [MaxLength(50)]
+        public string? Block { get; set; }
+        
+        [Required]
+        [MaxLength(50)]
+        public string FlatNumber { get; set; } = string.Empty;
+        
+        [MaxLength(20)]
+        public string? Floor { get; set; }
+        
+        // Additional delivery instructions
+        [MaxLength(500)]
+        public string? AdditionalInstructions { get; set; }
+        
+        // Address label for easy identification
+        [MaxLength(50)]
+        public string? Label { get; set; } // e.g., "Home", "Office"
+        
+        public bool IsPrimary { get; set; } = false;
+        public bool IsActive { get; set; } = true;
+        
+        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+        public DateTime? UpdatedAt { get; set; }
+        
+        // Navigation Properties
+        public User User { get; set; } = null!;
+        public ServiceableLocation ServiceableLocation { get; set; } = null!;
+        public ICollection<Order> Orders { get; set; } = new List<Order>();
+        public ICollection<Subscription> Subscriptions { get; set; } = new List<Subscription>();
+        
+        // Computed property for complete address
+        public string CompleteAddress
+        {
+            get
+            {
+                var parts = new List<string>();
+                
+                if (!string.IsNullOrEmpty(FlatNumber))
+                    parts.Add($"Flat {FlatNumber}");
+                
+                if (!string.IsNullOrEmpty(Floor))
+                    parts.Add($"Floor {Floor}");
+                
+                if (!string.IsNullOrEmpty(Wing))
+                    parts.Add($"Wing {Wing}");
+                
+                if (!string.IsNullOrEmpty(Block))
+                    parts.Add($"Block {Block}");
+                
+                return string.Join(", ", parts);
+            }
+        }
+    }
+}
+
+
+==================== ServiceableLocation.cs ====================
+using System.ComponentModel.DataAnnotations;
+
+namespace HealthyBreakfastApp.Domain.Entities
+{
+    public class ServiceableLocation
+    {
+        public int Id { get; set; }
+        
+        [Required]
+        [MaxLength(100)]
+        public string City { get; set; } = string.Empty;
+        
+        [Required]
+        [MaxLength(100)]
+        public string Area { get; set; } = string.Empty;
+        
+        [MaxLength(200)]
+        public string Locality { get; set; } = string.Empty;
+        
+        [MaxLength(200)]
+        public string LandmarkOrSociety { get; set; } = string.Empty;
+        
+        [Required]
+        [MaxLength(10)]
+        public string Pincode { get; set; } = string.Empty;
+        
+        public bool IsActive { get; set; } = true;
+        
+        // For future geofencing/mapping features
+        public decimal? Latitude { get; set; }
+        public decimal? Longitude { get; set; }
+        
+        // Delivery time slot (optional for future use)
+        [MaxLength(100)]
+        public string? DeliveryTimeSlot { get; set; }
+        
+        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+        public DateTime? UpdatedAt { get; set; }
+        
+        // Navigation Properties
+        public ICollection<UserAddress> UserAddresses { get; set; } = new List<UserAddress>();
+        
+        // Computed property for display
+        public string FullAddress => $"{LandmarkOrSociety}, {Locality}, {Area}, {City} - {Pincode}".Trim(' ', ',');
+    }
+}
+
+
+==================== AppDbContext.cs ====================
+// HealthyBreakfastApp.Infrastructure/Data/AppDbContext.cs
+
+using HealthyBreakfastApp.Domain.Entities;
+using HealthyBreakfastApp.Domain.Enums;
+using Microsoft.EntityFrameworkCore;
+using System;
+
+namespace HealthyBreakfastApp.Infrastructure.Data
+{
+    public class AppDbContext : DbContext
+    {
+        public AppDbContext(DbContextOptions<AppDbContext> options)
+            : base(options)
+        {
+        }
+
+        public DbSet<User> Users { get; set; }
+        public DbSet<Meal> Meals { get; set; }
+        public DbSet<IngredientCategory> IngredientCategories { get; set; }
+        public DbSet<Ingredient> Ingredients { get; set; }
+        public DbSet<MealOption> MealOptions { get; set; }
+        public DbSet<MealOptionIngredient> MealOptionIngredients { get; set; }
+        public DbSet<UserMeal> UserMeals { get; set; }
+        public DbSet<UserMealIngredient> UserMealIngredients { get; set; }
+        public DbSet<Order> Orders { get; set; }
+        public DbSet<OrderItem> OrderItems { get; set; }
+        public DbSet<Subscription> Subscriptions { get; set; }
+        public DbSet<WalletTransaction> WalletTransactions { get; set; }
+        public DbSet<UserAuthMapping> UserAuthMappings { get; set; }
+        
+        // Scheduled order tables
+        public DbSet<ScheduledOrder> ScheduledOrders { get; set; }
+        public DbSet<ScheduledOrderIngredient> ScheduledOrderIngredients { get; set; }
+        
+        // Subscription schedule table
+        public DbSet<SubscriptionSchedule> SubscriptionSchedules { get; set; }
+        
+        // ✅ Location feature tables
+        public DbSet<ServiceableLocation> ServiceableLocations { get; set; }
+        public DbSet<UserAddress> UserAddresses { get; set; }
+
+        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+        {
+            if (!optionsBuilder.IsConfigured)
+            {
+                AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
+            }
+            
+            base.OnConfiguring(optionsBuilder);
+        }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+
+            // UserAuthMapping configuration
+            modelBuilder.Entity<UserAuthMapping>(entity =>
+            {
+                entity.HasKey(e => e.MappingId);
+                entity.Property(e => e.MappingId).IsRequired();
+                entity.Property(e => e.AuthId).IsRequired();
+                entity.Property(e => e.UserId).IsRequired();
+                entity.Property(e => e.CreatedAt).IsRequired();
+
+                entity.HasIndex(e => e.AuthId).IsUnique();
+
+                entity.HasOne(e => e.User)
+                      .WithOne(u => u.AuthMapping)
+                      .HasForeignKey<UserAuthMapping>(e => e.UserId)
+                      .OnDelete(DeleteBehavior.Cascade);
+
+                entity.ToTable("user_auth_mapping");
+                entity.Property(e => e.MappingId).HasColumnName("mapping_id");
+                entity.Property(e => e.AuthId).HasColumnName("auth_id");
+                entity.Property(e => e.UserId).HasColumnName("user_id");
+                entity.Property(e => e.CreatedAt).HasColumnName("created_at");
+            });
+
+            // ✅ Order configuration with delivery address
+            modelBuilder.Entity<Order>(entity =>
+            {
+                entity.Property(e => e.OrderStatus)
+                    .HasColumnName("Status")
+                    .IsRequired();
+                
+                // ✅ ADD: Delivery address relationship
+                entity.HasOne(e => e.DeliveryAddress)
+                    .WithMany(a => a.Orders)
+                    .HasForeignKey(e => e.DeliveryAddressId)
+                    .OnDelete(DeleteBehavior.SetNull);
+            });
+
+            // ScheduledOrder configuration
+            modelBuilder.Entity<ScheduledOrder>(entity =>
+            {
+                entity.HasKey(e => e.ScheduledOrderId);
+                entity.Property(e => e.MealName).HasMaxLength(255);
+                entity.Property(e => e.DeliveryTimeSlot).HasMaxLength(50);
+                entity.Property(e => e.OrderStatus).HasMaxLength(50);
+                entity.Property(e => e.TotalPrice).HasColumnType("decimal(10,2)");
+                entity.Property(e => e.ScheduledFor).HasColumnType("date");
+                
+                entity.Property(e => e.IsProcessedToOrder).HasDefaultValue(false);
+                entity.Property(e => e.ConfirmedOrderId).IsRequired(false);
+                
+                entity.HasOne(e => e.User)
+                    .WithMany()
+                    .HasForeignKey(e => e.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            // ScheduledOrderIngredient configuration
+            modelBuilder.Entity<ScheduledOrderIngredient>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.UnitPrice).HasColumnType("decimal(10,2)");
+                entity.Property(e => e.TotalPrice).HasColumnType("decimal(10,2)");
+                
+                entity.HasOne(e => e.ScheduledOrder)
+                    .WithMany(so => so.Ingredients)
+                    .HasForeignKey(e => e.ScheduledOrderId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                    
+                entity.HasOne(e => e.Ingredient)
+                    .WithMany()
+                    .HasForeignKey(e => e.IngredientId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // ✅ Subscription configuration with delivery address
+            modelBuilder.Entity<Subscription>(entity =>
+            {
+                entity.HasKey(e => e.SubscriptionId);
+                
+                entity.Property(e => e.Frequency)
+                    .HasConversion<int>()
+                    .IsRequired();
+                
+                entity.Property(e => e.StartDate).IsRequired();
+                entity.Property(e => e.EndDate).IsRequired();
+                entity.Property(e => e.Active).IsRequired();
+                entity.Property(e => e.NextScheduledDate).IsRequired(false);
+                
+                entity.HasOne(e => e.User)
+                    .WithMany()
+                    .HasForeignKey(e => e.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                
+                entity.HasOne(e => e.UserMeal)
+                    .WithMany()
+                    .HasForeignKey(e => e.UserMealId)
+                    .OnDelete(DeleteBehavior.Restrict);
+                
+                // ✅ ADD: Delivery address relationship
+                entity.HasOne(e => e.DeliveryAddress)
+                    .WithMany(a => a.Subscriptions)
+                    .HasForeignKey(e => e.DeliveryAddressId)
+                    .OnDelete(DeleteBehavior.SetNull);
+            });
+
+            // SubscriptionSchedule configuration
+            modelBuilder.Entity<SubscriptionSchedule>(entity =>
+            {
+                entity.HasKey(e => e.ScheduleId);
+                
+                entity.Property(e => e.DayOfWeek)
+                    .IsRequired()
+                    .HasComment("Day of week: 0=Sunday, 1=Monday, 2=Tuesday, 3=Wednesday, 4=Thursday, 5=Friday, 6=Saturday");
+                
+                entity.Property(e => e.Quantity)
+                    .IsRequired()
+                    .HasComment("Number of items to deliver on this day");
+                
+                entity.Property(e => e.CreatedAt).IsRequired();
+                entity.Property(e => e.UpdatedAt).IsRequired();
+                
+                entity.HasOne(e => e.Subscription)
+                    .WithMany(s => s.WeeklySchedule)
+                    .HasForeignKey(e => e.SubscriptionId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                
+                entity.HasIndex(e => new { e.SubscriptionId, e.DayOfWeek })
+                    .IsUnique()
+                    .HasDatabaseName("IX_SubscriptionSchedules_Subscription_DayOfWeek");
+                
+                entity.ToTable(t => t.HasCheckConstraint(
+                    "CK_SubscriptionSchedules_DayOfWeek", 
+                    "\"DayOfWeek\" >= 0 AND \"DayOfWeek\" <= 6"));
+                
+                entity.ToTable(t => t.HasCheckConstraint(
+                    "CK_SubscriptionSchedules_Quantity", 
+                    "\"Quantity\" > 0"));
+            });
+
+            // ✅ ServiceableLocation configuration
+            modelBuilder.Entity<ServiceableLocation>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                
+                entity.HasIndex(e => e.Pincode);
+                entity.HasIndex(e => new { e.City, e.Area });
+                
+                entity.Property(e => e.Latitude).HasPrecision(10, 7);
+                entity.Property(e => e.Longitude).HasPrecision(10, 7);
+            });
+
+            // ✅ UserAddress configuration
+            modelBuilder.Entity<UserAddress>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                
+                entity.HasIndex(e => e.UserId);
+                
+                // ✅ Unique constraint: Only ONE primary address per user
+                entity.HasIndex(e => new { e.UserId, e.IsPrimary })
+                    .IsUnique()
+                    .HasFilter($"\"IsPrimary\" = true AND \"IsActive\" = true")
+                    .HasDatabaseName("IX_UserAddresses_Primary_Unique");
+                
+                entity.HasOne(e => e.User)
+                    .WithMany(u => u.Addresses)
+                    .HasForeignKey(e => e.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                
+                entity.HasOne(e => e.ServiceableLocation)
+                    .WithMany(s => s.UserAddresses)
+                    .HasForeignKey(e => e.ServiceableLocationId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // ========== SEED DATA ==========
+            var seedDate = new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+            modelBuilder.Entity<IngredientCategory>().HasData(
+                new IngredientCategory { CategoryId = 1, CategoryName = "Oats", CreatedAt = seedDate, UpdatedAt = seedDate },
+                new IngredientCategory { CategoryId = 2, CategoryName = "Seeds", CreatedAt = seedDate, UpdatedAt = seedDate },
+                new IngredientCategory { CategoryId = 3, CategoryName = "Fruits", CreatedAt = seedDate, UpdatedAt = seedDate },
+                new IngredientCategory { CategoryId = 4, CategoryName = "Milk", CreatedAt = seedDate, UpdatedAt = seedDate },
+                new IngredientCategory { CategoryId = 5, CategoryName = "Sweetener", CreatedAt = seedDate, UpdatedAt = seedDate }
+            );
+
+            modelBuilder.Entity<Meal>().HasData(
+                new Meal { MealId = 1, MealName = "Classic Overnight Oats", Description = "Traditional overnight oats base", BasePrice = 40, CreatedAt = seedDate, UpdatedAt = seedDate },
+                new Meal { MealId = 2, MealName = "Custom Breakfast Bowl", Description = "Build your perfect breakfast", BasePrice = 50, CreatedAt = seedDate, UpdatedAt = seedDate },
+                new Meal { MealId = 3, MealName = "Protein Power Bowl", Description = "High protein breakfast option", BasePrice = 60, CreatedAt = seedDate, UpdatedAt = seedDate }
+            );
+
+            modelBuilder.Entity<User>().HasData(
+                new User
+                {
+                    UserId = 1,
+                    Name = "TestUser",
+                    Email = "testuser@healthybreakfast.com",
+                    Phone = "1234567890",
+                    WalletBalance = 625,
+                    CreatedAt = seedDate,
+                    UpdatedAt = seedDate
+                }
+            );
+
+            modelBuilder.Entity<WalletTransaction>().HasData(
+                new WalletTransaction
+                {
+                    TransactionId = 1,
+                    UserId = 1,
+                    Amount = 625,
+                    Type = "Credit",
+                    Description = "Initial wallet balance",
+                    CreatedAt = seedDate
+                }
+            );
+        }
+    }
+}

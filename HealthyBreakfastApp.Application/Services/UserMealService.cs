@@ -17,11 +17,12 @@ namespace HealthyBreakfastApp.Application.Services
             _repository = repository;
         }
 
-        public async Task<int> CreateUserMealAsync(CreateUserMealDto dto)
+        // ✅ SECURE: CreateUserMealAsync with userId from JWT token
+        public async Task<int> CreateUserMealAsync(CreateUserMealDto dto, int userId)
         {
             var entity = new UserMeal
             {
-                UserId = dto.UserId,
+                UserId = userId,
                 MealId = dto.MealId,
                 MealName = dto.MealName ?? "Custom Meal", // ✅ FIXED: Handle potential null
 

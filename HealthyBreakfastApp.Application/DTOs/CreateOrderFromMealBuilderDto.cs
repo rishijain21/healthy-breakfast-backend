@@ -5,9 +5,6 @@ namespace HealthyBreakfastApp.Application.DTOs
     public class CreateOrderFromMealBuilderDto
     {
         [Required]
-        public int UserId { get; set; }
-        
-        [Required]
         public int MealId { get; set; }
         
         [Required]

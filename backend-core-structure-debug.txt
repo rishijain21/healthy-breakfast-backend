@@ -1,0 +1,674 @@
+
+
+==================== FILE: HealthyBreakfastApp.Domain/Entities/User.cs ====================
+
+using System;
+using System.ComponentModel.DataAnnotations;
+
+namespace HealthyBreakfastApp.Domain.Entities
+{
+    public class User
+    {
+        [Key]
+        public int UserId { get; set; }
+
+        public string Name { get; set; } = null!;
+        public string Email { get; set; } = null!;
+        public string Phone { get; set; } = null!;
+
+        // ✅ NEW FIELDS - Add these
+        public string? DeliveryAddress { get; set; }
+        public string AccountStatus { get; set; } = "Active"; // "Active", "Deactivated", "Deleted"
+
+        public decimal WalletBalance { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public DateTime UpdatedAt { get; set; }
+
+        // Navigation property
+        public virtual UserAuthMapping? AuthMapping { get; set; }
+    }
+}
+
+
+==================== FILE: HealthyBreakfastApp.Domain/Entities/Order.cs ====================
+
+using System;
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+using HealthyBreakfastApp.Domain.Enums;
+
+namespace HealthyBreakfastApp.Domain.Entities
+{
+    public class Order
+    {
+        [Key]
+        public int OrderId { get; set; }
+
+        [ForeignKey("User")]
+        public int UserId { get; set; }
+
+        // ✅ ADD THIS: Link to UserMeal for ingredient details
+        [ForeignKey("UserMeal")]
+        public int? UserMealId { get; set; }
+// ADD THIS LINE:
+public bool IsPrepared { get; set; } = false;  // For kitchen tracking
+
+        // ✅ FIX: Put [Column] attribute BEFORE the property
+        [Column("Status")]
+        public OrderStatus OrderStatus { get; set; } = OrderStatus.Pending;
+        
+        public DateTime OrderDate { get; set; }
+        public DateTime ScheduledFor { get; set; }
+        public decimal TotalPrice { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public DateTime UpdatedAt { get; set; }
+
+        // Navigation properties
+        public User User { get; set; } = null!;
+        public UserMeal? UserMeal { get; set; } = null; // ✅ ADD THIS
+    }
+}
+
+
+==================== FILE: HealthyBreakfastApp.Domain/Entities/Subscription.cs ====================
+
+// HealthyBreakfastApp.Domain/Entities/Subscription.cs
+
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+using HealthyBreakfastApp.Domain.Enums;
+
+namespace HealthyBreakfastApp.Domain.Entities
+{
+    public class Subscription
+    {
+        [Key]
+        public int SubscriptionId { get; set; }
+
+        [ForeignKey("User")]
+        public int UserId { get; set; }
+
+        [ForeignKey("UserMeal")]
+        public int UserMealId { get; set; }
+
+        public SubscriptionFrequency Frequency { get; set; }
+        
+        public DateOnly StartDate { get; set; }
+        public DateOnly EndDate { get; set; }
+        public bool Active { get; set; }
+        
+        public DateOnly? NextScheduledDate { get; set; }
+        
+        public DateTime CreatedAt { get; set; }
+        public DateTime UpdatedAt { get; set; }
+
+        // Navigation properties
+        public User User { get; set; } = null!;
+        public UserMeal UserMeal { get; set; } = null!;
+        
+        // ✅ NEW: Weekly delivery schedule
+        public ICollection<SubscriptionSchedule> WeeklySchedule { get; set; } = new List<SubscriptionSchedule>();
+    }
+}
+
+
+==================== FILE: HealthyBreakfastApp.Infrastructure/Data/AppDbContext.cs ====================
+
+// HealthyBreakfastApp.Infrastructure/Data/AppDbContext.cs
+
+using HealthyBreakfastApp.Domain.Entities;
+using HealthyBreakfastApp.Domain.Enums;
+using Microsoft.EntityFrameworkCore;
+using System;
+
+namespace HealthyBreakfastApp.Infrastructure.Data
+{
+    public class AppDbContext : DbContext
+    {
+        public AppDbContext(DbContextOptions<AppDbContext> options)
+            : base(options)
+        {
+        }
+
+        public DbSet<User> Users { get; set; }
+        public DbSet<Meal> Meals { get; set; }
+        public DbSet<IngredientCategory> IngredientCategories { get; set; }
+        public DbSet<Ingredient> Ingredients { get; set; }
+        public DbSet<MealOption> MealOptions { get; set; }
+        public DbSet<MealOptionIngredient> MealOptionIngredients { get; set; }
+        public DbSet<UserMeal> UserMeals { get; set; }
+        public DbSet<UserMealIngredient> UserMealIngredients { get; set; }
+        public DbSet<Order> Orders { get; set; }
+        public DbSet<OrderItem> OrderItems { get; set; }
+        public DbSet<Subscription> Subscriptions { get; set; }
+        public DbSet<WalletTransaction> WalletTransactions { get; set; }
+        public DbSet<UserAuthMapping> UserAuthMappings { get; set; }
+        
+        // ✅ Scheduled order tables
+        public DbSet<ScheduledOrder> ScheduledOrders { get; set; }
+        public DbSet<ScheduledOrderIngredient> ScheduledOrderIngredients { get; set; }
+        
+        // ✅ NEW: Subscription schedule table
+        public DbSet<SubscriptionSchedule> SubscriptionSchedules { get; set; }
+
+        // ✅ IST TIMEZONE: Configure for Indian timezone handling
+        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+        {
+            if (!optionsBuilder.IsConfigured)
+            {
+                // Enable legacy timestamp behavior for IST support
+                AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
+            }
+            
+            base.OnConfiguring(optionsBuilder);
+        }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+
+            // UserAuthMapping configuration
+            modelBuilder.Entity<UserAuthMapping>(entity =>
+            {
+                entity.HasKey(e => e.MappingId);
+                entity.Property(e => e.MappingId).IsRequired();
+                entity.Property(e => e.AuthId).IsRequired();
+                entity.Property(e => e.UserId).IsRequired();
+                entity.Property(e => e.CreatedAt).IsRequired();
+
+                entity.HasIndex(e => e.AuthId).IsUnique();
+
+                entity.HasOne(e => e.User)
+                      .WithOne(u => u.AuthMapping)
+                      .HasForeignKey<UserAuthMapping>(e => e.UserId)
+                      .OnDelete(DeleteBehavior.Cascade);
+
+                entity.ToTable("user_auth_mapping");
+                entity.Property(e => e.MappingId).HasColumnName("mapping_id");
+                entity.Property(e => e.AuthId).HasColumnName("auth_id");
+                entity.Property(e => e.UserId).HasColumnName("user_id");
+                entity.Property(e => e.CreatedAt).HasColumnName("created_at");
+            });
+
+            // Map OrderStatus property to "Status" column in Orders table
+            modelBuilder.Entity<Order>(entity =>
+            {
+                entity.Property(e => e.OrderStatus)
+                    .HasColumnName("Status")
+                    .IsRequired();
+            });
+
+            // ✅ ScheduledOrder configuration
+            modelBuilder.Entity<ScheduledOrder>(entity =>
+            {
+                entity.HasKey(e => e.ScheduledOrderId);
+                entity.Property(e => e.MealName).HasMaxLength(255);
+                entity.Property(e => e.DeliveryTimeSlot).HasMaxLength(50);
+                entity.Property(e => e.OrderStatus).HasMaxLength(50);
+                entity.Property(e => e.TotalPrice).HasColumnType("decimal(10,2)");
+                entity.Property(e => e.ScheduledFor).HasColumnType("date");
+                
+                // NEW FIELDS
+                entity.Property(e => e.IsProcessedToOrder).HasDefaultValue(false);
+                entity.Property(e => e.ConfirmedOrderId).IsRequired(false);
+                
+                entity.HasOne(e => e.User)
+                    .WithMany()
+                    .HasForeignKey(e => e.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            // ✅ ScheduledOrderIngredient configuration
+            modelBuilder.Entity<ScheduledOrderIngredient>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.UnitPrice).HasColumnType("decimal(10,2)");
+                entity.Property(e => e.TotalPrice).HasColumnType("decimal(10,2)");
+                
+                entity.HasOne(e => e.ScheduledOrder)
+                    .WithMany(so => so.Ingredients)
+                    .HasForeignKey(e => e.ScheduledOrderId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                    
+                entity.HasOne(e => e.Ingredient)
+                    .WithMany()
+                    .HasForeignKey(e => e.IngredientId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // ✅ Subscription configuration with enum conversion
+            modelBuilder.Entity<Subscription>(entity =>
+            {
+                entity.HasKey(e => e.SubscriptionId);
+                
+                // Convert SubscriptionFrequency enum to integer for database storage
+                entity.Property(e => e.Frequency)
+                    .HasConversion<int>()
+                    .IsRequired();
+                
+                entity.Property(e => e.StartDate).IsRequired();
+                entity.Property(e => e.EndDate).IsRequired();
+                entity.Property(e => e.Active).IsRequired();
+                entity.Property(e => e.NextScheduledDate).IsRequired(false);
+                
+                entity.HasOne(e => e.User)
+                    .WithMany()
+                    .HasForeignKey(e => e.UserId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                
+                entity.HasOne(e => e.UserMeal)
+                    .WithMany()
+                    .HasForeignKey(e => e.UserMealId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            // ✅ NEW: SubscriptionSchedule configuration (for weekly subscriptions)
+            modelBuilder.Entity<SubscriptionSchedule>(entity =>
+            {
+                entity.HasKey(e => e.ScheduleId);
+                
+                entity.Property(e => e.DayOfWeek)
+                    .IsRequired()
+                    .HasComment("Day of week: 0=Sunday, 1=Monday, 2=Tuesday, 3=Wednesday, 4=Thursday, 5=Friday, 6=Saturday");
+                
+                entity.Property(e => e.Quantity)
+                    .IsRequired()
+                    .HasComment("Number of items to deliver on this day");
+                
+                entity.Property(e => e.CreatedAt).IsRequired();
+                entity.Property(e => e.UpdatedAt).IsRequired();
+                
+                // Foreign key relationship
+                entity.HasOne(e => e.Subscription)
+                    .WithMany(s => s.WeeklySchedule)
+                    .HasForeignKey(e => e.SubscriptionId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                
+                // Prevent duplicate days for same subscription
+                entity.HasIndex(e => new { e.SubscriptionId, e.DayOfWeek })
+                    .IsUnique()
+                    .HasDatabaseName("IX_SubscriptionSchedules_Subscription_DayOfWeek");
+                
+                // Check constraints
+                entity.ToTable(t => t.HasCheckConstraint(
+                    "CK_SubscriptionSchedules_DayOfWeek", 
+                    "\"DayOfWeek\" >= 0 AND \"DayOfWeek\" <= 6"));
+                
+                entity.ToTable(t => t.HasCheckConstraint(
+                    "CK_SubscriptionSchedules_Quantity", 
+                    "\"Quantity\" > 0"));
+            });
+
+            // ========== SEED DATA ==========
+            var seedDate = new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+            // Seed Ingredient Categories
+            modelBuilder.Entity<IngredientCategory>().HasData(
+                new IngredientCategory { CategoryId = 1, CategoryName = "Oats", CreatedAt = seedDate, UpdatedAt = seedDate },
+                new IngredientCategory { CategoryId = 2, CategoryName = "Seeds", CreatedAt = seedDate, UpdatedAt = seedDate },
+                new IngredientCategory { CategoryId = 3, CategoryName = "Fruits", CreatedAt = seedDate, UpdatedAt = seedDate },
+                new IngredientCategory { CategoryId = 4, CategoryName = "Milk", CreatedAt = seedDate, UpdatedAt = seedDate },
+                new IngredientCategory { CategoryId = 5, CategoryName = "Sweetener", CreatedAt = seedDate, UpdatedAt = seedDate }
+            );
+
+            // Seed Meals
+            modelBuilder.Entity<Meal>().HasData(
+                new Meal { MealId = 1, MealName = "Classic Overnight Oats", Description = "Traditional overnight oats base", BasePrice = 40, CreatedAt = seedDate, UpdatedAt = seedDate },
+                new Meal { MealId = 2, MealName = "Custom Breakfast Bowl", Description = "Build your perfect breakfast", BasePrice = 50, CreatedAt = seedDate, UpdatedAt = seedDate },
+                new Meal { MealId = 3, MealName = "Protein Power Bowl", Description = "High protein breakfast option", BasePrice = 60, CreatedAt = seedDate, UpdatedAt = seedDate }
+            );
+
+            // Seed Test User
+            modelBuilder.Entity<User>().HasData(
+                new User
+                {
+                    UserId = 1,
+                    Name = "TestUser",
+                    Email = "testuser@healthybreakfast.com",
+                    Phone = "1234567890",
+                    WalletBalance = 625,
+                    CreatedAt = seedDate,
+                    UpdatedAt = seedDate
+                }
+            );
+
+            // Seed Initial Wallet Balance
+            modelBuilder.Entity<WalletTransaction>().HasData(
+                new WalletTransaction
+                {
+                    TransactionId = 1,
+                    UserId = 1,
+                    Amount = 625,
+                    Type = "Credit",
+                    Description = "Initial wallet balance",
+                    CreatedAt = seedDate
+                }
+            );
+        }
+    }
+}
+
+
+==================== FILE: HealthyBreakfastApp.WebAPI/Program.cs ====================
+
+// HealthyBreakfastApp.WebAPI/Program.cs
+
+using HealthyBreakfastApp.Application.Interfaces;
+using HealthyBreakfastApp.Application.Services;
+using HealthyBreakfastApp.Infrastructure.Data;
+using HealthyBreakfastApp.Infrastructure.Repositories;
+using HealthyBreakfastApp.WebAPI.Middleware;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
+using System.Text;
+using System.Text.Json;
+using Hangfire;
+using Hangfire.PostgreSql;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// ========================================
+// 🚀 DATABASE CONFIGURATION
+// ========================================
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseNpgsql(connectionString));
+
+// ========================================
+// 🕒 HANGFIRE CONFIGURATION (Background Jobs)
+// ========================================
+builder.Services.AddHangfire(config => config
+    .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+    .UseSimpleAssemblyNameTypeSerializer()
+    .UseRecommendedSerializerSettings()
+    .UsePostgreSqlStorage(options =>
+        options.UseNpgsqlConnection(connectionString)));
+
+builder.Services.AddHangfireServer();
+
+// ========================================
+// 🧩 APPLICATION SERVICES & REPOSITORIES
+// ========================================
+builder.Services.AddScoped<IUserRepository, UserRepository>();
+builder.Services.AddScoped<IUserService, UserService>();
+
+builder.Services.AddScoped<IMealService, MealService>();
+builder.Services.AddScoped<IMealRepository, MealRepository>();
+
+// Kitchen dashboard services
+builder.Services.AddScoped<IKitchenRepository, KitchenRepository>();
+builder.Services.AddScoped<IKitchenService, KitchenService>();
+
+builder.Services.AddScoped<IIngredientService, IngredientService>();
+builder.Services.AddScoped<IIngredientRepository, IngredientRepository>();
+
+builder.Services.AddScoped<IIngredientCategoryService, IngredientCategoryService>();
+builder.Services.AddScoped<IIngredientCategoryRepository, IngredientCategoryRepository>();
+
+builder.Services.AddScoped<IMealOptionService, MealOptionService>();
+builder.Services.AddScoped<IMealOptionRepository, MealOptionRepository>();
+
+builder.Services.AddScoped<IMealOptionIngredientService, MealOptionIngredientService>();
+builder.Services.AddScoped<IMealOptionIngredientRepository, MealOptionIngredientRepository>();
+
+builder.Services.AddScoped<IUserMealService, UserMealService>();
+builder.Services.AddScoped<IUserMealRepository, UserMealRepository>();
+
+builder.Services.AddScoped<IUserMealIngredientService, UserMealIngredientService>();
+builder.Services.AddScoped<IUserMealIngredientRepository, UserMealIngredientRepository>();
+
+builder.Services.AddScoped<IOrderService, OrderService>();
+builder.Services.AddScoped<IOrderRepository, OrderRepository>();
+
+builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
+builder.Services.AddScoped<ISubscriptionRepository, SubscriptionRepository>();
+
+builder.Services.AddScoped<IWalletTransactionService, WalletTransactionService>();
+builder.Services.AddScoped<IWalletTransactionRepository, WalletTransactionRepository>();
+
+// ========================================
+// ⏰ SCHEDULED ORDER SERVICES
+// ========================================
+builder.Services.AddScoped<IScheduledOrderRepository, ScheduledOrderRepository>();
+builder.Services.AddScoped<IScheduledOrderService, ScheduledOrderService>();
+
+// ✅ NEW: Subscription scheduling service
+builder.Services.AddScoped<ISubscriptionSchedulingService, SubscriptionSchedulingService>();
+
+// ========================================
+// 🌐 UTILITIES & HELPERS
+// ========================================
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
+
+// ✅ ENHANCED: Logging configuration
+builder.Services.AddLogging(logging =>
+{
+    logging.AddConsole();
+    logging.AddDebug();
+    logging.SetMinimumLevel(LogLevel.Information);
+});
+
+// ========================================
+// ⚙️ JSON SERIALIZATION SETTINGS
+// ========================================
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+    });
+
+// ========================================
+// 🔓 CORS CONFIGURATION
+// ========================================
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAngular", policy =>
+    {
+        policy.WithOrigins("http://localhost:4200")
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials();
+    });
+});
+
+// ========================================
+// 🔑 SUPABASE HS256 JWT AUTHENTICATION
+// ========================================
+var supabaseJwtSecret = builder.Configuration["Supabase:JwtSecret"];
+var supabaseUrl = builder.Configuration["Supabase:Url"] ?? "https://beeqamwptmbpowswawfx.supabase.co";
+
+if (string.IsNullOrEmpty(supabaseJwtSecret))
+    throw new InvalidOperationException("Supabase JWT Secret is required in appsettings.json");
+
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
+    options.SaveToken = true;
+    options.IncludeErrorDetails = true;
+
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = $"{supabaseUrl}/auth/v1",
+        ValidAudience = "authenticated",
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(supabaseJwtSecret)),
+        ClockSkew = TimeSpan.FromMinutes(1),
+        NameClaimType = "sub",
+        RoleClaimType = "role"
+    };
+
+    options.Events = new JwtBearerEvents
+    {
+        OnAuthenticationFailed = context =>
+        {
+            Console.WriteLine($"❌ JWT Authentication failed for {context.Request.Path}: {context.Exception.Message}");
+            return Task.CompletedTask;
+        },
+        OnTokenValidated = context =>
+        {
+            var path = context.Request.Path;
+            var sub = context.Principal?.FindFirst("sub")?.Value;
+            Console.WriteLine($"✅ JWT Token validated for {path} - User: {sub}");
+            return Task.CompletedTask;
+        },
+        OnChallenge = context =>
+        {
+            Console.WriteLine($"⚠️ JWT Challenge for {context.Request.Path}: {context.Error}");
+            return Task.CompletedTask;
+        }
+    };
+});
+
+builder.Services.AddAuthorization();
+
+// ========================================
+// 📘 SWAGGER CONFIGURATION
+// ========================================
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "HealthyBreakfastApp API",
+        Version = "v1",
+        Description = "Production-ready API for Healthy Breakfast Delivery App with Hangfire Background Jobs & Subscriptions"
+    });
+
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Description = "JWT Authorization header using the Bearer scheme.\r\n\r\nExample: \"Bearer 12345abcdef\"",
+        Name = "Authorization",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.ApiKey,
+        Scheme = "Bearer"
+    });
+
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            new List<string>()
+        }
+    });
+});
+
+// ========================================
+// 🚀 BUILD AND CONFIGURE PIPELINE
+// ========================================
+var app = builder.Build();
+
+app.UseSwagger();
+app.UseSwaggerUI();
+
+app.UseCors("AllowAngular");
+
+// ========================================
+// 🎛️ HANGFIRE DASHBOARD
+// ========================================
+app.UseHangfireDashboard("/hangfire", new DashboardOptions
+{
+    Authorization = new[] { new HangfireDashboardNoAuthFilter() } // ⚠️ Development only!
+});
+
+app.UseAuthentication();
+app.UseMiddleware<AuthMiddleware>();
+app.UseAuthorization();
+
+app.MapControllers();
+
+// ========================================
+// ⏰ SCHEDULE RECURRING JOBS (MilkBasket Style)
+// ========================================
+var logger = app.Services.GetRequiredService<ILogger<Program>>();
+
+try
+{
+    var recurringJobManager = app.Services.GetRequiredService<IRecurringJobManager>();
+    
+    // ✅ JOB 1: SUBSCRIPTION ORDER GENERATION (12:01 AM IST)
+    // Generates scheduled orders from active subscriptions for TOMORROW's delivery
+    recurringJobManager.AddOrUpdate<ISubscriptionSchedulingService>(
+        "subscription-order-generation",
+        service => service.GenerateScheduledOrdersFromSubscriptionsAsync(),
+        "1 0 * * *",  // Every day at 12:01 AM IST (1 minute after midnight)
+        new RecurringJobOptions
+        {
+            TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata")
+        });
+    
+    logger.LogInformation("✅ Hangfire job scheduled: Subscription order generation (12:01 AM IST)");
+    
+    // ✅ JOB 2: MIDNIGHT ORDER CONFIRMATION (12:00 AM IST)
+    // Confirms all scheduled orders for TODAY's delivery and sends to kitchen
+    recurringJobManager.AddOrUpdate<IScheduledOrderService>(
+        "midnight-order-confirmation",
+        service => service.ConfirmAllScheduledOrdersAsync(),
+        "0 0 * * *",  // Every day at 12:00 AM IST
+        new RecurringJobOptions
+        {
+            TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata")
+        });
+    
+    logger.LogInformation("✅ Hangfire job scheduled: Midnight order confirmation (12:00 AM IST)");
+    
+    // ✅ JOB 3: SUBSCRIPTION DATE SYNC (11:59 PM IST)
+    // Updates NextScheduledDate for all active subscriptions
+    // Keeps subscription cards showing accurate "Next Delivery" dates
+    recurringJobManager.AddOrUpdate<ISubscriptionService>(
+        "sync-subscription-dates",
+        service => service.UpdateNextScheduledDatesAsync(),
+        "59 23 * * *",  // Every day at 11:59 PM IST (1 minute before midnight)
+        new RecurringJobOptions
+        {
+            TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata")
+        });
+    
+    logger.LogInformation("✅ Hangfire job scheduled: Subscription date sync (11:59 PM IST)");
+}
+catch (Exception ex)
+{
+    logger.LogError(ex, "❌ Failed to schedule Hangfire jobs");
+}
+
+logger.LogInformation("🚀 HealthyBreakfastApp API started successfully");
+logger.LogInformation($"🔗 Swagger UI: http://localhost:5257/swagger");
+logger.LogInformation($"🎛️ Hangfire Dashboard: http://localhost:5257/hangfire");
+logger.LogInformation("📅 Scheduled Jobs (MilkBasket Style):");
+logger.LogInformation("   - Subscription generation: 12:01 AM IST daily (creates orders for TOMORROW)");
+logger.LogInformation("   - Order confirmation: 12:00 AM IST daily (confirms TODAY's orders)");
+logger.LogInformation("   - Subscription date sync: 11:59 PM IST daily (updates NextScheduledDate)");
+
+app.Run();
+
+// ========================================
+// 🔓 HANGFIRE DASHBOARD AUTH FILTER (Development Only)
+// ========================================
+public class HangfireDashboardNoAuthFilter : Hangfire.Dashboard.IDashboardAuthorizationFilter
+{
+    public bool Authorize(Hangfire.Dashboard.DashboardContext context)
+    {
+        // ⚠️ DEVELOPMENT ONLY - Allow all access
+        // TODO: Add proper authentication in production
+        return true;
+    }
+}

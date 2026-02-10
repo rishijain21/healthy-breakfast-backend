@@ -17,6 +17,7 @@ namespace HealthyBreakfastApp.Application.Services
         private readonly IUserMealRepository _userMealRepo;
         private readonly IUserRepository _userRepo;
         private readonly IUserMealIngredientRepository _userMealIngredientRepo;
+        private readonly IUserAddressRepository _userAddressRepo; // ✅ ADD: Delivery address repository
         private readonly ILogger<SubscriptionSchedulingService> _logger;
 
         public SubscriptionSchedulingService(
@@ -25,6 +26,7 @@ namespace HealthyBreakfastApp.Application.Services
             IUserMealRepository userMealRepo,
             IUserRepository userRepo,
             IUserMealIngredientRepository userMealIngredientRepo,
+            IUserAddressRepository userAddressRepo, // ✅ ADD: Delivery address repository
             ILogger<SubscriptionSchedulingService> logger)
         {
             _subscriptionRepo = subscriptionRepo;
@@ -32,6 +34,7 @@ namespace HealthyBreakfastApp.Application.Services
             _userMealRepo = userMealRepo;
             _userRepo = userRepo;
             _userMealIngredientRepo = userMealIngredientRepo;
+            _userAddressRepo = userAddressRepo; // ✅ ADD: Delivery address repository
             _logger = logger;
         }
 
@@ -103,6 +106,24 @@ namespace HealthyBreakfastApp.Application.Services
                         continue;
                     }
 
+                    // ✅ Get delivery address for this subscription
+                    int? deliveryAddressId = subscription.DeliveryAddressId;
+                    
+                    // If subscription doesn't have address, use primary address
+                    if (deliveryAddressId == null)
+                    {
+                        var primaryAddress = await _userAddressRepo.GetPrimaryAddressAsync(subscription.UserId);
+                        if (primaryAddress == null)
+                        {
+                            _logger.LogWarning($"❌ User {subscription.UserId} has no primary address. Skipping subscription {subscription.SubscriptionId}");
+                            failedCount++;
+                            continue;
+                        }
+                        deliveryAddressId = primaryAddress.Id;
+                    }
+                    
+                    _logger.LogInformation($"📍 Using delivery address ID: {deliveryAddressId} for subscription {subscription.SubscriptionId}");
+
                     // ✅ Create scheduled order for TOMORROW with adjusted quantities
                     var tomorrowDateTime = istNow.Date.AddDays(1);
 
@@ -117,6 +138,7 @@ namespace HealthyBreakfastApp.Application.Services
                         }).ToList(),
                         ScheduledFor = DateTime.SpecifyKind(tomorrowDateTime, DateTimeKind.Utc),
                         DeliveryTimeSlot = "7:00 AM",
+                        DeliveryAddressId = deliveryAddressId, // ✅ ADD: Link to delivery address
                         NutritionalSummary = null
                     };
 
@@ -237,6 +259,152 @@ namespace HealthyBreakfastApp.Application.Services
                 int firstDay = scheduledDays.First();
                 int daysUntilNext = (7 - currentDayOfWeek) + firstDay;
                 return currentDate.AddDays(daysUntilNext);
+            }
+        }
+
+        /// <summary>
+        /// ✅ NEW: Generate a single scheduled order for a specific subscription (real-time)
+        /// Called when user subscribes or resumes subscription
+        /// </summary>
+        public async Task GenerateOrderForSubscriptionAsync(int subscriptionId, Guid authId)
+        {
+            var subscription = await _subscriptionRepo.GetByIdAsync(subscriptionId);
+            
+            if (subscription == null)
+            {
+                _logger.LogWarning($"❌ Subscription {subscriptionId} not found");
+                throw new InvalidOperationException("Subscription not found");
+            }
+
+            if (!subscription.Active)
+            {
+                _logger.LogInformation($"⏭️ Subscription {subscriptionId} is paused, skipping order generation");
+                return;
+            }
+
+            var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
+            var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
+            var today = DateOnly.FromDateTime(istNow);
+            var tomorrow = today.AddDays(1);
+
+            _logger.LogInformation($"📦 Generating immediate order for subscription #{subscriptionId} (Tomorrow: {tomorrow:yyyy-MM-dd})");
+
+            // Check if subscription should generate an order for tomorrow
+            if (!ShouldGenerateOrderForDate(subscription, tomorrow))
+            {
+                _logger.LogInformation($"⏭️ Subscription #{subscriptionId} not scheduled for {tomorrow:yyyy-MM-dd}");
+                return;
+            }
+
+            // Get quantity for tomorrow
+            int quantity = GetQuantityForDate(subscription, tomorrow);
+
+            // Get UserMeal details
+            var userMeal = await _userMealRepo.GetByIdAsync(subscription.UserMealId);
+            if (userMeal == null)
+            {
+                _logger.LogWarning($"❌ UserMeal {subscription.UserMealId} not found");
+                throw new InvalidOperationException("User meal not found");
+            }
+
+            // Get ingredients
+            var userMealIngredients = await _userMealIngredientRepo.GetByUserMealIdAsync(subscription.UserMealId);
+            if (userMealIngredients == null || !userMealIngredients.Any())
+            {
+                _logger.LogWarning($"❌ UserMeal {subscription.UserMealId} has no ingredients");
+                throw new InvalidOperationException("User meal has no ingredients");
+            }
+
+            // Get user
+            var user = await _userRepo.GetByIdAsync(subscription.UserId);
+            if (user?.AuthMapping?.AuthId == null)
+            {
+                _logger.LogWarning($"❌ User {subscription.UserId} has no AuthId mapping");
+                throw new InvalidOperationException("User authentication not found");
+            }
+
+            // Get delivery address
+            int? deliveryAddressId = subscription.DeliveryAddressId;
+            
+            if (deliveryAddressId == null)
+            {
+                var primaryAddress = await _userAddressRepo.GetPrimaryAddressAsync(subscription.UserId);
+                if (primaryAddress == null)
+                {
+                    _logger.LogWarning($"❌ User {subscription.UserId} has no primary address");
+                    throw new InvalidOperationException("No delivery address found");
+                }
+                deliveryAddressId = primaryAddress.Id;
+            }
+
+            // Create scheduled order for tomorrow
+            var tomorrowDateTime = istNow.Date.AddDays(1);
+
+            var scheduledOrderDto = new CreateScheduledOrderDto
+            {
+                MealName = $"{userMeal.MealName} (Subscription)",
+                MealPrice = userMeal.TotalPrice * quantity,
+                SelectedIngredients = userMealIngredients.Select(i => new ScheduledOrderIngredientDto
+                {
+                    IngredientId = i.IngredientId,
+                    Quantity = i.Quantity * quantity
+                }).ToList(),
+                ScheduledFor = DateTime.SpecifyKind(tomorrowDateTime, DateTimeKind.Utc),
+                DeliveryTimeSlot = "7:00 AM",
+                DeliveryAddressId = deliveryAddressId,
+                NutritionalSummary = null
+            };
+
+            await _scheduledOrderService.CreateScheduledOrderAsync(user.AuthMapping.AuthId, scheduledOrderDto);
+
+            _logger.LogInformation(
+                $"✅ Generated order for subscription #{subscriptionId} " +
+                $"({userMeal.MealName}) - Delivery: {tomorrow:yyyy-MM-dd}, Qty: {quantity}");
+        }
+
+        /// <summary>
+        /// ✅ NEW: Cancel tomorrow's scheduled order for a specific subscription
+        /// Called when user pauses or deletes subscription
+        /// </summary>
+        public async Task CancelOrderForSubscriptionAsync(int subscriptionId, Guid authId)
+        {
+            var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
+            var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
+            var tomorrow = istNow.Date.AddDays(1);
+
+            _logger.LogInformation($"🗑️ Looking for scheduled orders for subscription #{subscriptionId} on {tomorrow:yyyy-MM-dd}");
+
+            // Find all scheduled orders for tomorrow from this subscription
+            var tomorrowOrders = await _scheduledOrderService.GetScheduledOrdersForDateAsync(
+                authId, 
+                DateTime.SpecifyKind(tomorrow, DateTimeKind.Utc)
+            );
+
+            // Filter orders that match this subscription
+            var subscription = await _subscriptionRepo.GetByIdAsync(subscriptionId);
+            if (subscription == null) return;
+
+            var userMeal = await _userMealRepo.GetByIdAsync(subscription.UserMealId);
+            if (userMeal == null) return;
+
+            var ordersToCancel = tomorrowOrders
+                .Where(order => order.MealName.Contains(userMeal.MealName) && 
+                               order.MealName.Contains("(Subscription)"))
+                .ToList();
+
+            _logger.LogInformation($"Found {ordersToCancel.Count} orders to cancel for subscription #{subscriptionId}");
+
+            foreach (var order in ordersToCancel)
+            {
+                try
+                {
+                    await _scheduledOrderService.CancelScheduledOrderAsync(authId, order.ScheduledOrderId);
+                    _logger.LogInformation($"✅ Cancelled order #{order.ScheduledOrderId}");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, $"⚠️ Failed to cancel order #{order.ScheduledOrderId}");
+                }
             }
         }
     }

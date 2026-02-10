@@ -13,13 +13,13 @@ namespace HealthyBreakfastApp.Domain.Entities
         [ForeignKey("User")]
         public int UserId { get; set; }
 
-        // ✅ ADD THIS: Link to UserMeal for ingredient details
         [ForeignKey("UserMeal")]
         public int? UserMealId { get; set; }
-// ADD THIS LINE:
-public bool IsPrepared { get; set; } = false;  // For kitchen tracking
+        
+        public int? DeliveryAddressId { get; set; } // ✅ ADD THIS
 
-        // ✅ FIX: Put [Column] attribute BEFORE the property
+        public bool IsPrepared { get; set; } = false;
+
         [Column("Status")]
         public OrderStatus OrderStatus { get; set; } = OrderStatus.Pending;
         
@@ -31,6 +31,7 @@ public bool IsPrepared { get; set; } = false;  // For kitchen tracking
 
         // Navigation properties
         public User User { get; set; } = null!;
-        public UserMeal? UserMeal { get; set; } = null; // ✅ ADD THIS
+        public UserMeal? UserMeal { get; set; }
+        public UserAddress? DeliveryAddress { get; set; } // ✅ ADD THIS
     }
 }

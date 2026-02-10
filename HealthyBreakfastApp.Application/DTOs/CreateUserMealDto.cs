@@ -2,9 +2,9 @@ namespace HealthyBreakfastApp.Application.DTOs
 {
     public class CreateUserMealDto
     {
-        public int UserId { get; set; }
+        // UserId is passed as separate parameter to service (not in DTO)
         public int MealId { get; set; }
-        public string MealName { get; set; } = null!; // ✅ ADDED: Missing property
+        public string MealName { get; set; } = null!;
         public decimal TotalPrice { get; set; }
         public DateTime CreatedAt { get; set; }
     }

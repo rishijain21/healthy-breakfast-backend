@@ -2,6 +2,7 @@ using HealthyBreakfastApp.Application.DTOs;
 using HealthyBreakfastApp.Application.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 
 namespace HealthyBreakfastApp.WebAPI.Controllers
 {
@@ -22,7 +23,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         }
 
         /// <summary>
-        /// Creates a new UserMeal (for subscription meal template)
+        /// ✅ SECURE: Creates a new UserMeal (userId from JWT token)
         /// </summary>
         [HttpPost]
         public async Task<IActionResult> Create([FromBody] CreateUserMealDto dto)
@@ -39,10 +40,8 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                 var userId = (int)HttpContext.Items["UserId"]!;
                 _logger.LogInformation($"✅ Creating UserMeal for UserId: {userId}");
 
-                // ✅ FIX: Set UserId from authenticated context - don't trust client input
-                dto.UserId = userId;
-
-                var userMealId = await _userMealService.CreateUserMealAsync(dto);
+                // ✅ Pass userId as separate parameter (not trusting client input)
+                var userMealId = await _userMealService.CreateUserMealAsync(dto, userId);
                 return Ok(new { userMealId, message = "UserMeal created successfully" });
             }
             catch (Exception ex)
@@ -75,20 +74,58 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         }
 
         /// <summary>
-        /// Gets all UserMeals for a specific user
+        /// ✅ SECURE: Gets all UserMeals for the authenticated user (uses JWT)
         /// </summary>
-        [HttpGet("ByUser/{userId}")]
-        public async Task<IActionResult> GetByUserId(int userId)
+        [HttpGet("my-meals")]
+        public async Task<IActionResult> GetMyUserMeals()
         {
             try
             {
-                var userMeals = await _userMealService.GetUserMealsByUserIdAsync(userId);
+                var userId = await GetCurrentUserIdAsync();
+                if (userId == null)
+                {
+                    return Unauthorized(new { message = "User not authenticated" });
+                }
+
+                var userMeals = await _userMealService.GetUserMealsByUserIdAsync(userId.Value);
                 return Ok(userMeals);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"❌ Error fetching UserMeals for user {userId}");
+                _logger.LogError(ex, $"❌ Error fetching UserMeals for authenticated user");
                 return StatusCode(500, new { message = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// ✅ Extract user ID from JWT token
+        /// </summary>
+        private async Task<int?> GetCurrentUserIdAsync()
+        {
+            try
+            {
+                var authId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value 
+                             ?? User.FindFirst("sub")?.Value;
+
+                if (string.IsNullOrEmpty(authId) || !Guid.TryParse(authId, out var authGuid))
+                {
+                    _logger.LogWarning("❌ No valid auth ID found in token");
+                    return null;
+                }
+
+                // This would need IUserService injected - for simplicity, we'll use HttpContext
+                if (HttpContext.Items.TryGetValue("UserId", out var userIdObj) && userIdObj is int userId)
+                {
+                    return userId;
+                }
+
+                _logger.LogWarning("❌ UserId not found in HttpContext");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ Error extracting user ID from token");
+                return null;
             }
         }
     }

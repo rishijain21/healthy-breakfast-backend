@@ -402,7 +402,7 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
 
                     var createOrderDto = new CreateOrderFromMealBuilderDto
                     {
-                        UserId = scheduledOrder.UserId,
+                        // Note: UserId is passed as separate parameter from JWT-authenticated user
                         MealId = 1,
                         SelectedIngredients = scheduledOrder.Ingredients.Select(i => new SelectedIngredientDto
                         {
@@ -414,7 +414,7 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
                         SpecialInstructions = $"Confirmed from cart #{scheduledOrder.ScheduledOrderId}"
                     };
 
-                    var orderResponse = await _orderService.CreateOrderFromMealBuilderAsync(createOrderDto);
+                    var orderResponse = await _orderService.CreateOrderFromMealBuilderAsync(createOrderDto, scheduledOrder.UserId);
 
                     _logger.LogInformation($"✅ Order confirmed → Kitchen order #{orderResponse.OrderId}");
                     _logger.LogInformation($"   💰 Charged: ₹{scheduledOrder.TotalPrice}");

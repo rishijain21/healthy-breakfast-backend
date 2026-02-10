@@ -21,82 +21,36 @@ namespace HealthyBreakfastApp.Application.Services
             _logger = logger;
         }
 
-        // ============================================================================
-        // ✅ GET TODAY'S CONFIRMED ORDERS (MILKBASKET LOGIC)
-        // Shows orders confirmed at midnight for TODAY's delivery
-        // ============================================================================
         public async Task<List<KitchenOrderDto>> GetOrdersForPreparationAsync()
         {
             var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
             var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
             
-            // ✅ MILKBASKET: Kitchen shows TODAY's confirmed deliveries
-            var deliveryDate = DateTime.SpecifyKind(istNow.Date, DateTimeKind.Utc); // TODAY
+            var deliveryDate = DateTime.SpecifyKind(istNow.Date, DateTimeKind.Utc);
 
             _logger.LogInformation($"🍳 Kitchen Dashboard: TODAY's delivery ({istNow.Date:yyyy-MM-dd})");
 
             var orders = await _kitchenRepository.GetOrdersForPreparationAsync(deliveryDate);
 
-            var result = orders.Select(o => new KitchenOrderDto
-            {
-                OrderId = o.OrderId,
-                UserId = o.UserId,
-                CustomerName = o.User?.Name ?? "Unknown",
-                ScheduledFor = o.ScheduledFor,
-                DeliveryTimeSlot = "7:00 AM - 9:00 AM",
-                TotalPrice = o.TotalPrice,
-                IsPrepared = o.IsPrepared,
-                CreatedAt = o.CreatedAt,
-                Ingredients = o.UserMeal?.UserMealIngredients.Select(umi => new KitchenIngredientDto
-                {
-                    IngredientId = umi.IngredientId,
-                    IngredientName = umi.Ingredient.IngredientName,
-                    Quantity = umi.Quantity,
-                    Category = umi.Ingredient.IngredientCategory?.CategoryName ?? "Other",
-                    IconEmoji = umi.Ingredient.IconEmoji ?? "🥗"
-                }).ToList() ?? new List<KitchenIngredientDto>()
-            }).ToList();
+            var result = orders.Select(o => MapToDto(o)).ToList();
 
             _logger.LogInformation($"📦 Kitchen: {result.Count} orders to prepare for TODAY");
 
             return result;
         }
 
-        // ============================================================================
-        // ✨ NEW: GET TOMORROW'S CONFIRMED ORDERS (PRE-PLANNING VIEW)
-        // Shows orders already confirmed tonight for TOMORROW's delivery
-        // ============================================================================
         public async Task<List<KitchenOrderDto>> GetOrdersForTomorrowAsync()
         {
             var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
             var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
             
-            // ✅ Get TOMORROW's orders (already confirmed tonight for next day)
-            var tomorrowDate = DateTime.SpecifyKind(istNow.Date.AddDays(1), DateTimeKind.Utc); // TOMORROW
+            var tomorrowDate = DateTime.SpecifyKind(istNow.Date.AddDays(1), DateTimeKind.Utc);
 
             _logger.LogInformation($"🍳 Kitchen Preview: TOMORROW's delivery ({istNow.Date.AddDays(1):yyyy-MM-dd})");
 
             var orders = await _kitchenRepository.GetOrdersForPreparationAsync(tomorrowDate);
 
-            var result = orders.Select(o => new KitchenOrderDto
-            {
-                OrderId = o.OrderId,
-                UserId = o.UserId,
-                CustomerName = o.User?.Name ?? "Unknown",
-                ScheduledFor = o.ScheduledFor,
-                DeliveryTimeSlot = "7:00 AM - 9:00 AM",
-                TotalPrice = o.TotalPrice,
-                IsPrepared = o.IsPrepared,
-                CreatedAt = o.CreatedAt,
-                Ingredients = o.UserMeal?.UserMealIngredients.Select(umi => new KitchenIngredientDto
-                {
-                    IngredientId = umi.IngredientId,
-                    IngredientName = umi.Ingredient.IngredientName,
-                    Quantity = umi.Quantity,
-                    Category = umi.Ingredient.IngredientCategory?.CategoryName ?? "Other",
-                    IconEmoji = umi.Ingredient.IconEmoji ?? "🥗"
-                }).ToList() ?? new List<KitchenIngredientDto>()
-            }).ToList();
+            var result = orders.Select(o => MapToDto(o)).ToList();
 
             _logger.LogInformation($"📦 Kitchen: {result.Count} orders confirmed for TOMORROW");
 
@@ -109,25 +63,7 @@ namespace HealthyBreakfastApp.Application.Services
             
             var orders = await _kitchenRepository.GetOrdersForPreparationAsync(utcDate);
 
-            return orders.Select(o => new KitchenOrderDto
-            {
-                OrderId = o.OrderId,
-                UserId = o.UserId,
-                CustomerName = o.User?.Name ?? "Unknown",
-                ScheduledFor = o.ScheduledFor,
-                DeliveryTimeSlot = "7:00 AM - 9:00 AM",
-                TotalPrice = o.TotalPrice,
-                IsPrepared = o.IsPrepared,
-                CreatedAt = o.CreatedAt,
-                Ingredients = o.UserMeal?.UserMealIngredients.Select(umi => new KitchenIngredientDto
-                {
-                    IngredientId = umi.IngredientId,
-                    IngredientName = umi.Ingredient.IngredientName,
-                    Quantity = umi.Quantity,
-                    Category = umi.Ingredient.IngredientCategory?.CategoryName ?? "Other",
-                    IconEmoji = umi.Ingredient.IconEmoji ?? "🥗"
-                }).ToList() ?? new List<KitchenIngredientDto>()
-            }).ToList();
+            return orders.Select(o => MapToDto(o)).ToList();
         }
 
         public async Task MarkOrderAsPreparedAsync(int orderId)
@@ -153,7 +89,7 @@ namespace HealthyBreakfastApp.Application.Services
             var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
             var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
             
-            var deliveryDate = DateTime.SpecifyKind(istNow.Date, DateTimeKind.Utc); // TODAY
+            var deliveryDate = DateTime.SpecifyKind(istNow.Date, DateTimeKind.Utc);
 
             var todayOrders = await _kitchenRepository.GetOrdersForPreparationAsync(deliveryDate);
 
@@ -172,15 +108,12 @@ namespace HealthyBreakfastApp.Application.Services
             return stats;
         }
 
-        // ============================================================================
-        // ✨ NEW: GET TOMORROW'S KITCHEN STATISTICS
-        // ============================================================================
         public async Task<KitchenStatsDto> GetTomorrowStatsAsync()
         {
             var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
             var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
             
-            var tomorrowDate = DateTime.SpecifyKind(istNow.Date.AddDays(1), DateTimeKind.Utc); // TOMORROW
+            var tomorrowDate = DateTime.SpecifyKind(istNow.Date.AddDays(1), DateTimeKind.Utc);
 
             var tomorrowOrders = await _kitchenRepository.GetOrdersForPreparationAsync(tomorrowDate);
 
@@ -197,6 +130,57 @@ namespace HealthyBreakfastApp.Application.Services
             };
 
             return stats;
+        }
+
+        // ✅ Helper method to map Order entity to DTO
+        private KitchenOrderDto MapToDto(Domain.Entities.Order o)
+        {
+            return new KitchenOrderDto
+            {
+                OrderId = o.OrderId,
+                UserId = o.UserId,
+                CustomerName = o.User?.Name ?? "Unknown",
+                UserPhoneNumber = o.User?.Phone ?? "N/A",
+                MealName = o.UserMeal?.MealName ?? "Custom Meal",
+                ScheduledFor = o.ScheduledFor,
+                DeliveryTimeSlot = "7:00 AM - 9:00 AM",
+                TotalPrice = o.TotalPrice,
+                IsPrepared = o.IsPrepared,
+                CreatedAt = o.CreatedAt,
+                
+                // ✅ Map DeliveryAddress
+                DeliveryAddress = o.DeliveryAddress != null ? new KitchenDeliveryAddressDto
+                {
+                    AddressId = o.DeliveryAddress.Id,
+                    CompleteAddress = o.DeliveryAddress.CompleteAddress,
+                    ServiceableLocation = o.DeliveryAddress.ServiceableLocation != null ? new ServiceableLocationDto
+                    {
+                        Id = o.DeliveryAddress.ServiceableLocation.Id,
+                        Area = o.DeliveryAddress.ServiceableLocation.Area,
+                        City = o.DeliveryAddress.ServiceableLocation.City,
+                        Locality = o.DeliveryAddress.ServiceableLocation.Locality,
+                        LandmarkOrSociety = o.DeliveryAddress.ServiceableLocation.LandmarkOrSociety,
+                        Pincode = o.DeliveryAddress.ServiceableLocation.Pincode,
+                        IsActive = o.DeliveryAddress.ServiceableLocation.IsActive,
+                        Latitude = o.DeliveryAddress.ServiceableLocation.Latitude,
+                        Longitude = o.DeliveryAddress.ServiceableLocation.Longitude,
+                        DeliveryTimeSlot = o.DeliveryAddress.ServiceableLocation.DeliveryTimeSlot,
+                        FullAddress = o.DeliveryAddress.ServiceableLocation.FullAddress,
+                        CreatedAt = o.DeliveryAddress.ServiceableLocation.CreatedAt
+                    } : null
+                } : null,
+                
+                // ✅ Map Ingredients
+                Ingredients = o.UserMeal?.UserMealIngredients.Select(umi => new KitchenIngredientDto
+                {
+                    IngredientId = umi.IngredientId,
+                    IngredientName = umi.Ingredient.IngredientName,
+                    Quantity = umi.Quantity,
+                    Category = umi.Ingredient.IngredientCategory?.CategoryName ?? "Other",
+                    IconEmoji = umi.Ingredient.IconEmoji ?? "🥗",
+                    Unit = "units"
+                }).ToList() ?? new List<KitchenIngredientDto>()
+            };
         }
     }
 }

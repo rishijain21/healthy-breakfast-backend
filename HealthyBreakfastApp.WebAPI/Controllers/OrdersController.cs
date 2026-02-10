@@ -97,7 +97,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         }
 
         // ============================
-        // 🟢 CREATE ORDER
+        // ✅ SECURE: CREATE ORDER (userId from JWT token)
         // ============================
         [HttpPost]
         [Authorize]
@@ -107,8 +107,8 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             if (userId == null)
                 return Unauthorized("User not found");
 
-            dto.UserId = userId.Value;
-            var id = await _orderService.CreateOrderAsync(dto);
+            // ✅ Pass userId as separate parameter (extracted from JWT token)
+            var id = await _orderService.CreateOrderAsync(dto, userId.Value);
             return CreatedAtAction(nameof(GetById), new { id }, null);
         }
 
@@ -127,7 +127,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         }
 
         // ============================
-        // 🟢 CREATE ORDER FROM MEAL BUILDER
+        // 🟢 CREATE ORDER FROM MEAL BUILDER (SECURE - Uses JWT UserId)
         // ============================
         [HttpPost("create-from-meal-builder")]
         [Authorize]
@@ -137,10 +137,10 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             {
                 var userId = await GetCurrentUserIdAsync();
                 if (userId == null)
-                    return Unauthorized("User not authenticated");
+                    return Unauthorized(new { message = "User not authenticated" });
 
-                dto.UserId = userId.Value;
-                var result = await _orderService.CreateOrderFromMealBuilderAsync(dto);
+                // ✅ Pass userId as separate parameter (extracted from JWT token)
+                var result = await _orderService.CreateOrderFromMealBuilderAsync(dto, userId.Value);
                 return Ok(result);
             }
             catch (InvalidOperationException ex)

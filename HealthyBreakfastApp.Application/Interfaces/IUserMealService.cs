@@ -6,7 +6,8 @@ namespace HealthyBreakfastApp.Application.Interfaces
 {
     public interface IUserMealService
     {
-        Task<int> CreateUserMealAsync(CreateUserMealDto dto);
+        // ✅ SECURE: CreateUserMealAsync with userId from JWT token
+        Task<int> CreateUserMealAsync(CreateUserMealDto dto, int userId);
         Task<UserMealDto?> GetUserMealByIdAsync(int id);
         Task<IEnumerable<UserMealDto>> GetUserMealsByUserIdAsync(int userId);
     }
