@@ -3,6 +3,7 @@ using HealthyBreakfastApp.Application.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
+using System.Linq;
 
 namespace HealthyBreakfastApp.WebAPI.Controllers
 {
@@ -39,6 +40,27 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
 
                 var userId = (int)HttpContext.Items["UserId"]!;
                 _logger.LogInformation($"✅ Creating UserMeal for UserId: {userId}");
+
+                // ✅ ADD THIS DEBUG LOGGING HERE:
+                Console.WriteLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                Console.WriteLine($"🔵 CONTROLLER: CreateUserMeal called");
+                Console.WriteLine($"🔵 UserId: {userId}");
+                Console.WriteLine($"🔵 MealName: {dto.MealName}");
+                Console.WriteLine($"🔵 SelectedIngredients count: {dto.SelectedIngredients?.Count ?? 0}");
+                
+                if (dto.SelectedIngredients != null && dto.SelectedIngredients.Any())
+                {
+                    Console.WriteLine($"🔵 Ingredients received in controller:");
+                    foreach (var ing in dto.SelectedIngredients)
+                    {
+                        Console.WriteLine($"    ✅ IngredientId: {ing.IngredientId}, Qty: {ing.Quantity}");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"❌ NO INGREDIENTS RECEIVED IN CONTROLLER!");
+                }
+                Console.WriteLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
                 // ✅ Pass userId as separate parameter (not trusting client input)
                 var userMealId = await _userMealService.CreateUserMealAsync(dto, userId);

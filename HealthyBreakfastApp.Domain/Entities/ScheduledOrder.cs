@@ -44,6 +44,10 @@ namespace HealthyBreakfastApp.Domain.Entities
         public int? DeliveryAddressId { get; set; }
         public UserAddress? DeliveryAddress { get; set; }
 
+        // ✅ ADD: Subscription relationship
+        public int? SubscriptionId { get; set; }
+        public Subscription? Subscription { get; set; }
+
         // Navigation properties
         public User User { get; set; } = null!;
         public ICollection<ScheduledOrderIngredient> Ingredients { get; set; } = new List<ScheduledOrderIngredient>();

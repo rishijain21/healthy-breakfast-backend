@@ -1,3 +1,415 @@
+==================================================
+1️⃣ CONTROLLER - SubscriptionsController.cs
+==================================================
+using System.Security.Claims;
+using HealthyBreakfastApp.Application.DTOs;
+using HealthyBreakfastApp.Application.Interfaces;
+using HealthyBreakfastApp.Infrastructure.Data;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+
+namespace HealthyBreakfastApp.WebAPI.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    [Authorize]
+    public class SubscriptionsController : ControllerBase
+    {
+        private readonly ISubscriptionService _subscriptionService;
+        private readonly ISubscriptionSchedulingService _subscriptionSchedulingService;
+        private readonly IScheduledOrderService _scheduledOrderService;
+        private readonly IScheduledOrderRepository _scheduledOrderRepository;
+        private readonly AppDbContext _context;
+        private readonly ILogger<SubscriptionsController> _logger;
+
+        public SubscriptionsController(
+            ISubscriptionService subscriptionService,
+            ISubscriptionSchedulingService subscriptionSchedulingService,
+            IScheduledOrderService scheduledOrderService,
+            IScheduledOrderRepository scheduledOrderRepository,
+            AppDbContext context,
+            ILogger<SubscriptionsController> logger)
+        {
+            _subscriptionService = subscriptionService;
+            _subscriptionSchedulingService = subscriptionSchedulingService;
+            _scheduledOrderService = scheduledOrderService;
+            _scheduledOrderRepository = scheduledOrderRepository;
+            _context = context;
+            _logger = logger;
+        }
+
+        // Helper to get current userId from JWT + AuthMapping
+        private async Task<int?> GetCurrentUserIdAsync()
+        {
+            var authId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(authId))
+                return null;
+
+            var mapping = await _context.UserAuthMappings
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.AuthId.ToString() == authId);
+
+            return mapping?.UserId;
+        }
+
+        private async Task<Guid?> GetCurrentAuthIdAsync()
+        {
+            var authId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(authId) || !Guid.TryParse(authId, out var guid))
+                return null;
+            return guid;
+        }
+
+        [HttpGet]
+        public async Task<ActionResult<IEnumerable<SubscriptionDto>>> GetAllSubscriptions()
+        {
+            var userId = await GetCurrentUserIdAsync();
+            if (userId == null)
+                return Unauthorized();
+
+            var subscriptions = await _subscriptionService.GetSubscriptionsByUserIdAsync(userId.Value);
+            return Ok(subscriptions);
+        }
+
+        [HttpGet("{id}")]
+        public async Task<ActionResult<SubscriptionDto>> GetSubscription(int id)
+        {
+            var userId = await GetCurrentUserIdAsync();
+            if (userId == null)
+                return Unauthorized();
+
+            var subscription = await _subscriptionService.GetSubscriptionByIdAsync(id);
+            if (subscription == null)
+                return NotFound();
+
+            if (subscription.UserId != userId.Value)
+                return Forbid();
+
+            return Ok(subscription);
+        }
+
+        [HttpGet("user/me")]
+        public async Task<ActionResult<IEnumerable<SubscriptionDto>>> GetMySubscriptions()
+        {
+            var userId = await GetCurrentUserIdAsync();
+            if (userId == null)
+                return Unauthorized();
+
+            var subscriptions = await _subscriptionService.GetSubscriptionsByUserIdAsync(userId.Value);
+            return Ok(subscriptions);
+        }
+
+        [HttpGet("active")]
+        public async Task<ActionResult<IEnumerable<SubscriptionDto>>> GetActiveSubscriptions()
+        {
+            var userId = await GetCurrentUserIdAsync();
+            if (userId == null)
+                return Unauthorized();
+
+            var subscriptions = await _subscriptionService.GetActiveSubscriptionsAsync();
+            return Ok(subscriptions);
+        }
+
+        /// <summary>
+        /// ✅ UPDATED: Creates subscription AND generates tomorrow's order immediately
+        /// </summary>
+        [HttpPost]
+        public async Task<ActionResult<SubscriptionDto>> CreateSubscription(CreateSubscriptionDto createSubscriptionDto)
+        {
+            var userId = await GetCurrentUserIdAsync();
+            var authId = await GetCurrentAuthIdAsync();
+            
+            if (userId == null || authId == null)
+                return Unauthorized();
+
+            try
+            {
+                _logger.LogInformation($"📦 Creating subscription for user {userId}");
+
+                // 1. Create subscription
+                var internalDto = new CreateSubscriptionInternalDto
+                {
+                    UserId = userId.Value,
+                    UserMealId = createSubscriptionDto.UserMealId,
+                    Frequency = createSubscriptionDto.Frequency,
+                    StartDate = createSubscriptionDto.StartDate,
+                    EndDate = createSubscriptionDto.EndDate,
+                    Active = createSubscriptionDto.Active,
+                    WeeklySchedule = createSubscriptionDto.WeeklySchedule
+                };
+
+                var subscription = await _subscriptionService.CreateSubscriptionAsync(internalDto);
+
+                _logger.LogInformation($"✅ Subscription #{subscription.SubscriptionId} created");
+
+                // 2. ✅ NEW: Generate tomorrow's order immediately if active
+                if (subscription.Active)
+                {
+                    try
+                    {
+                        await _subscriptionSchedulingService.GenerateOrderForSubscriptionAsync(
+                            subscription.SubscriptionId, 
+                            authId.Value
+                        );
+                        
+                        _logger.LogInformation($"✅ Generated immediate order for subscription #{subscription.SubscriptionId}");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, $"⚠️ Failed to generate immediate order for subscription #{subscription.SubscriptionId}");
+                        // Don't fail the subscription creation, just log the warning
+                    }
+                }
+
+                return CreatedAtAction(nameof(GetSubscription),
+                    new { id = subscription.SubscriptionId },
+                    subscription);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Conflict(new { message = ex.Message });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        [HttpPut("{id}")]
+        public async Task<ActionResult<SubscriptionDto>> UpdateSubscription(int id, UpdateSubscriptionDto updateSubscriptionDto)
+        {
+            var userId = await GetCurrentUserIdAsync();
+            if (userId == null)
+                return Unauthorized();
+
+            var existing = await _subscriptionService.GetSubscriptionByIdAsync(id);
+            if (existing == null)
+                return NotFound();
+
+            if (existing.UserId != userId.Value)
+                return Forbid();
+
+            try
+            {
+                var subscription = await _subscriptionService.UpdateSubscriptionAsync(id, updateSubscriptionDto);
+                if (subscription == null)
+                    return NotFound();
+
+                return Ok(subscription);
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        [HttpDelete("{id}")]
+        public async Task<IActionResult> DeleteSubscription(int id)
+        {
+            var userId = await GetCurrentUserIdAsync();
+            var authId = await GetCurrentAuthIdAsync();
+            
+            if (userId == null || authId == null)
+                return Unauthorized();
+
+            var existing = await _subscriptionService.GetSubscriptionByIdAsync(id);
+            if (existing == null)
+                return NotFound();
+
+            if (existing.UserId != userId.Value)
+                return Forbid();
+
+            // ✅ NEW: Cancel tomorrow's scheduled order when deleting subscription
+            try
+            {
+                await _subscriptionSchedulingService.CancelOrderForSubscriptionAsync(id, authId.Value);
+                _logger.LogInformation($"✅ Cancelled scheduled order for deleted subscription #{id}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, $"⚠️ Failed to cancel order for subscription #{id}");
+            }
+
+            var result = await _subscriptionService.DeleteSubscriptionAsync(id);
+            if (!result)
+                return NotFound();
+
+            return NoContent();
+        }
+
+        /// <summary>
+        /// ✅ UPDATED: Activates subscription AND generates tomorrow's order immediately
+        /// </summary>
+        [HttpPatch("{id}/activate")]
+        public async Task<IActionResult> ActivateSubscription(int id)
+        {
+            var userId = await GetCurrentUserIdAsync();
+            var authId = await GetCurrentAuthIdAsync();
+            
+            if (userId == null || authId == null)
+                return Unauthorized();
+
+            var existing = await _subscriptionService.GetSubscriptionByIdAsync(id);
+            if (existing == null || existing.UserId != userId.Value)
+                return Forbid();
+
+            _logger.LogInformation($"▶️ Resuming subscription #{id}");
+
+            var result = await _subscriptionService.ActivateSubscriptionAsync(id);
+            
+            if (!result)
+                return NotFound();
+
+            // ✅ NEW: Generate tomorrow's order immediately when resuming
+            try
+            {
+                await _subscriptionSchedulingService.GenerateOrderForSubscriptionAsync(id, authId.Value);
+                _logger.LogInformation($"✅ Generated order for resumed subscription #{id}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, $"⚠️ Failed to generate order for resumed subscription #{id}");
+            }
+
+            return Ok(new { message = "Subscription activated and order generated" });
+        }
+
+        /// <summary>
+        /// ✅ UPDATED: Deactivates subscription AND cancels tomorrow's order
+        /// </summary>
+        [HttpPatch("{id}/deactivate")]
+        public async Task<IActionResult> DeactivateSubscription(int id)
+        {
+            var userId = await GetCurrentUserIdAsync();
+            var authId = await GetCurrentAuthIdAsync();
+            
+            if (userId == null || authId == null)
+                return Unauthorized();
+
+            var existing = await _subscriptionService.GetSubscriptionByIdAsync(id);
+            if (existing == null || existing.UserId != userId.Value)
+                return Forbid();
+
+            _logger.LogInformation($"⏸️ Pausing subscription #{id}");
+
+            // ✅ NEW: Cancel tomorrow's order when pausing
+            try
+            {
+                await _subscriptionSchedulingService.CancelOrderForSubscriptionAsync(id, authId.Value);
+                _logger.LogInformation($"✅ Cancelled order for paused subscription #{id}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, $"⚠️ Failed to cancel order for subscription #{id}");
+            }
+
+            var result = await _subscriptionService.DeactivateSubscriptionAsync(id);
+            
+            return result ? Ok(new { message = "Subscription paused and order cancelled" }) : NotFound();
+        }
+
+        /// <summary>
+        /// ✅ Manual endpoint to sync all subscription dates
+        /// </summary>
+        [HttpPost("sync-dates")]
+        public async Task<IActionResult> SyncSubscriptionDates()
+        {
+            try
+            {
+                await _subscriptionService.UpdateNextScheduledDatesAsync();
+                
+                return Ok(new 
+                { 
+                    success = true,
+                    message = "Subscription dates synchronized successfully",
+                    timestamp = DateTime.UtcNow
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new 
+                { 
+                    success = false,
+                    message = "Failed to sync subscription dates", 
+                    error = ex.Message 
+                });
+            }
+        }
+    }
+}
+
+
+==================================================
+2️⃣ DTO - CreateSubscriptionDto.cs
+==================================================
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+using HealthyBreakfastApp.Domain.Enums;
+
+namespace HealthyBreakfastApp.Application.DTOs
+{
+    public class CreateSubscriptionDto
+    {
+        // ❌ REMOVED: public int UserId { get; set; }
+        
+        [Required]
+        public int UserMealId { get; set; }
+
+        [Required]
+        public SubscriptionFrequency Frequency { get; set; }
+
+        [Required]
+        public DateOnly StartDate { get; set; }
+
+        [Required]
+        public DateOnly EndDate { get; set; }
+
+        public bool Active { get; set; } = true;
+
+        public List<WeeklyScheduleDto>? WeeklySchedule { get; set; }
+    }
+}
+
+
+==================================================
+2️⃣ DTO - CreateSubscriptionInternalDto.cs
+==================================================
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+using HealthyBreakfastApp.Domain.Enums;
+
+namespace HealthyBreakfastApp.Application.DTOs
+{
+    /// <summary>
+    /// Internal DTO used by service layer (includes UserId from JWT token)
+    /// </summary>
+    public class CreateSubscriptionInternalDto
+    {
+        public int UserId { get; set; }  // Set by controller from JWT
+
+        [Required]
+        public int UserMealId { get; set; }
+
+        [Required]
+        public SubscriptionFrequency Frequency { get; set; }
+
+        [Required]
+        public DateOnly StartDate { get; set; }
+
+        [Required]
+        public DateOnly EndDate { get; set; }
+
+        public bool Active { get; set; } = true;
+
+        public List<WeeklyScheduleDto>? WeeklySchedule { get; set; }
+    }
+}
+
+
+==================================================
+3️⃣ SERVICE - SubscriptionService.cs
+==================================================
 // HealthyBreakfastApp.Application/Services/SubscriptionService.cs
 
 using System;
@@ -24,7 +436,6 @@ namespace HealthyBreakfastApp.Application.Services
         private readonly IIngredientRepository _ingredientRepository;
         private readonly IUserMealIngredientRepository _userMealIngredientRepository;
         private readonly ILogger<SubscriptionService> _logger;
-        private readonly IUserLoader _userLoader;
 
         // ✅ FIX: Use IST timezone for consistent date calculations
         private static readonly TimeZoneInfo IstTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
@@ -37,8 +448,7 @@ namespace HealthyBreakfastApp.Application.Services
             IScheduledOrderRepository scheduledOrderRepository,
             IIngredientRepository ingredientRepository,
             IUserMealIngredientRepository userMealIngredientRepository,
-            ILogger<SubscriptionService> logger,
-            IUserLoader userLoader)
+            ILogger<SubscriptionService> logger)
         {
             _subscriptionRepository = subscriptionRepository;
             _userRepository = userRepository;
@@ -48,7 +458,6 @@ namespace HealthyBreakfastApp.Application.Services
             _ingredientRepository = ingredientRepository;
             _userMealIngredientRepository = userMealIngredientRepository;
             _logger = logger;
-            _userLoader = userLoader;
         }
 
         public async Task<IEnumerable<SubscriptionDto>> GetAllSubscriptionsAsync()
@@ -77,48 +486,13 @@ namespace HealthyBreakfastApp.Application.Services
 
         public async Task<SubscriptionDto> CreateSubscriptionAsync(CreateSubscriptionInternalDto dto)
         {
-            // ✅ FIXED: Load user WITH AuthMapping eagerly
-            var user = await _userLoader.GetUserWithAuthMappingAsync(dto.UserId);
+            var user = await _userRepository.GetByIdAsync(dto.UserId);
             if (user == null)
                 throw new ArgumentException("User not found");
 
             var userMeal = await _userMealRepository.GetByIdAsync(dto.UserMealId);
             if (userMeal == null)
                 throw new ArgumentException("User meal not found");
-
-            // ✅ ADD: Check for existing active subscription for this UserMeal
-            _logger.LogInformation("🔍 Checking for existing subscription: UserId={UserId}, UserMealId={UserMealId}", dto.UserId, dto.UserMealId);
-            
-            var existingSubscription = await _subscriptionRepository.GetActiveSubscriptionByUserMealIdAsync(
-                dto.UserId, 
-                dto.UserMealId
-            );
-            
-            if (existingSubscription != null)
-            {
-                _logger.LogWarning(
-                    "❌ Duplicate subscription attempt: User {UserId} tried to subscribe to UserMeal {UserMealId} again. Existing subscription ID: {ExistingSubId}",
-                    dto.UserId, dto.UserMealId, existingSubscription.SubscriptionId);
-                    
-                throw new InvalidOperationException(
-                    $"You already have an active subscription for '{userMeal.MealName}'. " +
-                    "Please edit your existing subscription instead of creating a new one."
-                );
-            }
-
-            // ✅ ADD: Security check - ensure user owns this meal
-            if (userMeal.UserId != dto.UserId)
-            {
-                _logger.LogWarning(
-                    "❌ Security violation: User {UserId} attempted to subscribe to UserMeal {UserMealId} owned by {OwnerId}",
-                    dto.UserId, dto.UserMealId, userMeal.UserId);
-                    
-                throw new UnauthorizedAccessException(
-                    "You can only subscribe to your own meals"
-                );
-            }
-
-            _logger.LogInformation($"✅ Validation passed. Creating new subscription for UserMeal {dto.UserMealId}");
 
             // ✅ ADD: Get user's primary address
             var primaryAddress = await _userAddressRepository.GetPrimaryAddressAsync(dto.UserId);
@@ -648,6 +1022,324 @@ namespace HealthyBreakfastApp.Application.Services
                     .OrderBy(s => s.DayOfWeek)
                     .ToList()
             };
+        }
+    }
+}
+
+
+==================================================
+4️⃣ ENTITY - Subscription.cs
+==================================================
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+using HealthyBreakfastApp.Domain.Enums;
+
+namespace HealthyBreakfastApp.Domain.Entities
+{
+    public class Subscription
+    {
+        [Key]
+        public int SubscriptionId { get; set; }
+
+        [ForeignKey("User")]
+        public int UserId { get; set; }
+
+        [ForeignKey("UserMeal")]
+        public int UserMealId { get; set; }
+        
+        public int? DeliveryAddressId { get; set; } // ✅ ADD THIS
+
+        public SubscriptionFrequency Frequency { get; set; }
+        
+        public DateOnly StartDate { get; set; }
+        public DateOnly EndDate { get; set; }
+        public bool Active { get; set; }
+        
+        public DateOnly? NextScheduledDate { get; set; }
+        
+        public DateTime CreatedAt { get; set; }
+        public DateTime UpdatedAt { get; set; }
+
+        // Navigation properties
+        public User User { get; set; } = null!;
+        public UserMeal UserMeal { get; set; } = null!;
+        public UserAddress? DeliveryAddress { get; set; } // ✅ ADD THIS
+        
+        public ICollection<SubscriptionSchedule> WeeklySchedule { get; set; } = new List<SubscriptionSchedule>();
+    }
+}
+
+
+==================================================
+4️⃣ ENTITY - ScheduledOrder.cs
+==================================================
+using System;
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+using System.Collections.Generic;
+
+namespace HealthyBreakfastApp.Domain.Entities
+{
+    public class ScheduledOrder
+    {
+        [Key]
+        public int ScheduledOrderId { get; set; }
+
+        [ForeignKey("User")]
+        public int UserId { get; set; }
+
+        public Guid AuthId { get; set; } // Supabase auth ID for direct queries
+
+        public string MealName { get; set; } = "Custom Overnight Oats";
+        
+        [Column(TypeName = "date")]
+        public DateTime ScheduledFor { get; set; } // Delivery date (date only)
+        
+        public string DeliveryTimeSlot { get; set; } = "10:00 AM";
+        
+        public decimal TotalPrice { get; set; }
+        
+        public string? NutritionalSummary { get; set; } // JSON string for calories, protein, etc.
+        
+        public string OrderStatus { get; set; } = "scheduled"; // scheduled, confirmed, cancelled
+        
+        public bool CanModify { get; set; } = true;
+        
+        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+        public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+        
+        public DateTime? ConfirmedAt { get; set; } // When auto-confirmed at midnight
+        
+        public DateTime ExpiresAt { get; set; } // Midnight cutoff time
+
+        public bool IsProcessedToOrder { get; set; } = false;  // Has been converted to confirmed Order
+        public int? ConfirmedOrderId { get; set; }             // Link to created Order in Orders table
+
+        // ✅ ADD: Delivery address relationship
+        public int? DeliveryAddressId { get; set; }
+        public UserAddress? DeliveryAddress { get; set; }
+
+        // ✅ ADD: Subscription relationship
+        public int? SubscriptionId { get; set; }
+        public Subscription? Subscription { get; set; }
+
+        // Navigation properties
+        public User User { get; set; } = null!;
+        public ICollection<ScheduledOrderIngredient> Ingredients { get; set; } = new List<ScheduledOrderIngredient>();
+    }
+}
+
+
+==================================================
+4️⃣ ENTITY - UserMeal.cs
+==================================================
+using System;
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+
+namespace HealthyBreakfastApp.Domain.Entities
+{
+    public class UserMeal
+    {
+        [Key]
+        public int UserMealId { get; set; }
+
+        [ForeignKey("User")]
+        public int UserId { get; set; }
+
+        [ForeignKey("Meal")]
+        public int MealId { get; set; }
+
+        public string MealName { get; set; } = null!;
+        public decimal TotalPrice { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public DateTime UpdatedAt { get; set; }
+
+        // Navigation properties
+        public User User { get; set; } = null!;
+        public Meal Meal { get; set; } = null!;
+        
+        // ✅ ADD THIS: Collection navigation property for ingredients
+        public ICollection<UserMealIngredient> UserMealIngredients { get; set; } = new List<UserMealIngredient>();
+    }
+}
+
+
+==================================================
+5️⃣ REPOSITORY - SubscriptionRepository.cs
+==================================================
+// HealthyBreakfastApp.Infrastructure/Repositories/SubscriptionRepository.cs
+
+using HealthyBreakfastApp.Application.Interfaces;
+using HealthyBreakfastApp.Domain.Entities;
+using HealthyBreakfastApp.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
+
+namespace HealthyBreakfastApp.Infrastructure.Repositories
+{
+    public class SubscriptionRepository : ISubscriptionRepository
+    {
+        private readonly AppDbContext _context;
+
+        public SubscriptionRepository(AppDbContext context)
+        {
+            _context = context;
+        }
+
+        public async Task<IEnumerable<Subscription>> GetAllAsync()
+        {
+            return await _context.Subscriptions
+                .Include(s => s.User)
+                .Include(s => s.UserMeal)
+                    .ThenInclude(um => um.Meal)
+                .Include(s => s.WeeklySchedule)  // ✅ NEW
+                .ToListAsync();
+        }
+
+        public async Task<Subscription?> GetByIdAsync(int subscriptionId)
+        {
+            return await _context.Subscriptions
+                .Include(s => s.User)
+                .Include(s => s.UserMeal)
+                    .ThenInclude(um => um.Meal)
+                .Include(s => s.WeeklySchedule)  // ✅ NEW
+                .FirstOrDefaultAsync(s => s.SubscriptionId == subscriptionId);
+        }
+
+        public async Task<IEnumerable<Subscription>> GetByUserIdAsync(int userId)
+        {
+            return await _context.Subscriptions
+                .Include(s => s.User)
+                .Include(s => s.UserMeal)
+                    .ThenInclude(um => um.Meal)
+                .Include(s => s.WeeklySchedule)  // ✅ NEW
+                .Where(s => s.UserId == userId)
+                .ToListAsync();
+        }
+
+        public async Task<IEnumerable<Subscription>> GetActiveSubscriptionsAsync()
+        {
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            return await _context.Subscriptions
+                .Include(s => s.User)
+                    .ThenInclude(u => u.AuthMapping)  // ✅ Important for scheduling
+                .Include(s => s.UserMeal)
+                    .ThenInclude(um => um.Meal)
+                .Include(s => s.WeeklySchedule)  // ✅ NEW
+                .Where(s => s.Active && s.StartDate <= today && s.EndDate >= today)
+                .ToListAsync();
+        }
+
+        public async Task<Subscription> CreateAsync(Subscription subscription)
+        {
+            subscription.CreatedAt = DateTime.UtcNow;
+            subscription.UpdatedAt = DateTime.UtcNow;
+
+            _context.Subscriptions.Add(subscription);
+            await _context.SaveChangesAsync();
+            return subscription;
+        }
+
+        public async Task<Subscription> UpdateAsync(Subscription subscription)
+        {
+            subscription.UpdatedAt = DateTime.UtcNow;
+            
+            _context.Subscriptions.Update(subscription);
+            await _context.SaveChangesAsync();
+            return subscription;
+        }
+
+        public async Task<bool> DeleteAsync(int subscriptionId)
+        {
+            var subscription = await _context.Subscriptions
+                .Include(s => s.WeeklySchedule)
+                .FirstOrDefaultAsync(s => s.SubscriptionId == subscriptionId);
+                
+            if (subscription == null)
+                return false;
+
+            _context.Subscriptions.Remove(subscription);
+            await _context.SaveChangesAsync();
+            return true;
+        }
+
+        // ✅ NEW: Schedule management methods
+        public async Task<IEnumerable<SubscriptionSchedule>> GetSchedulesBySubscriptionIdAsync(int subscriptionId)
+        {
+            return await _context.Set<SubscriptionSchedule>()
+                .Where(s => s.SubscriptionId == subscriptionId)
+                .OrderBy(s => s.DayOfWeek)
+                .ToListAsync();
+        }
+
+        public async Task AddSchedulesAsync(int subscriptionId, IEnumerable<SubscriptionSchedule> schedules)
+        {
+            foreach (var schedule in schedules)
+            {
+                schedule.SubscriptionId = subscriptionId;
+                schedule.CreatedAt = DateTime.UtcNow;
+                schedule.UpdatedAt = DateTime.UtcNow;
+            }
+            
+            await _context.Set<SubscriptionSchedule>().AddRangeAsync(schedules);
+            await _context.SaveChangesAsync();
+        }
+
+        public async Task RemoveSchedulesAsync(int subscriptionId)
+        {
+            var schedules = await _context.Set<SubscriptionSchedule>()
+                .Where(s => s.SubscriptionId == subscriptionId)
+                .ToListAsync();
+                
+            _context.Set<SubscriptionSchedule>().RemoveRange(schedules);
+            await _context.SaveChangesAsync();
+        }
+    }
+}
+
+
+==================================================
+5️⃣ REPOSITORY - UserMealRepository.cs
+==================================================
+using System.Threading.Tasks;
+using System.Collections.Generic;
+using System.Linq;
+using HealthyBreakfastApp.Application.Interfaces;
+using HealthyBreakfastApp.Domain.Entities;
+using HealthyBreakfastApp.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
+
+namespace HealthyBreakfastApp.Infrastructure.Repositories
+{
+    public class UserMealRepository : IUserMealRepository
+    {
+        private readonly AppDbContext _context;
+
+        public UserMealRepository(AppDbContext context)
+        {
+            _context = context;
+        }
+
+        public async Task AddAsync(UserMeal entity)
+        {
+            await _context.UserMeals.AddAsync(entity);
+        }
+
+        public async Task SaveChangesAsync()
+        {
+            await _context.SaveChangesAsync();
+        }
+
+        public async Task<UserMeal?> GetByIdAsync(int id)
+        {
+            return await _context.UserMeals.FirstOrDefaultAsync(um => um.UserMealId == id);
+        }
+
+        public async Task<IEnumerable<UserMeal>> GetByUserIdAsync(int userId)
+        {
+            return await _context.UserMeals.Where(um => um.UserId == userId).ToListAsync();
         }
     }
 }

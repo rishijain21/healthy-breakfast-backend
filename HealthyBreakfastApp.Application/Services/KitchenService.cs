@@ -24,17 +24,23 @@ namespace HealthyBreakfastApp.Application.Services
         public async Task<List<KitchenOrderDto>> GetOrdersForPreparationAsync()
         {
             var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
-            var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
+            var utcNow = DateTime.UtcNow;
+            var istNow = TimeZoneInfo.ConvertTimeFromUtc(utcNow, istZone);
             
-            var deliveryDate = DateTime.SpecifyKind(istNow.Date, DateTimeKind.Utc);
-
-            _logger.LogInformation($"🍳 Kitchen Dashboard: TODAY's delivery ({istNow.Date:yyyy-MM-dd})");
+            // ✅ FIXED: Show orders for TODAY (not tomorrow)
+            var today = istNow.Date;
+            
+            Console.WriteLine($"🍳 [KitchenService] UTC Time: {utcNow:yyyy-MM-dd HH:mm:ss} UTC");
+            Console.WriteLine($"🍳 [KitchenService] IST Time: {istNow:yyyy-MM-dd HH:mm:ss} IST");
+            Console.WriteLine($"🍳 [KitchenService] Fetching orders for TODAY: {today:yyyy-MM-dd}");
+            
+            var deliveryDate = DateTime.SpecifyKind(today, DateTimeKind.Utc);
 
             var orders = await _kitchenRepository.GetOrdersForPreparationAsync(deliveryDate);
 
             var result = orders.Select(o => MapToDto(o)).ToList();
 
-            _logger.LogInformation($"📦 Kitchen: {result.Count} orders to prepare for TODAY");
+            Console.WriteLine($"📦 [KitchenService] {result.Count} orders to prepare for TODAY ({today:yyyy-MM-dd})");
 
             return result;
         }

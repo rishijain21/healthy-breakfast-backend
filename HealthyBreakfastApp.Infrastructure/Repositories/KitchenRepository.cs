@@ -20,7 +20,13 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
 
         public async Task<List<Order>> GetOrdersForPreparationAsync(DateTime date)
         {
-            return await _context.Orders
+            // Normalize the input date to date-only
+            var targetDate = date.Date;
+            
+            Console.WriteLine($"🔍 [KitchenRepository] Querying Orders WHERE ScheduledFor.Date = {targetDate:yyyy-MM-dd}");
+            Console.WriteLine($"🔍 [KitchenRepository] Input date kind: {date.Kind}, Target date: {targetDate:yyyy-MM-dd}");
+            
+            var orders = await _context.Orders
                 .Include(o => o.User)
                 .Include(o => o.UserMeal)
                     .ThenInclude(um => um.UserMealIngredients)
@@ -29,9 +35,18 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
                 // ✅ NEW: Include DeliveryAddress and ServiceableLocation for batch grouping
                 .Include(o => o.DeliveryAddress)
                     .ThenInclude(da => da.ServiceableLocation)
-                .Where(o => o.ScheduledFor.Date == date.Date && !o.IsPrepared)
+                .Where(o => o.ScheduledFor.Date == targetDate && !o.IsPrepared)
                 .OrderBy(o => o.CreatedAt)
                 .ToListAsync();
+            
+            Console.WriteLine($"📦 [KitchenRepository] Found {orders.Count} orders for {targetDate:yyyy-MM-dd}");
+            
+            foreach (var order in orders)
+            {
+                Console.WriteLine($"   - Order #{order.OrderId}: {order.UserMeal?.MealName ?? "Custom"}, ScheduledFor: {order.ScheduledFor:yyyy-MM-dd HH:mm:ss}, IsPrepared: {order.IsPrepared}");
+            }
+            
+            return orders;
         }
 
         public async Task<Order> GetOrderByIdAsync(int orderId)

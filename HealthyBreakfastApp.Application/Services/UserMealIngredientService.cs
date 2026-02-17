@@ -19,7 +19,7 @@ namespace HealthyBreakfastApp.Application.Services
         {
             var entity = new UserMealIngredient
             {
-                UserMealId = dto.UserMealId,
+                UserMealId = dto.UserMealId ?? 0, // Handle nullable
                 IngredientId = dto.IngredientId,
                 Quantity = dto.Quantity,
                 CreatedAt = DateTime.UtcNow,

@@ -40,6 +40,7 @@ builder.Services.AddHangfireServer();
 // 🧩 APPLICATION SERVICES & REPOSITORIES
 // ========================================
 builder.Services.AddScoped<IUserRepository, UserRepository>();
+builder.Services.AddScoped<IUserLoader, UserLoader>();
 builder.Services.AddScoped<IUserService, UserService>();
 
 builder.Services.AddScoped<IMealService, MealService>();
@@ -275,7 +276,7 @@ try
     recurringJobManager.AddOrUpdate<IScheduledOrderService>(
         "midnight-order-confirmation",
         service => service.ConfirmAllScheduledOrdersAsync(),
-        "0 0 * * *",  // Every day at 12:00 AM IST
+       "59 23 * * *",  
         new RecurringJobOptions
         {
             TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata")

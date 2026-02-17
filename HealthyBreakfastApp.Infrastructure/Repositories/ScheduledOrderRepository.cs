@@ -83,23 +83,36 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
             }
         }
 
-        // ✅ FIXED: In-memory date filtering to avoid PostgreSQL date type issues
+        // ✅ FIXED: Use raw SQL for reliable date comparison
         public async Task<List<ScheduledOrder>> GetScheduledOrdersForDateAsync(DateTime date)
         {
-            // Load all scheduled orders with status "scheduled"
-            var scheduledOrders = await _context.ScheduledOrders
-                .Include(so => so.Ingredients)
-                    .ThenInclude(soi => soi.Ingredient)
-                        .ThenInclude(i => i.IngredientCategory)
-                .Include(so => so.User)
-                .Where(so => so.OrderStatus == "scheduled")
+            // Use raw SQL for reliable date comparison
+            var dateString = date.ToString("yyyy-MM-dd");
+            
+            Console.WriteLine($"🔍 [ScheduledOrderRepository] Searching for ScheduledFor = {dateString}");
+            
+            var orders = await _context.ScheduledOrders
+                .FromSqlRaw(@"
+                    SELECT * FROM ""ScheduledOrders"" 
+                    WHERE CAST(""ScheduledFor"" AS DATE) = CAST({0} AS DATE)
+                ", dateString)
+                .Include(o => o.User)
+                .Include(o => o.Ingredients)
+                    .ThenInclude(i => i.Ingredient)
+                        .ThenInclude(ing => ing.IngredientCategory)
+                .Include(o => o.DeliveryAddress)
+                    .ThenInclude(a => a.ServiceableLocation)
+                .OrderBy(o => o.CreatedAt)
                 .ToListAsync();
             
-            // Filter by date in memory (avoids EF/PostgreSQL date type issues)
-            var targetDate = date.Date;
-            return scheduledOrders
-                .Where(so => so.ScheduledFor.Date == targetDate)
-                .ToList();
+            Console.WriteLine($"✅ [ScheduledOrderRepository] Found {orders.Count} orders for {dateString}");
+            
+            foreach (var order in orders)
+            {
+                Console.WriteLine($"   - Order #{order.ScheduledOrderId}: {order.MealName}, ScheduledFor: {order.ScheduledFor:yyyy-MM-dd HH:mm:ss}, Status: {order.OrderStatus}");
+            }
+            
+            return orders;
         }
 
         public async Task<bool> HasScheduledOrdersForDateAsync(Guid authId, DateTime date)
@@ -108,6 +121,13 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
                 .AnyAsync(so => so.AuthId == authId && 
                               so.ScheduledFor.Date == date.Date && 
                               so.OrderStatus == "scheduled");
+        }
+
+        public async Task<List<ScheduledOrder>> GetBySubscriptionIdAsync(int subscriptionId)
+        {
+            return await _context.ScheduledOrders
+                .Where(so => so.SubscriptionId == subscriptionId)
+                .ToListAsync();
         }
     }
 }

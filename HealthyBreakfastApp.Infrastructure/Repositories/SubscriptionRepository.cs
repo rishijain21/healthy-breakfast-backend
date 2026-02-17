@@ -124,5 +124,20 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
             _context.Set<SubscriptionSchedule>().RemoveRange(schedules);
             await _context.SaveChangesAsync();
         }
+
+        // ✅ NEW: Prevent duplicate subscriptions (checks active + date range)
+        public async Task<Subscription?> GetActiveSubscriptionByUserMealIdAsync(int userId, int userMealId)
+        {
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            return await _context.Subscriptions
+                .Include(s => s.WeeklySchedule)
+                .FirstOrDefaultAsync(s => 
+                    s.UserId == userId && 
+                    s.UserMealId == userMealId && 
+                    s.Active == true &&
+                    s.StartDate <= today && 
+                    s.EndDate >= today
+                );
+        }
     }
 }

@@ -12,6 +12,9 @@ namespace HealthyBreakfastApp.Application.DTOs
         public string DeliveryTimeSlot { get; set; } = "10:00 AM";
         public int? DeliveryAddressId { get; set; } // ✅ ADD: Delivery address for subscription orders
         public NutritionalSummaryDto? NutritionalSummary { get; set; }
+        
+        // ✅ ADD: Link to subscription if this order is from a subscription
+        public int? SubscriptionId { get; set; }
     }
 
     public class ScheduledOrderIngredientDto

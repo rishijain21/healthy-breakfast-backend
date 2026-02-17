@@ -139,7 +139,9 @@ namespace HealthyBreakfastApp.Application.Services
                         ScheduledFor = DateTime.SpecifyKind(tomorrowDateTime, DateTimeKind.Utc),
                         DeliveryTimeSlot = "7:00 AM",
                         DeliveryAddressId = deliveryAddressId, // ✅ ADD: Link to delivery address
-                        NutritionalSummary = null
+                        NutritionalSummary = null,
+                        // ✅ ADD: Link to subscription - Critical fix!
+                        SubscriptionId = subscription.SubscriptionId
                     };
 
                     await _scheduledOrderService.CreateScheduledOrderAsync(user.AuthMapping.AuthId, scheduledOrderDto);
@@ -352,7 +354,9 @@ namespace HealthyBreakfastApp.Application.Services
                 ScheduledFor = DateTime.SpecifyKind(tomorrowDateTime, DateTimeKind.Utc),
                 DeliveryTimeSlot = "7:00 AM",
                 DeliveryAddressId = deliveryAddressId,
-                NutritionalSummary = null
+                NutritionalSummary = null,
+                        // ✅ ADD: Link to subscription - Critical fix!
+                        SubscriptionId = subscription.SubscriptionId
             };
 
             await _scheduledOrderService.CreateScheduledOrderAsync(user.AuthMapping.AuthId, scheduledOrderDto);

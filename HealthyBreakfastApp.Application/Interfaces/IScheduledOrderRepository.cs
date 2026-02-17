@@ -14,5 +14,6 @@ namespace HealthyBreakfastApp.Application.Interfaces
         Task DeleteAsync(int scheduledOrderId);
         Task<List<ScheduledOrder>> GetScheduledOrdersForDateAsync(DateTime date);
         Task<bool> HasScheduledOrdersForDateAsync(Guid authId, DateTime date);
+        Task<List<ScheduledOrder>> GetBySubscriptionIdAsync(int subscriptionId);
     }
 }

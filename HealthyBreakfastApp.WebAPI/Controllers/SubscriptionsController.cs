@@ -140,24 +140,8 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
 
                 _logger.LogInformation($"✅ Subscription #{subscription.SubscriptionId} created");
 
-                // 2. ✅ NEW: Generate tomorrow's order immediately if active
-                if (subscription.Active)
-                {
-                    try
-                    {
-                        await _subscriptionSchedulingService.GenerateOrderForSubscriptionAsync(
-                            subscription.SubscriptionId, 
-                            authId.Value
-                        );
-                        
-                        _logger.LogInformation($"✅ Generated immediate order for subscription #{subscription.SubscriptionId}");
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, $"⚠️ Failed to generate immediate order for subscription #{subscription.SubscriptionId}");
-                        // Don't fail the subscription creation, just log the warning
-                    }
-                }
+                // ✅ Order is already created inside CreateSubscriptionAsync() via CreateFirstScheduledOrderAsync()
+                // No need to generate it again!
 
                 return CreatedAtAction(nameof(GetSubscription),
                     new { id = subscription.SubscriptionId },
@@ -165,11 +149,25 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             }
             catch (InvalidOperationException ex)
             {
-                return Conflict(new { message = ex.Message });
+                // ✅ This catches duplicate subscription attempts
+                _logger.LogWarning(ex, "⚠️ Duplicate subscription attempt blocked");
+                return Conflict(new { message = ex.Message }); // ✅ Returns 409 Conflict
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                // ✅ This catches security violations
+                _logger.LogWarning(ex, "⚠️ Unauthorized subscription attempt");
+                return Forbid(); // ✅ Returns 403 Forbidden
             }
             catch (ArgumentException ex)
             {
+                _logger.LogError(ex, "❌ Invalid argument");
                 return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ Unexpected error creating subscription");
+                return StatusCode(500, new { message = "An error occurred while creating the subscription" });
             }
         }
 
@@ -205,34 +203,51 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         public async Task<IActionResult> DeleteSubscription(int id)
         {
             var userId = await GetCurrentUserIdAsync();
-            var authId = await GetCurrentAuthIdAsync();
-            
-            if (userId == null || authId == null)
+            if (userId == null)
                 return Unauthorized();
 
-            var existing = await _subscriptionService.GetSubscriptionByIdAsync(id);
-            if (existing == null)
-                return NotFound();
-
-            if (existing.UserId != userId.Value)
-                return Forbid();
-
-            // ✅ NEW: Cancel tomorrow's scheduled order when deleting subscription
             try
             {
-                await _subscriptionSchedulingService.CancelOrderForSubscriptionAsync(id, authId.Value);
-                _logger.LogInformation($"✅ Cancelled scheduled order for deleted subscription #{id}");
+                var existing = await _subscriptionService.GetSubscriptionByIdAsync(id);
+                if (existing == null)
+                    return NotFound();
+
+                if (existing.UserId != userId.Value)
+                    return Forbid();
+
+                _logger.LogInformation($"🗑️ Deleting subscription #{id}");
+
+                // ✅ Delete associated scheduled orders first
+                try
+                {
+                    var orders = await _scheduledOrderRepository.GetBySubscriptionIdAsync(id);
+                    foreach (var order in orders)
+                    {
+                        await _scheduledOrderRepository.DeleteAsync(order.ScheduledOrderId);
+                        _logger.LogInformation($"✅ Deleted order #{order.ScheduledOrderId}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, $"⚠️ Failed to delete orders for subscription #{id}");
+                }
+
+                // ✅ Delete the subscription
+                var result = await _subscriptionService.DeleteSubscriptionAsync(id);
+                if (!result)
+                {
+                    _logger.LogWarning($"⚠️ Subscription #{id} not found during delete");
+                    return NotFound();
+                }
+
+                _logger.LogInformation($"✅ Subscription #{id} deleted successfully");
+                return NoContent();
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, $"⚠️ Failed to cancel order for subscription #{id}");
+                _logger.LogError(ex, $"❌ Error deleting subscription #{id}");
+                return StatusCode(500, new { message = "Failed to delete subscription", error = ex.Message });
             }
-
-            var result = await _subscriptionService.DeleteSubscriptionAsync(id);
-            if (!result)
-                return NotFound();
-
-            return NoContent();
         }
 
         /// <summary>

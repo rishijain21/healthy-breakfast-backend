@@ -11,10 +11,14 @@ namespace HealthyBreakfastApp.Application.Services
     public class UserMealService : IUserMealService
     {
         private readonly IUserMealRepository _repository;
+        private readonly IUserMealIngredientRepository _ingredientRepository;
 
-        public UserMealService(IUserMealRepository repository)
+        public UserMealService(
+            IUserMealRepository repository,
+            IUserMealIngredientRepository ingredientRepository)
         {
             _repository = repository;
+            _ingredientRepository = ingredientRepository;
         }
 
         // ✅ SECURE: CreateUserMealAsync with userId from JWT token
@@ -33,6 +37,32 @@ namespace HealthyBreakfastApp.Application.Services
 
             await _repository.AddAsync(entity);
             await _repository.SaveChangesAsync();
+
+            // ✅ Save ingredients if provided
+            if (dto.SelectedIngredients != null && dto.SelectedIngredients.Any())
+            {
+                Console.WriteLine($"🔵 UserMealService: Saving {dto.SelectedIngredients.Count} ingredients for UserMeal #{entity.UserMealId}");
+                
+                foreach (var ingredientDto in dto.SelectedIngredients)
+                {
+                    var userMealIngredient = new UserMealIngredient
+                    {
+                        UserMealId = entity.UserMealId, // Set from created UserMeal
+                        IngredientId = ingredientDto.IngredientId,
+                        Quantity = ingredientDto.Quantity,
+                        CreatedAt = DateTime.UtcNow
+                    };
+                    
+                    await _ingredientRepository.AddAsync(userMealIngredient);
+                }
+                
+                await _ingredientRepository.SaveChangesAsync();
+                Console.WriteLine($"✅ UserMealService: Saved {dto.SelectedIngredients.Count} ingredients");
+            }
+            else
+            {
+                Console.WriteLine("⚠️ UserMealService: No ingredients provided in dto.SelectedIngredients");
+            }
 
             return entity.UserMealId;
         }

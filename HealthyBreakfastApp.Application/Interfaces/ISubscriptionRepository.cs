@@ -18,5 +18,8 @@ namespace HealthyBreakfastApp.Application.Interfaces
         Task<IEnumerable<SubscriptionSchedule>> GetSchedulesBySubscriptionIdAsync(int subscriptionId);
         Task AddSchedulesAsync(int subscriptionId, IEnumerable<SubscriptionSchedule> schedules);
         Task RemoveSchedulesAsync(int subscriptionId);
+
+        // ✅ NEW: Prevent duplicate subscriptions (checks active + date range)
+        Task<Subscription?> GetActiveSubscriptionByUserMealIdAsync(int userId, int userMealId);
     }
 }

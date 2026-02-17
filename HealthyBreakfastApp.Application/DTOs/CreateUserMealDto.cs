@@ -7,5 +7,8 @@ namespace HealthyBreakfastApp.Application.DTOs
         public string MealName { get; set; } = null!;
         public decimal TotalPrice { get; set; }
         public DateTime CreatedAt { get; set; }
+        
+        // ✅ NEW: Selected ingredients for subscription
+        public List<CreateUserMealIngredientDto>? SelectedIngredients { get; set; }
     }
 }
