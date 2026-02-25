@@ -8,7 +8,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
-    [Authorize]
+    [Authorize(Roles = "Admin")]
     public class KitchenController : ControllerBase
     {
         private readonly IKitchenService _kitchenService;

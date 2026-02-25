@@ -5,6 +5,7 @@ namespace HealthyBreakfastApp.Application.DTOs
     public class EnhancedOrderHistoryDto
     {
         public int OrderId { get; set; }
+        public int MealId { get; set; }
         public int UserId { get; set; }
         public OrderStatus OrderStatus { get; set; }
         public string OrderStatusText => OrderStatus.ToString();

@@ -125,7 +125,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                 }
 
                 var transaction = await _walletTransactionService.TopUpWalletAsync(userDto.UserId, topUpDto);
-                return CreatedAtAction(nameof(GetTransaction), new { id = transaction.TransactionId }, transaction);
+                return Ok(transaction);
             }
             catch (Exception ex)
             {
@@ -236,7 +236,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                 }
 
                 var transaction = await _walletTransactionService.TopUpWalletAsync(userId, dto);
-                return CreatedAtAction(nameof(GetTransaction), new { id = transaction.TransactionId }, transaction);
+                return Ok(transaction);
             }
             catch (Exception ex)
             {
@@ -247,11 +247,11 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         /// <summary>
         /// Admin endpoint: Get transaction by ID
         /// </summary>
-        [HttpGet("admin/{transactionId}")]
+        [HttpGet("admin/{id}")]
         [Authorize(Roles = "Admin")]
-        public async Task<ActionResult<WalletTransactionDto>> GetTransaction(int transactionId)
+        public async Task<ActionResult<WalletTransactionDto>> GetTransaction(int id)
         {
-            var transaction = await _walletTransactionService.GetTransactionByIdAsync(transactionId);
+            var transaction = await _walletTransactionService.GetTransactionByIdAsync(id);
             if (transaction == null) return NotFound();
             return Ok(transaction);
         }

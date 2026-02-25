@@ -1,5 +1,6 @@
 using HealthyBreakfastApp.Application.DTOs;
 using HealthyBreakfastApp.Application.Interfaces;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System;
 using System.Threading.Tasks;
@@ -8,6 +9,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
+    [Authorize]
     public class IngredientsController : ControllerBase
     {
         private readonly IIngredientService _ingredientService;
@@ -58,6 +60,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         /// Create a new ingredient
         /// </summary>
         [HttpPost]
+        [Authorize(Roles = "Admin")]
         public async Task<IActionResult> CreateIngredient([FromBody] CreateIngredientDto dto)
         {
             if (!ModelState.IsValid)
@@ -77,6 +80,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         /// Update an existing ingredient
         /// </summary>
         [HttpPut("{id}")]
+        [Authorize(Roles = "Admin")]
         public async Task<IActionResult> UpdateIngredient(int id, [FromBody] UpdateIngredientDto dto)
         {
             if (!ModelState.IsValid)
@@ -93,6 +97,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         /// Toggle ingredient availability (active/inactive)
         /// </summary>
         [HttpPatch("{id}/toggle-availability")]
+        [Authorize(Roles = "Admin")]
         public async Task<IActionResult> ToggleAvailability(int id)
         {
             var success = await _ingredientService.ToggleIngredientAvailabilityAsync(id);
@@ -114,6 +119,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         /// Delete an ingredient
         /// </summary>
         [HttpDelete("{id}")]
+        [Authorize(Roles = "Admin")]
         public async Task<IActionResult> DeleteIngredient(int id)
         {
             try

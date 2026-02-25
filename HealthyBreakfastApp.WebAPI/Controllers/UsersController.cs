@@ -8,6 +8,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
+    [Authorize]
     public class UsersController : ControllerBase
     {
         private readonly IUserService _userService;
@@ -20,6 +21,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         }
 
         [HttpGet]
+        [Authorize(Roles = "Admin")]
         public async Task<ActionResult<List<UserDto>>> GetAllUsers()
         {
             var users = await _userService.GetAllUsersAsync();
@@ -27,6 +29,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         }
 
         [HttpPost]
+        [Authorize(Roles = "Admin")]
         public async Task<IActionResult> CreateUser([FromBody] CreateUserDto dto)
         {
             if (!ModelState.IsValid)
@@ -37,6 +40,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         }
 
         [HttpGet("{id}")]
+        [Authorize(Roles = "Admin")]
         public async Task<IActionResult> GetUserById(int id)
         {
             var userDto = await _userService.GetUserByIdAsync(id);
@@ -111,6 +115,36 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                 _logger.LogError(ex, "Error updating user profile");
                 return StatusCode(500, new { message = "An error occurred while updating profile" });
             }
+        }
+
+        // ✅ ADMIN: Update user role
+        /// <summary>
+        /// Promote or demote a user's role — Admin only
+        /// </summary>
+        [HttpPatch("{id}/role")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> UpdateUserRole(int id, [FromBody] UpdateRoleDto dto)
+        {
+            var validRoles = new[] { "User", "Admin" };
+            if (!validRoles.Contains(dto.Role))
+                return BadRequest(new { message = $"Invalid role. Must be one of: {string.Join(", ", validRoles)}" });
+
+            // Prevent self-demotion
+            var currentUserIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value 
+                                 ?? User.FindFirst("sub")?.Value;
+            
+            if (!string.IsNullOrEmpty(currentUserIdClaim) && Guid.TryParse(currentUserIdClaim, out var currentAuthId))
+            {
+                var currentUser = await _userService.GetUserByAuthIdAsync(currentAuthId);
+                if (currentUser != null && currentUser.UserId == id && dto.Role != "Admin")
+                    return BadRequest(new { message = "You cannot remove your own admin role" });
+            }
+
+            var result = await _userService.UpdateUserRoleAsync(id, dto.Role);
+            if (!result)
+                return NotFound(new { message = "User not found" });
+
+            return Ok(new { message = $"User {id} role updated to {dto.Role}" });
         }
     }
 }

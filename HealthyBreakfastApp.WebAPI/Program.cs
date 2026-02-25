@@ -117,6 +117,24 @@ builder.Services.AddControllers()
     });
 
 // ========================================
+// 🗜️ RESPONSE COMPRESSION
+// ========================================
+builder.Services.AddResponseCompression(options =>
+{
+    options.EnableForHttps = true; // Safe since you control both ends
+    options.Providers.Add<Microsoft.AspNetCore.ResponseCompression.BrotliCompressionProvider>();
+    options.Providers.Add<Microsoft.AspNetCore.ResponseCompression.GzipCompressionProvider>();
+    options.MimeTypes = Microsoft.AspNetCore.ResponseCompression.ResponseCompressionDefaults.MimeTypes.Concat(
+        new[] { "application/json", "text/json" }
+    );
+});
+
+builder.Services.Configure<Microsoft.AspNetCore.ResponseCompression.BrotliCompressionProviderOptions>(options =>
+{
+    options.Level = System.IO.Compression.CompressionLevel.Fastest; // Balance speed vs size
+});
+
+// ========================================
 // 🔓 CORS CONFIGURATION
 // ========================================
 builder.Services.AddCors(options =>
@@ -230,6 +248,8 @@ builder.Services.AddSwaggerGen(c =>
 // ========================================
 var app = builder.Build();
 
+app.UseResponseCompression(); // ✅ ADD THIS LINE
+
 app.UseSwagger();
 app.UseSwaggerUI();
 
@@ -325,3 +345,4 @@ public class HangfireDashboardNoAuthFilter : Hangfire.Dashboard.IDashboardAuthor
         return true;
     }
 }
+

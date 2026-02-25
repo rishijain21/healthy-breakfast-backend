@@ -10,10 +10,12 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
     public class ServiceableLocationsController : ControllerBase
     {
         private readonly IServiceableLocationService _service;
+        private readonly ILogger<ServiceableLocationsController> _logger;
 
-        public ServiceableLocationsController(IServiceableLocationService service)
+        public ServiceableLocationsController(IServiceableLocationService service, ILogger<ServiceableLocationsController> logger)
         {
             _service = service;
+            _logger = logger;
         }
 
         /// <summary>
@@ -104,6 +106,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         {
             try
             {
+                _logger.LogInformation("Admin creating serviceable location: {City} {Pincode}", dto.City, dto.Pincode);
                 var created = await _service.CreateAsync(dto);
                 return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
             }
@@ -148,6 +151,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             if (!result)
                 return NotFound(new { message = "Serviceable location not found" });
 
+            _logger.LogWarning("Admin deleting serviceable location: {Id}", id);
             return Ok(new { message = "Serviceable location deleted successfully" });
         }
     }

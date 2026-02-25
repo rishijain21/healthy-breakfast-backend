@@ -2,6 +2,7 @@ using HealthyBreakfastApp.Application.DTOs;
 using HealthyBreakfastApp.Application.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 
 namespace HealthyBreakfastApp.WebAPI.Controllers
 {
@@ -51,12 +52,23 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         /// Register a new user in the database after Supabase OTP verification
         /// </summary>
         [HttpPost("register")]
-        [AllowAnonymous]
+        [Authorize]
         public async Task<ActionResult<UserDto>> Register([FromBody] RegisterUserRequest request)
         {
             if (!ModelState.IsValid)
             {
                 return BadRequest(ModelState);
+            }
+
+            // ✅ CRITICAL: Verify the AuthId matches the token — prevents registering as someone else
+            var tokenAuthId = User.FindFirst("sub")?.Value
+                           ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+            if (string.IsNullOrEmpty(tokenAuthId) || tokenAuthId != request.AuthId.ToString())
+            {
+                _logger.LogWarning("Registration authId mismatch. Token: {TokenId}, Request: {RequestId}",
+                    tokenAuthId, request.AuthId);
+                return Forbid(); // 403
             }
 
             _logger.LogInformation(
@@ -116,7 +128,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error registering user");
-                return StatusCode(500, new { success = false, message = "Internal server error", error = ex.Message });
+                return StatusCode(500, new { success = false, message = "Internal server error" });
             }
         }
 

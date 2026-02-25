@@ -5,6 +5,9 @@ namespace HealthyBreakfastApp.Application.Interfaces
 {
     public interface IMealRepository
     {
+        // ✅ Public method for meal builder
+        Task<IEnumerable<Meal>> GetActiveMealsAsync();
+
         Task AddMealAsync(Meal meal);
         Task SaveChangesAsync();
         Task<Meal?> GetByIdAsync(int id);

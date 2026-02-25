@@ -1,0 +1,4038 @@
+================ AUTHENTICATION & AUTHORIZATION ================
+using HealthyBreakfastApp.Application.DTOs;
+using HealthyBreakfastApp.Application.Interfaces;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+
+namespace HealthyBreakfastApp.WebAPI.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    public class AuthController : ControllerBase
+    {
+        private readonly IUserService _userService;
+        private readonly ILogger<AuthController> _logger;
+
+        public AuthController(IUserService userService, ILogger<AuthController> logger)
+        {
+            _userService = userService;
+            _logger = logger;
+        }
+
+        /// <summary>
+        /// Check if a user exists in the database by email
+        /// </summary>
+        [HttpGet("check-user-exists")]
+        [AllowAnonymous]
+        public async Task<ActionResult> CheckUserExists([FromQuery] string email)
+        {
+            if (string.IsNullOrWhiteSpace(email))
+            {
+                return BadRequest(new { message = "Email is required" });
+            }
+
+            _logger.LogInformation("Checking if user exists with email: {Email}", email);
+
+            try
+            {
+                var exists = await _userService.UserExistsAsync(email);
+                _logger.LogInformation("User exists check for {Email}: {Exists}", email, exists);
+                
+                // ✅ FIXED: Return object with "exists" property
+                return Ok(new { exists });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error checking user existence for email: {Email}", email);
+                return StatusCode(500, new { message = "Internal server error" });
+            }
+        }
+
+        /// <summary>
+        /// Register a new user in the database after Supabase OTP verification
+        /// </summary>
+        [HttpPost("register")]
+        [AllowAnonymous]
+        public async Task<ActionResult<UserDto>> Register([FromBody] RegisterUserRequest request)
+        {
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(ModelState);
+            }
+
+            _logger.LogInformation(
+                "Registering new user - AuthId: {AuthId}, Email: {Email}, Name: {Name}",
+                request.AuthId, request.Email, request.Name
+            );
+
+            try
+            {
+                // ✅ Check if user already exists by AuthId
+                var existingUserByAuth = await _userService.GetUserByAuthIdAsync(request.AuthId);
+                if (existingUserByAuth != null)
+                {
+                    _logger.LogInformation("User already exists with AuthId, returning existing user: {UserId}", existingUserByAuth.UserId);
+                    return Ok(new 
+                    { 
+                        success = true,
+                        message = "User already registered", 
+                        user = existingUserByAuth,
+                        isNewUser = false
+                    });
+                }
+
+                // ✅ Check if user already exists by Email
+                var existingUserByEmail = await _userService.GetUserByEmailAsync(request.Email);
+                if (existingUserByEmail != null)
+                {
+                    _logger.LogWarning("User already exists with Email: {Email}", request.Email);
+                    return Conflict(new 
+                    { 
+                        success = false,
+                        message = "Email already registered. Please login instead."
+                    });
+                }
+
+                // ✅ Create new user
+                var userDto = await _userService.RegisterUserAsync(request);
+
+                _logger.LogInformation(
+                    "✅ User registered successfully - UserId: {UserId}, Email: {Email}",
+                    userDto.UserId, userDto.Email
+                );
+
+                return Ok(new 
+                { 
+                    success = true,
+                    message = "User registered successfully", 
+                    user = userDto,
+                    isNewUser = true
+                });
+            }
+            catch (InvalidOperationException ex)
+            {
+                _logger.LogWarning(ex, "Registration failed - {Message}", ex.Message);
+                return Conflict(new { success = false, message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error registering user");
+                return StatusCode(500, new { success = false, message = "Internal server error", error = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Test login endpoint (can be removed in production)
+        /// </summary>
+        [HttpPost("login")]
+        [AllowAnonymous]
+        public IActionResult Login([FromBody] LoginRequest request)
+        {
+            _logger.LogInformation("Login attempt for email: {Email}", request.Email);
+            
+            // This is just a test endpoint - Supabase handles real authentication
+            return Ok(new { message = "Use Supabase authentication for login" });
+        }
+    }
+
+    public class LoginRequest
+    {
+        public string Email { get; set; } = "";
+        public string Password { get; set; } = "";
+    }
+}
+using System.IdentityModel.Tokens.Jwt;
+using HealthyBreakfastApp.Application.Interfaces;
+using Microsoft.AspNetCore.Authorization;
+
+namespace HealthyBreakfastApp.WebAPI.Middleware
+{
+    public class AuthMiddleware
+    {
+        private readonly RequestDelegate _next;
+        private readonly IServiceScopeFactory _serviceScopeFactory;
+        private readonly ILogger<AuthMiddleware> _logger;
+
+        public AuthMiddleware(RequestDelegate next, IServiceScopeFactory serviceScopeFactory, ILogger<AuthMiddleware> logger)
+        {
+            _next = next;
+            _serviceScopeFactory = serviceScopeFactory;
+            _logger = logger;
+        }
+
+        public async Task InvokeAsync(HttpContext context)
+        {
+            // ✅ SKIP: Public endpoints that don't need middleware processing
+            var path = context.Request.Path.Value?.ToLower() ?? "";
+            var publicEndpoints = new[]
+            {
+                "/swagger",
+                "/api/auth/login",
+                "/api/auth/register",
+                "/api/auth/check-user-exists",  // ✅ ADDED: Skip this endpoint too
+                "/api/scheduledorders/time-until-midnight"
+            };
+
+            if (publicEndpoints.Any(endpoint => path.StartsWith(endpoint)))
+            {
+                await _next(context);
+                return;
+            }
+
+            // ✅ CHECK: If this is an API route that needs processing
+            if (context.Request.Path.StartsWithSegments("/api"))
+            {
+                var endpoint = context.GetEndpoint();
+                var requiresAuth = endpoint?.Metadata?.GetMetadata<AuthorizeAttribute>() != null;
+                var allowAnonymous = endpoint?.Metadata?.GetMetadata<AllowAnonymousAttribute>() != null;
+
+                if (requiresAuth && !allowAnonymous)
+                {
+                    await ProcessAuthenticationAsync(context);
+                }
+            }
+
+            await _next(context);
+        }
+
+        private async Task ProcessAuthenticationAsync(HttpContext context)
+        {
+            try
+            {
+                var authId = ExtractAuthIdFromToken(context);
+                _logger.LogInformation($"🔐 AuthMiddleware: Extracted authId: {authId}");
+
+                if (!string.IsNullOrEmpty(authId) && Guid.TryParse(authId, out var authGuid))
+                {
+                    using var scope = _serviceScopeFactory.CreateScope();
+                    var userService = scope.ServiceProvider.GetRequiredService<IUserService>();
+
+                    // ✅ CRITICAL: Only FIND user, NEVER create
+                    var userDto = await userService.GetUserByAuthIdAsync(authGuid);
+
+                    if (userDto != null)
+                    {
+                        // ✅ Existing user - set context
+                        context.Items["UserId"] = userDto.UserId;
+                        context.Items["User"] = userDto;
+                        context.Items["auth_id"] = authId;
+                        context.Items["AuthId"] = authGuid;
+                        
+                        _logger.LogInformation($"✅ AuthMiddleware: Existing user {userDto.UserId} authenticated");
+                    }
+                    else
+                    {
+                        // ✅ New user - don't create yet, just mark as pending
+                        _logger.LogInformation($"🆕 AuthMiddleware: New user detected (authId: {authId}) - awaiting registration");
+                        context.Items["auth_id"] = authId;
+                        context.Items["AuthId"] = authGuid;
+                        context.Items["IsNewUser"] = true;
+                        
+                        // ❌ DO NOT CREATE USER HERE!
+                        // User will be created when they submit the profile form at /api/Auth/register
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"❌ AuthMiddleware error: {ex.Message}");
+            }
+        }
+
+        private string? ExtractAuthIdFromToken(HttpContext context)
+        {
+            var authHeader = context.Request.Headers["Authorization"].FirstOrDefault();
+            if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith("Bearer "))
+                return null;
+
+            try
+            {
+                var token = authHeader.Substring("Bearer ".Length).Trim();
+                var handler = new JwtSecurityTokenHandler();
+                var jsonToken = handler.ReadJwtToken(token);
+                
+                return jsonToken.Subject ?? jsonToken.Claims.FirstOrDefault(c => c.Type == "sub")?.Value;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"❌ Token decode error: {ex.Message}");
+                return null;
+            }
+        }
+
+        private (string? Name, string? Email) ExtractUserInfoFromToken(HttpContext context)
+        {
+            var authHeader = context.Request.Headers["Authorization"].FirstOrDefault();
+            if (string.IsNullOrEmpty(authHeader))
+                return (null, null);
+
+            try
+            {
+                var token = authHeader.Substring("Bearer ".Length).Trim();
+                var handler = new JwtSecurityTokenHandler();
+                var jsonToken = handler.ReadJwtToken(token);
+
+                var name = jsonToken.Claims.FirstOrDefault(c => c.Type == "name" || c.Type == "full_name")?.Value;
+                var email = jsonToken.Claims.FirstOrDefault(c => c.Type == "email")?.Value;
+
+                return (name, email);
+            }
+            catch
+            {
+                return (null, null);
+            }
+        }
+    }
+}
+using HealthyBreakfastApp.Application.DTOs;
+using HealthyBreakfastApp.Application.Interfaces;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
+using System.Security.Claims;
+
+namespace HealthyBreakfastApp.Application.Services
+{
+    public class CurrentUserService : ICurrentUserService
+    {
+        private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly IUserRepository _userRepository;
+        private readonly ILogger<CurrentUserService> _logger;
+
+        public CurrentUserService(
+            IHttpContextAccessor httpContextAccessor,
+            IUserRepository userRepository,
+            ILogger<CurrentUserService> logger)
+        {
+            _httpContextAccessor = httpContextAccessor;
+            _userRepository = userRepository;
+            _logger = logger;
+        }
+
+        // ✅ ENHANCED: Retrieves the auth_id from multiple sources
+        public string? GetAuthId()
+        {
+            try
+            {
+                var context = _httpContextAccessor.HttpContext;
+                if (context == null) return null;
+
+                // ✅ METHOD 1: Try AuthMiddleware context items first
+                var authIdFromMiddleware = context.Items["auth_id"]?.ToString();
+                if (!string.IsNullOrEmpty(authIdFromMiddleware))
+                {
+                    _logger.LogInformation($"✅ CurrentUserService: AuthId from middleware: {authIdFromMiddleware}");
+                    return authIdFromMiddleware;
+                }
+
+                // ✅ METHOD 2: Try JWT claims directly (fallback)
+                if (context.User?.Identity?.IsAuthenticated == true)
+                {
+                    var authIdFromClaims = context.User.FindFirst("sub")?.Value 
+                                        ?? context.User.FindFirst("user_id")?.Value 
+                                        ?? context.User.FindFirst("id")?.Value
+                                        ?? context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+                    if (!string.IsNullOrEmpty(authIdFromClaims))
+                    {
+                        _logger.LogInformation($"✅ CurrentUserService: AuthId from JWT claims: {authIdFromClaims}");
+                        return authIdFromClaims;
+                    }
+                }
+
+                _logger.LogWarning("⚠️ CurrentUserService: No authId found from any source");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"❌ CurrentUserService GetAuthId error: {ex.Message}");
+                return null;
+            }
+        }
+
+        // Returns the currently logged-in user's UserId
+        public async Task<int?> GetCurrentUserIdAsync()
+        {
+            var authId = GetAuthId();
+            if (string.IsNullOrEmpty(authId))
+                return null;
+
+            if (!Guid.TryParse(authId, out var authGuid))
+                return null;
+
+            var user = await _userRepository.GetUserByAuthIdAsync(authGuid);
+            return user?.UserId;
+        }
+
+        // Returns the currently logged-in user's details as UserDto
+        public async Task<UserDto?> GetCurrentUserAsync()
+        {
+            var authId = GetAuthId();
+            if (string.IsNullOrEmpty(authId))
+                return null;
+
+            if (!Guid.TryParse(authId, out var authGuid))
+                return null;
+
+            var user = await _userRepository.GetUserByAuthIdAsync(authGuid);
+            if (user == null)
+                return null;
+
+            return new UserDto
+            {
+                UserId = user.UserId,
+                Name = user.Name,
+                Email = user.Email,
+                Phone = user.Phone,
+                WalletBalance = user.WalletBalance,
+                CreatedAt = user.CreatedAt,
+                UpdatedAt = user.UpdatedAt
+            };
+        }
+    }
+}
+
+
+================ APPSETTINGS (SANITIZE BEFORE SHARING) ================
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning",
+      "Hangfire": "Information"
+    }
+  },
+  "ConnectionStrings": {
+    "DefaultConnection": "Host=localhost;Port=5432;Database=healthy_breakfast_db;Username=postgres;Password=Rishi@1234;Include Error Detail=true"
+  },
+  "Jwt": {
+    "Secret": "YourSuperSecretKeyThatIsAtLeast32CharactersLong12345",
+    "Issuer": "HealthyBreakfastApp"
+  },
+  "Supabase": {
+    "Url": "https://beeqamwptmbpowswawfx.supabase.co",
+    "JwtSecret": "jUQyiBKqqbSRN7HjCdTLXfqC89qvQ5iK999Gduh0a30u28yUTR0ZlPJA+dAyBMzfQREkbaghMZ1zLua8aWQkdA=="
+  },
+  "AllowedHosts": "*"
+}
+
+
+================ MONEY & ORDERS ================
+using HealthyBreakfastApp.Application.DTOs;
+using HealthyBreakfastApp.Application.Interfaces;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
+
+namespace HealthyBreakfastApp.WebAPI.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    [Authorize]
+    public class WalletTransactionsController : ControllerBase
+    {
+        private readonly IWalletTransactionService _walletTransactionService;
+        private readonly ICurrentUserService _currentUserService;
+        private readonly IUserService _userService;
+        private readonly ILogger<WalletTransactionsController> _logger;
+
+        public WalletTransactionsController(
+            IWalletTransactionService walletTransactionService,
+            ICurrentUserService currentUserService,
+            IUserService userService,
+            ILogger<WalletTransactionsController> logger)
+        {
+            _walletTransactionService = walletTransactionService;
+            _currentUserService = currentUserService;
+            _userService = userService;
+            _logger = logger;
+        }
+
+        // ==================== USER ENDPOINTS ====================
+
+        /// <summary>
+        /// ✅ SECURE: Gets wallet balance for the authenticated user
+        /// </summary>
+        [HttpGet("my-balance")]
+        public async Task<ActionResult<object>> GetMyBalance()
+        {
+            try
+            {
+                var currentAuthId = GetCurrentAuthId();
+                _logger.LogInformation($"📋 WALLET: Retrieved authId: {currentAuthId}");
+                
+                if (string.IsNullOrEmpty(currentAuthId))
+                {
+                    return Unauthorized("User not authenticated - no valid auth ID found");
+                }
+                
+                if (!Guid.TryParse(currentAuthId, out var validatedAuthId))
+                {
+                    return Unauthorized($"Invalid user identifier format: {currentAuthId}");
+                }
+
+                var userDto = await _userService.GetUserByAuthIdAsync(validatedAuthId);
+                if (userDto == null)
+                {
+                    return Unauthorized(new { message = "User not found. Please complete registration first." });
+                }
+
+                var balance = await _walletTransactionService.GetWalletBalanceAsync(userDto.UserId);
+                
+                _logger.LogInformation($"✅ WALLET: Balance retrieved: {balance} for user {userDto.UserId}");
+                return Ok(new { balance, userId = userDto.UserId, authId = validatedAuthId });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"❌ WALLET Error: {ex.Message}");
+                return StatusCode(500, new { message = "An error occurred while retrieving wallet balance", details = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// ✅ SECURE: Gets wallet transactions for the authenticated user
+        /// </summary>
+        [HttpGet("my-transactions")]
+        public async Task<ActionResult<IEnumerable<WalletTransactionDto>>> GetMyTransactions()
+        {
+            try
+            {
+                var currentAuthId = GetCurrentAuthId();
+                if (string.IsNullOrEmpty(currentAuthId) || !Guid.TryParse(currentAuthId, out var authGuid))
+                {
+                    return Unauthorized("User not authenticated");
+                }
+
+                var userDto = await _userService.GetUserByAuthIdAsync(authGuid);
+                if (userDto == null)
+                {
+                    return Unauthorized(new { message = "User not found. Please complete registration first." });
+                }
+
+                var transactions = await _walletTransactionService.GetUserTransactionsAsync(userDto.UserId);
+                return Ok(transactions);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"❌ WALLET TRANSACTIONS Error: {ex.Message}");
+                return StatusCode(500, new { message = "An error occurred while retrieving wallet transactions", details = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// ✅ SECURE: Top up wallet for the authenticated user
+        /// </summary>
+        [HttpPost("topup")]
+        public async Task<ActionResult<WalletTransactionDto>> TopUpMyWallet([FromBody] WalletTopUpDto topUpDto)
+        {
+            try
+            {
+                var currentAuthId = GetCurrentAuthId();
+                if (string.IsNullOrEmpty(currentAuthId) || !Guid.TryParse(currentAuthId, out var authGuid))
+                {
+                    return Unauthorized("User not authenticated");
+                }
+
+                var userDto = await _userService.GetUserByAuthIdAsync(authGuid);
+                if (userDto == null)
+                {
+                    return Unauthorized(new { message = "User not found. Please complete registration first." });
+                }
+
+                if (topUpDto.Amount <= 0)
+                {
+                    return BadRequest(new { message = "Amount must be greater than 0" });
+                }
+
+                var transaction = await _walletTransactionService.TopUpWalletAsync(userDto.UserId, topUpDto);
+                return CreatedAtAction(nameof(GetTransaction), new { id = transaction.TransactionId }, transaction);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"❌ WALLET TOPUP Error: {ex.Message}");
+                return StatusCode(500, new { message = "An error occurred while topping up wallet", details = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// ✅ SECURE: Check if authenticated user has sufficient balance
+        /// </summary>
+        [HttpGet("check-balance")]
+        public async Task<ActionResult<object>> CheckBalance([FromQuery] decimal amount)
+        {
+            try
+            {
+                var currentAuthId = GetCurrentAuthId();
+                if (string.IsNullOrEmpty(currentAuthId) || !Guid.TryParse(currentAuthId, out var authGuid))
+                {
+                    return Unauthorized("User not authenticated");
+                }
+
+                var userDto = await _userService.GetUserByAuthIdAsync(authGuid);
+                if (userDto == null)
+                {
+                    return Unauthorized(new { message = "User not found. Please complete registration first." });
+                }
+
+                var hasSufficientBalance = await _walletTransactionService.HasSufficientBalanceAsync(userDto.UserId, amount);
+                var currentBalance = await _walletTransactionService.GetUserBalanceAsync(userDto.UserId);
+
+                return Ok(new
+                {
+                    hasSufficientBalance,
+                    currentBalance,
+                    requiredAmount = amount,
+                    shortfall = hasSufficientBalance ? 0 : amount - currentBalance
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"❌ WALLET CHECK Error: {ex.Message}");
+                return StatusCode(500, new { message = "An error occurred while checking balance", details = ex.Message });
+            }
+        }
+
+        // ==================== ADMIN ENDPOINTS ====================
+
+        /// <summary>
+        /// Admin endpoint: Get all wallet transactions
+        /// </summary>
+        [HttpGet("admin/all")]
+        [Authorize(Roles = "Admin")]
+        public async Task<ActionResult<IEnumerable<WalletTransactionDto>>> GetAllTransactions()
+        {
+            var transactions = await _walletTransactionService.GetAllTransactionsAsync();
+            return Ok(transactions);
+        }
+
+        /// <summary>
+        /// Admin endpoint: Get specific user's balance
+        /// </summary>
+        [HttpGet("admin/user/{userId}/balance")]
+        [Authorize(Roles = "Admin")]
+        public async Task<ActionResult<object>> GetUserBalance(int userId)
+        {
+            try
+            {
+                var balance = await _walletTransactionService.GetUserBalanceAsync(userId);
+                return Ok(new { userId, balance });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Admin endpoint: Get specific user's transactions
+        /// </summary>
+        [HttpGet("admin/user/{userId}/transactions")]
+        [Authorize(Roles = "Admin")]
+        public async Task<ActionResult<IEnumerable<WalletTransactionDto>>> GetUserTransactions(int userId)
+        {
+            try
+            {
+                var transactions = await _walletTransactionService.GetUserTransactionsAsync(userId);
+                return Ok(transactions);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Admin endpoint: Credit specific user's wallet
+        /// </summary>
+        [HttpPost("admin/user/{userId}/credit")]
+        [Authorize(Roles = "Admin")]
+        public async Task<ActionResult<WalletTransactionDto>> CreditUserWallet(int userId, [FromBody] WalletTopUpDto dto)
+        {
+            try
+            {
+                if (dto.Amount <= 0)
+                {
+                    return BadRequest(new { message = "Amount must be greater than 0" });
+                }
+
+                var transaction = await _walletTransactionService.TopUpWalletAsync(userId, dto);
+                return CreatedAtAction(nameof(GetTransaction), new { id = transaction.TransactionId }, transaction);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Admin endpoint: Get transaction by ID
+        /// </summary>
+        [HttpGet("admin/{transactionId}")]
+        [Authorize(Roles = "Admin")]
+        public async Task<ActionResult<WalletTransactionDto>> GetTransaction(int transactionId)
+        {
+            var transaction = await _walletTransactionService.GetTransactionByIdAsync(transactionId);
+            if (transaction == null) return NotFound();
+            return Ok(transaction);
+        }
+
+        // ✅ HELPER: Unified method to get auth ID from multiple sources
+        private string? GetCurrentAuthId()
+        {
+            try
+            {
+                // ✅ METHOD 1: Try CurrentUserService (uses middleware)
+                var authIdFromService = _currentUserService.GetAuthId();
+                if (!string.IsNullOrEmpty(authIdFromService))
+                {
+                    _logger.LogInformation($"✅ WALLET: AuthId from CurrentUserService: {authIdFromService}");
+                    return authIdFromService;
+                }
+
+                // ✅ METHOD 2: Try JWT claims directly (fallback)
+                var authIdFromClaims = User.FindFirst("sub")?.Value 
+                                    ?? User.FindFirst("user_id")?.Value 
+                                    ?? User.FindFirst("id")?.Value
+                                    ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+                if (!string.IsNullOrEmpty(authIdFromClaims))
+                {
+                    _logger.LogInformation($"✅ WALLET: AuthId from JWT claims: {authIdFromClaims}");
+                    return authIdFromClaims;
+                }
+
+                // ✅ METHOD 3: Try HttpContext items directly
+                var authIdFromContext = HttpContext.Items["auth_id"]?.ToString();
+                if (!string.IsNullOrEmpty(authIdFromContext))
+                {
+                    _logger.LogInformation($"✅ WALLET: AuthId from HttpContext: {authIdFromContext}");
+                    return authIdFromContext;
+                }
+
+                _logger.LogWarning("⚠️ WALLET: No authId found from any source");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"❌ WALLET GetCurrentAuthId error: {ex.Message}");
+                return null;
+            }
+        }
+    }
+}
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
+using HealthyBreakfastApp.Application.Interfaces;
+using HealthyBreakfastApp.Application.DTOs;
+using HealthyBreakfastApp.Domain.Entities;
+
+namespace HealthyBreakfastApp.WebAPI.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    [Authorize]
+    public class ScheduledOrdersController : ControllerBase
+    {
+        private readonly IScheduledOrderService _scheduledOrderService;
+        private readonly IScheduledOrderRepository _scheduledOrderRepository;
+        private readonly IUserRepository _userRepository;
+        private readonly IOrderService _orderService;
+        private readonly ILogger<ScheduledOrdersController> _logger;
+
+        public ScheduledOrdersController(
+            IScheduledOrderService scheduledOrderService,
+            IScheduledOrderRepository scheduledOrderRepository,
+            IUserRepository userRepository,
+            IOrderService orderService,
+            ILogger<ScheduledOrdersController> logger)
+        {
+            _scheduledOrderService = scheduledOrderService;
+            _scheduledOrderRepository = scheduledOrderRepository;
+            _userRepository = userRepository;
+            _orderService = orderService;
+            _logger = logger;
+        }
+
+        [HttpPost("create-from-meal-builder")]
+        public async Task<ActionResult<ScheduledOrderResponseDto>> CreateScheduledOrder([FromBody] CreateScheduledOrderDto dto)
+        {
+            try
+            {
+                var authIdClaim = User.FindFirst("sub")?.Value ??
+                                 User.FindFirst("user_id")?.Value ??
+                                 User.FindFirst("id")?.Value ??
+                                 User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+                _logger.LogInformation($"📋 POST Found authId: {authIdClaim}");
+
+                if (string.IsNullOrEmpty(authIdClaim))
+                {
+                    var allClaims = User.Claims.Select(c => $"{c.Type}: {c.Value}").ToList();
+                    return Unauthorized($"Missing authentication claims. Available: {string.Join(", ", allClaims)}");
+                }
+
+                if (!Guid.TryParse(authIdClaim, out var authId))
+                {
+                    return Unauthorized($"Invalid user identifier format: {authIdClaim}");
+                }
+
+                var result = await _scheduledOrderService.CreateScheduledOrderAsync(authId, dto);
+                return Ok(result);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error creating scheduled order");
+                return StatusCode(500, new { message = "An error occurred while creating the scheduled order", details = ex.Message });
+            }
+        }
+/// <summary>
+/// ✅ DUPLICATE SCHEDULED ORDER - POST /api/ScheduledOrders/{id}/duplicate
+/// </summary>
+[HttpPost("{id}/duplicate")]
+public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrder(int id)
+{
+    try
+    {
+        // Extract auth ID from JWT
+        var authIdClaim = User.FindFirst("sub")?.Value ??
+                         User.FindFirst("user_id")?.Value ??
+                         User.FindFirst("id")?.Value ??
+                         User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+        _logger.LogInformation($"🔄 POST /duplicate - Found authId: {authIdClaim}");
+
+        if (string.IsNullOrEmpty(authIdClaim))
+        {
+            var allClaims = User.Claims.Select(c => $"{c.Type}: {c.Value}").ToList();
+            return Unauthorized($"Missing authentication claims. Available: {string.Join(", ", allClaims)}");
+        }
+
+        if (!Guid.TryParse(authIdClaim, out var authId))
+        {
+            return Unauthorized($"Invalid user identifier format: {authIdClaim}");
+        }
+
+        var result = await _scheduledOrderService.DuplicateScheduledOrderAsync(authId, id);
+        
+        _logger.LogInformation($"✅ Successfully duplicated order #{id} → #{result.ScheduledOrderId}");
+        
+        return Ok(result);
+    }
+    catch (InvalidOperationException ex)
+    {
+        _logger.LogWarning($"⚠️ Duplication failed: {ex.Message}");
+        return BadRequest(new { message = ex.Message });
+    }
+    catch (Exception ex)
+    {
+        _logger.LogError(ex, $"❌ Error duplicating scheduled order {id}");
+        return StatusCode(500, new { 
+            message = "An error occurred while duplicating the order", 
+            details = ex.Message 
+        });
+    }
+}
+
+        [HttpGet("tomorrow")]
+        public async Task<ActionResult<List<ScheduledOrderResponseDto>>> GetTomorrowScheduledOrders()
+        {
+            try
+            {
+                var authIdClaim = User.FindFirst("sub")?.Value ??
+                                 User.FindFirst("user_id")?.Value ??
+                                 User.FindFirst("id")?.Value ??
+                                 User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+                _logger.LogInformation($"📋 GET /tomorrow - Found authId: {authIdClaim}");
+
+                if (string.IsNullOrEmpty(authIdClaim))
+                {
+                    var allClaims = User.Claims.Select(c => $"{c.Type}: {c.Value}").ToList();
+                    return Unauthorized($"Missing authentication claims. Available: {string.Join(", ", allClaims)}");
+                }
+
+                if (!Guid.TryParse(authIdClaim, out var authId))
+                {
+                    return Unauthorized($"Invalid user identifier format: {authIdClaim}");
+                }
+
+                var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
+                var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
+                var tomorrow = istNow.Date.AddDays(1);
+
+                _logger.LogInformation($"🗓️ Looking for cart orders scheduled for: {tomorrow:yyyy-MM-dd}");
+
+                var allOrders = await _scheduledOrderService.GetScheduledOrdersForDateAsync(authId, tomorrow);
+
+                var pendingOrders = allOrders
+                    .Where(order => order.OrderStatus?.ToLower() == "scheduled")
+                    .ToList();
+
+                _logger.LogInformation($"📦 Found {pendingOrders.Count} orders in cart (filtered from {allOrders.Count} total)");
+
+                return Ok(pendingOrders);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving tomorrow's scheduled orders");
+                return StatusCode(500, new { message = "An error occurred while retrieving scheduled orders", details = ex.Message });
+            }
+        }
+
+        [HttpPut("{id}/modify")]
+        public async Task<ActionResult> ModifyScheduledOrder(int id, [FromBody] ModifyScheduledOrderDto dto)
+        {
+            try
+            {
+                var authIdClaim = User.FindFirst("sub")?.Value ??
+                                 User.FindFirst("user_id")?.Value ??
+                                 User.FindFirst("id")?.Value ??
+                                 User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+                _logger.LogInformation($"📋 PUT Found authId: {authIdClaim}");
+
+                if (string.IsNullOrEmpty(authIdClaim))
+                {
+                    var allClaims = User.Claims.Select(c => $"{c.Type}: {c.Value}").ToList();
+                    return Unauthorized($"Missing authentication claims. Available: {string.Join(", ", allClaims)}");
+                }
+
+                if (!Guid.TryParse(authIdClaim, out var authId))
+                {
+                    return Unauthorized($"Invalid user identifier format: {authIdClaim}");
+                }
+
+                await _scheduledOrderService.ModifyScheduledOrderAsync(authId, id, dto);
+                return Ok(new { message = "Scheduled order modified successfully" });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                return Unauthorized(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error modifying scheduled order {id}");
+                return StatusCode(500, new { message = "An error occurred while modifying the scheduled order", details = ex.Message });
+            }
+        }
+
+        [HttpDelete("{id}/cancel")]
+        public async Task<ActionResult> CancelScheduledOrder(int id)
+        {
+            try
+            {
+                var authIdClaim = User.FindFirst("sub")?.Value ??
+                                 User.FindFirst("user_id")?.Value ??
+                                 User.FindFirst("id")?.Value ??
+                                 User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+                _logger.LogInformation($"📋 DELETE Found authId: {authIdClaim}");
+
+                if (string.IsNullOrEmpty(authIdClaim))
+                {
+                    var allClaims = User.Claims.Select(c => $"{c.Type}: {c.Value}").ToList();
+                    return Unauthorized($"Missing authentication claims. Available: {string.Join(", ", allClaims)}");
+                }
+
+                if (!Guid.TryParse(authIdClaim, out var authId))
+                {
+                    return Unauthorized($"Invalid user identifier format: {authIdClaim}");
+                }
+
+                await _scheduledOrderService.CancelScheduledOrderAsync(authId, id);
+                return Ok(new { message = "Scheduled order cancelled successfully" });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                return Unauthorized(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error cancelling scheduled order {id}");
+                return StatusCode(500, new { message = "An error occurred while cancelling the scheduled order", details = ex.Message });
+            }
+        }
+
+        [HttpGet("time-until-midnight")]
+        [AllowAnonymous]
+        public async Task<ActionResult<int>> GetTimeUntilMidnight()
+        {
+            try
+            {
+                var minutes = await _scheduledOrderService.GetTimeUntilMidnightMinutesAsync();
+                return Ok(minutes);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting time until midnight");
+                return StatusCode(500, new { message = "An error occurred while getting time until midnight", details = ex.Message });
+            }
+        }
+
+        // ============================================================================
+        // ✅ NEW: MANUAL PROCESSING ENDPOINTS (Yesterday/Today/Tomorrow)
+        // ============================================================================
+
+        [HttpPost("process-today-manual")]
+        [AllowAnonymous]
+        public async Task<ActionResult<ProcessOrdersResponseDto>> ProcessTodayManual()
+        {
+            try
+            {
+                var result = await ProcessOrdersForDate(DateTime.UtcNow, "TODAY");
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ Failed to process today's orders");
+                return StatusCode(500, new ProcessOrdersResponseDto
+                {
+                    Success = false,
+                    Message = "Failed to process orders",
+                    Timestamp = DateTime.UtcNow
+                });
+            }
+        }
+
+        [HttpPost("process-yesterday-manual")]
+        [AllowAnonymous]
+        public async Task<ActionResult<ProcessOrdersResponseDto>> ProcessYesterdayManual()
+        {
+            try
+            {
+                var result = await ProcessOrdersForDate(DateTime.UtcNow.AddDays(-1), "YESTERDAY");
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ Failed to process yesterday's orders");
+                return StatusCode(500, new ProcessOrdersResponseDto
+                {
+                    Success = false,
+                    Message = "Failed to process orders",
+                    Timestamp = DateTime.UtcNow
+                });
+            }
+        }
+
+        [HttpPost("process-tomorrow-manual")]
+        [AllowAnonymous]
+        public async Task<ActionResult<ProcessOrdersResponseDto>> ProcessTomorrowManual()
+        {
+            try
+            {
+                var result = await ProcessOrdersForDate(DateTime.UtcNow.AddDays(1), "TOMORROW");
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ Failed to process tomorrow's orders");
+                return StatusCode(500, new ProcessOrdersResponseDto
+                {
+                    Success = false,
+                    Message = "Failed to process orders",
+                    Timestamp = DateTime.UtcNow
+                });
+            }
+        }
+
+        // ============================================================================
+        // SHARED PROCESSING LOGIC
+        // ============================================================================
+        private async Task<ProcessOrdersResponseDto> ProcessOrdersForDate(DateTime utcDate, string label)
+        {
+            var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
+            var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
+            var targetDate = TimeZoneInfo.ConvertTimeFromUtc(utcDate, istZone).Date;
+
+            _logger.LogInformation($"🧪 [{label}] Manual processing started at {istNow:yyyy-MM-dd HH:mm:ss} IST");
+            _logger.LogInformation($"🚚 Processing orders for {targetDate:yyyy-MM-dd}");
+
+            var scheduledOrders = await _scheduledOrderRepository.GetScheduledOrdersForDateAsync(targetDate);
+            _logger.LogInformation($"📦 Found {scheduledOrders.Count} total orders for {targetDate:yyyy-MM-dd}");
+
+            var pendingOrders = scheduledOrders
+                .Where(o => o.OrderStatus.ToLower() == "scheduled")
+                .ToList();
+
+            _logger.LogInformation($"📋 {pendingOrders.Count} orders pending confirmation");
+
+            if (pendingOrders.Count == 0)
+            {
+                var alreadyProcessed = scheduledOrders.Count(o => o.OrderStatus == "processed");
+                return new ProcessOrdersResponseDto
+                {
+                    Success = true,
+                    Message = $"No pending orders for {targetDate:yyyy-MM-dd}",
+                    DeliveryDate = targetDate,
+                    OrdersFound = scheduledOrders.Count,
+                    OrdersPending = 0,
+                    OrdersAlreadyConfirmed = alreadyProcessed,
+                    OrdersConfirmed = 0,
+                    OrdersFailed = 0,
+                    Timestamp = DateTime.UtcNow,
+                    Note = "Safe to call multiple times - no duplicates"
+                };
+            }
+
+            int confirmedCount = 0;
+            int failedCount = 0;
+
+            foreach (var scheduledOrder in pendingOrders)
+            {
+                try
+                {
+                    _logger.LogInformation($"🔄 Confirming cart order #{scheduledOrder.ScheduledOrderId}");
+
+                    var user = await _userRepository.GetByAuthIdAsync(scheduledOrder.AuthId);
+                    if (user == null)
+                    {
+                        _logger.LogWarning($"❌ User not found");
+                        scheduledOrder.OrderStatus = "failed";
+                        scheduledOrder.CanModify = false;
+                        await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
+                        failedCount++;
+                        continue;
+                    }
+
+                    if (user.WalletBalance < scheduledOrder.TotalPrice)
+                    {
+                        _logger.LogWarning($"❌ Insufficient balance: ₹{scheduledOrder.TotalPrice} needed, ₹{user.WalletBalance} available");
+                        scheduledOrder.OrderStatus = "cancelled";
+                        scheduledOrder.CanModify = false;
+                        await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
+                        failedCount++;
+                        continue;
+                    }
+
+                    var createOrderDto = new CreateOrderFromMealBuilderDto
+                    {
+                        // Note: UserId is passed as separate parameter from JWT-authenticated user
+                        MealId = 1,
+                        SelectedIngredients = scheduledOrder.Ingredients.Select(i => new SelectedIngredientDto
+                        {
+                            IngredientId = i.IngredientId,
+                            Quantity = i.Quantity
+                        }).ToList(),
+                        ScheduledFor = DateTime.SpecifyKind(scheduledOrder.ScheduledFor, DateTimeKind.Utc),
+                        DeliveryAddress = "Default Address",
+                        SpecialInstructions = $"Confirmed from cart #{scheduledOrder.ScheduledOrderId}"
+                    };
+
+                    var orderResponse = await _orderService.CreateOrderFromMealBuilderAsync(createOrderDto, scheduledOrder.UserId);
+
+                    _logger.LogInformation($"✅ Order confirmed → Kitchen order #{orderResponse.OrderId}");
+                    _logger.LogInformation($"   💰 Charged: ₹{scheduledOrder.TotalPrice}");
+
+                    scheduledOrder.OrderStatus = "processed";
+                    scheduledOrder.CanModify = false;
+                    scheduledOrder.ConfirmedAt = DateTime.UtcNow;
+                    await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
+
+                    confirmedCount++;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, $"❌ Failed to confirm order #{scheduledOrder.ScheduledOrderId}");
+                    scheduledOrder.OrderStatus = "failed";
+                    scheduledOrder.CanModify = false;
+                    await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
+                    failedCount++;
+                }
+            }
+
+            _logger.LogInformation($"🎉 [{label}] Complete: {confirmedCount} confirmed, {failedCount} failed");
+
+            return new ProcessOrdersResponseDto
+            {
+                Success = true,
+                Message = $"✅ Processed {confirmedCount} orders for {targetDate:yyyy-MM-dd}",
+                DeliveryDate = targetDate,
+                OrdersFound = scheduledOrders.Count,
+                OrdersPending = pendingOrders.Count,
+                OrdersAlreadyConfirmed = scheduledOrders.Count - pendingOrders.Count,
+                OrdersConfirmed = confirmedCount,
+                OrdersFailed = failedCount,
+                Timestamp = DateTime.UtcNow,
+                Note = "Safe to call multiple times - no duplicates"
+            };
+        }
+    }
+}
+using HealthyBreakfastApp.Application.DTOs;
+using HealthyBreakfastApp.Application.Interfaces;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
+
+namespace HealthyBreakfastApp.WebAPI.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    public class OrdersController : ControllerBase
+    {
+        private readonly IOrderService _orderService;
+        private readonly IUserService _userService;
+        private readonly ILogger<OrdersController> _logger;
+
+        public OrdersController(
+            IOrderService orderService, 
+            IUserService userService,
+            ILogger<OrdersController> logger)
+        {
+            _orderService = orderService;
+            _userService = userService;
+            _logger = logger;
+        }
+
+        // ============================
+        // 🟢 GET ALL ORDER HISTORY (ENHANCED)
+        // ============================
+        [HttpGet("history")]
+        [Authorize]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        public async Task<ActionResult<IEnumerable<EnhancedOrderHistoryDto>>> GetAllOrderHistory()
+        {
+            try
+            {
+                var orderHistory = await _orderService.GetAllOrderHistoryWithDetailsAsync();
+                return Ok(orderHistory);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ Error in GetAllOrderHistory");
+                return StatusCode(StatusCodes.Status500InternalServerError, 
+                    new { error = "An error occurred while retrieving order history" });
+            }
+        }
+
+        // ============================
+        // 🟢 GET CURRENT USER ORDERS (ENHANCED)
+        // ============================
+        [HttpGet("users/me/orders")]
+        [Authorize]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        public async Task<ActionResult<IEnumerable<EnhancedOrderHistoryDto>>> GetMyOrders()
+        {
+            try
+            {
+                var userId = await GetCurrentUserIdAsync();
+                if (userId == null)
+                    return Unauthorized("User not authenticated");
+
+                var userOrders = await _orderService.GetUserOrdersWithDetailsAsync(userId.Value);
+                return Ok(userOrders);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ Error in GetMyOrders");
+                return StatusCode(StatusCodes.Status500InternalServerError, 
+                    new { error = "Unable to retrieve your orders" });
+            }
+        }
+
+        // ============================
+        // 🟢 BACKWARD COMPATIBILITY: Simple order endpoints
+        // ============================
+        [HttpGet("users/me/orders/simple")]
+        [Authorize]
+        public async Task<ActionResult<IEnumerable<OrderDto>>> GetMyOrdersSimple()
+        {
+            try
+            {
+                var userId = await GetCurrentUserIdAsync();
+                if (userId == null)
+                    return Unauthorized("User not authenticated");
+
+                var userOrders = await _orderService.GetUserOrdersAsync(userId.Value);
+                return Ok(userOrders);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ Error in GetMyOrdersSimple");
+                return StatusCode(StatusCodes.Status500InternalServerError, 
+                    new { error = "Unable to retrieve your orders" });
+            }
+        }
+
+        // ============================
+        // ✅ SECURE: CREATE ORDER (userId from JWT token)
+        // ============================
+        [HttpPost]
+        [Authorize]
+        public async Task<IActionResult> Create([FromBody] CreateOrderDto dto)
+        {
+            var userId = await GetCurrentUserIdAsync();
+            if (userId == null)
+                return Unauthorized("User not found");
+
+            // ✅ Pass userId as separate parameter (extracted from JWT token)
+            var id = await _orderService.CreateOrderAsync(dto, userId.Value);
+            return CreatedAtAction(nameof(GetById), new { id }, null);
+        }
+
+        // ============================
+        // 🟢 GET ORDER BY ID
+        // ============================
+        [HttpGet("{id}")]
+        [Authorize]
+        public async Task<IActionResult> GetById(int id)
+        {
+            var order = await _orderService.GetOrderByIdAsync(id);
+            if (order == null)
+                return NotFound();
+
+            return Ok(order);
+        }
+
+        // ============================
+        // 🟢 CREATE ORDER FROM MEAL BUILDER (SECURE - Uses JWT UserId)
+        // ============================
+        [HttpPost("create-from-meal-builder")]
+        [Authorize]
+        public async Task<ActionResult<OrderCreationResponseDto>> CreateFromMealBuilder([FromBody] CreateOrderFromMealBuilderDto dto)
+        {
+            try
+            {
+                var userId = await GetCurrentUserIdAsync();
+                if (userId == null)
+                    return Unauthorized(new { message = "User not authenticated" });
+
+                // ✅ Pass userId as separate parameter (extracted from JWT token)
+                var result = await _orderService.CreateOrderFromMealBuilderAsync(dto, userId.Value);
+                return Ok(result);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+        }
+
+        // ============================
+        // ✅ UNIFIED USER ID EXTRACTION (FIXED)
+        // ============================
+        private async Task<int?> GetCurrentUserIdAsync()
+        {
+            try
+            {
+                var supabaseUserId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value 
+                                     ?? User.FindFirst("sub")?.Value;
+
+                _logger.LogInformation($"🔍 Found Supabase User ID: {supabaseUserId}");
+
+                if (string.IsNullOrEmpty(supabaseUserId))
+                {
+                    _logger.LogWarning("❌ No user ID found in token claims");
+                    return null;
+                }
+
+                // Try direct numeric user ID first
+                if (int.TryParse(supabaseUserId, out var directUserId))
+                {
+                    _logger.LogInformation($"✅ Direct numeric user ID: {directUserId}");
+                    return directUserId;
+                }
+
+                // Try GUID (Supabase auth_id)
+                if (Guid.TryParse(supabaseUserId, out var authId))
+                {
+                    _logger.LogInformation($"🔍 Supabase GUID found: {authId}, looking up user in database...");
+
+                    // ✅ FIXED: Only find user, don't create
+                    var userDto = await _userService.GetUserByAuthIdAsync(authId);
+                    if (userDto == null)
+                    {
+                        _logger.LogWarning($"⚠️ User not found for authId: {authId}");
+                        return null;
+                    }
+
+                    _logger.LogInformation($"✅ Found user in database: UserId = {userDto.UserId}");
+                    return userDto.UserId;
+                }
+
+                _logger.LogWarning($"❌ Could not parse user ID: {supabaseUserId}");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ User ID extraction error");
+                return null;
+            }
+        }
+    }
+}
+using HealthyBreakfastApp.Application.DTOs;
+using HealthyBreakfastApp.Application.Interfaces;
+using HealthyBreakfastApp.Domain.Entities;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+
+namespace HealthyBreakfastApp.Application.Services
+{
+    public class WalletTransactionService : IWalletTransactionService
+    {
+        private readonly IWalletTransactionRepository _walletTransactionRepository;
+        private readonly IUserRepository _userRepository;
+
+        // ✅ UPDATED: Removed MAX_TOPUP_AMOUNT
+        private const decimal MAX_WALLET_BALANCE = 50000m;
+        private const decimal MIN_TOPUP_AMOUNT = 50m;
+
+        public WalletTransactionService(
+            IWalletTransactionRepository walletTransactionRepository,
+            IUserRepository userRepository)
+        {
+            _walletTransactionRepository = walletTransactionRepository;
+            _userRepository = userRepository;
+        }
+
+        public async Task<IEnumerable<WalletTransactionDto>> GetAllTransactionsAsync()
+            => (await _walletTransactionRepository.GetAllAsync()).Select(t => MapToDto(t!));
+
+        public async Task<WalletTransactionDto?> GetTransactionByIdAsync(int transactionId)
+        {
+            var transaction = await _walletTransactionRepository.GetByIdAsync(transactionId);
+            if (transaction == null) return null;
+            return MapToDto(transaction);
+        }
+
+        public async Task<IEnumerable<WalletTransactionDto>> GetUserTransactionsAsync(int userId)
+            => (await _walletTransactionRepository.GetByUserIdAsync(userId)).Select(t => MapToDto(t!));
+
+        public async Task<IEnumerable<WalletTransactionDto>> GetUserTransactionsByTypeAsync(int userId, string type)
+            => (await _walletTransactionRepository.GetByUserIdAndTypeAsync(userId, type)).Select(t => MapToDto(t!));
+
+        public async Task<decimal> GetUserBalanceAsync(int userId)
+            => await _walletTransactionRepository.GetUserBalanceAsync(userId);
+
+        public async Task<UserWalletSummaryDto?> GetUserWalletSummaryAsync(int userId)
+        {
+            var user = await _userRepository.GetByIdAsync(userId);
+            if (user == null) return null;
+
+            var summary = await _walletTransactionRepository.GetUserWalletSummaryAsync(userId);
+            var balance = await GetUserBalanceAsync(userId);
+
+            return new UserWalletSummaryDto
+            {
+                UserId = userId,
+                UserName = user.Name,
+                UserEmail = user.Email,
+                CurrentBalance = balance,
+                TotalCredits = summary.totalCredits,
+                TotalDebits = summary.totalDebits,
+                TransactionCount = summary.transactionCount,
+                LastTransactionDate = summary.lastTransactionDate ?? DateTime.MinValue
+            };
+        }
+
+        // ✅ UPDATED: Removed MAX_TOPUP_AMOUNT validation
+        public async Task<WalletTransactionDto> CreateTransactionAsync(CreateWalletTransactionDto dto)
+        {
+            var user = await _userRepository.GetByIdAsync(dto.UserId) ?? throw new ArgumentException("User not found");
+            
+            if (dto.Type != "Credit" && dto.Type != "Debit") 
+                throw new ArgumentException("Transaction type must be 'Credit' or 'Debit'");
+
+            // ✅ Validate wallet limit for Credit transactions
+            if (dto.Type == "Credit")
+            {
+                var currentBalance = await GetUserBalanceAsync(dto.UserId);
+                var newBalance = currentBalance + dto.Amount;
+
+                if (dto.Amount < MIN_TOPUP_AMOUNT)
+                    throw new InvalidOperationException($"Minimum top-up amount is ₹{MIN_TOPUP_AMOUNT}");
+
+                if (newBalance > MAX_WALLET_BALANCE)
+                {
+                    var remaining = MAX_WALLET_BALANCE - currentBalance;
+                    throw new InvalidOperationException(
+                        $"Cannot add ₹{dto.Amount}. Maximum wallet balance is ₹{MAX_WALLET_BALANCE}. " +
+                        $"Current balance: ₹{currentBalance}. You can add up to ₹{remaining}."
+                    );
+                }
+            }
+
+            // ✅ Validate sufficient balance for Debit transactions
+            if (dto.Type == "Debit" && !await HasSufficientBalanceAsync(dto.UserId, dto.Amount))
+                throw new InvalidOperationException("Insufficient wallet balance");
+
+            var transaction = new WalletTransaction
+            {
+                UserId = dto.UserId,
+                Amount = dto.Amount,
+                Type = dto.Type,
+                Description = dto.Description
+            };
+
+            var created = await _walletTransactionRepository.CreateAsync(transaction);
+            var transactionFromDb = await _walletTransactionRepository.GetByIdAsync(created.TransactionId);
+            if (transactionFromDb == null) throw new InvalidOperationException("Transaction creation failed.");
+
+            return MapToDto(transactionFromDb);
+        }
+
+        // ✅ UPDATED: Removed MAX_TOPUP_AMOUNT validation
+        public async Task<UserDto> TopUpWalletAsync(int userId, decimal amount, string description = "Wallet top-up")
+        {
+            // Validate minimum amount
+            if (amount < MIN_TOPUP_AMOUNT)
+                throw new InvalidOperationException($"Minimum top-up amount is ₹{MIN_TOPUP_AMOUNT}");
+
+            var currentBalance = await GetUserBalanceAsync(userId);
+            var newBalance = currentBalance + amount;
+
+            if (newBalance > MAX_WALLET_BALANCE)
+            {
+                var remaining = MAX_WALLET_BALANCE - currentBalance;
+                throw new InvalidOperationException(
+                    $"Cannot add ₹{amount}. Maximum wallet balance is ₹{MAX_WALLET_BALANCE}. " +
+                    $"Current balance: ₹{currentBalance}. You can add up to ₹{remaining}."
+                );
+            }
+
+            var transactionDto = await CreateTransactionAsync(new CreateWalletTransactionDto
+            {
+                UserId = userId,
+                Amount = amount,
+                Type = "Credit",
+                Description = description
+            });
+
+            var user = await _userRepository.GetByIdAsync(userId);
+            if (user == null) throw new ArgumentException("User not found");
+
+            return new UserDto
+            {
+                UserId = user.UserId,
+                Name = user.Name,
+                Email = user.Email,
+                WalletBalance = await GetUserBalanceAsync(userId)
+            };
+        }
+
+        public async Task<WalletTransactionDto> TopUpWalletAsync(int userId, WalletTopUpDto topUpDto)
+            => await CreateTransactionAsync(new CreateWalletTransactionDto
+            {
+                UserId = userId,
+                Amount = topUpDto.Amount,
+                Type = "Credit",
+                Description = topUpDto.Description ?? $"Wallet top-up of ₹{topUpDto.Amount}"
+            });
+
+        public async Task<WalletTransactionDto> DebitWalletAsync(int userId, decimal amount, string description)
+            => await CreateTransactionAsync(new CreateWalletTransactionDto
+            {
+                UserId = userId,
+                Amount = amount,
+                Type = "Debit",
+                Description = description
+            });
+
+        public async Task<bool> HasSufficientBalanceAsync(int userId, decimal amount)
+            => await _walletTransactionRepository.HasSufficientBalanceAsync(userId, amount);
+
+        public async Task<decimal> GetWalletBalanceAsync(int userId)
+            => await GetUserBalanceAsync(userId);
+
+        private static WalletTransactionDto MapToDto(WalletTransaction t)
+            => new WalletTransactionDto
+            {
+                TransactionId = t.TransactionId,
+                UserId = t.UserId,
+                Amount = t.Amount,
+                Type = t.Type,
+                Description = t.Description,
+                CreatedAt = t.CreatedAt
+            };
+    }
+}
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using System.Text.Json;
+using Microsoft.Extensions.Logging;
+using HealthyBreakfastApp.Application.Interfaces;
+using HealthyBreakfastApp.Application.DTOs;
+using HealthyBreakfastApp.Domain.Entities;
+
+
+namespace HealthyBreakfastApp.Application.Services
+{
+    public class ScheduledOrderService : IScheduledOrderService
+    {
+        private readonly IScheduledOrderRepository _scheduledOrderRepository;
+        private readonly IUserRepository _userRepository;
+        private readonly IIngredientRepository _ingredientRepository;
+        private readonly IWalletTransactionService _walletService;
+        private readonly IOrderService _orderService;
+        private readonly ILogger<ScheduledOrderService> _logger;
+        private readonly IUserAddressRepository _userAddressRepository;
+
+
+        public ScheduledOrderService(
+            IScheduledOrderRepository scheduledOrderRepository,
+            IUserRepository userRepository,
+            IIngredientRepository ingredientRepository,
+            IWalletTransactionService walletService,
+            IOrderService orderService,
+            ILogger<ScheduledOrderService> logger,
+            IUserAddressRepository userAddressRepository)
+        {
+            _scheduledOrderRepository = scheduledOrderRepository;
+            _userRepository = userRepository;
+            _ingredientRepository = ingredientRepository;
+            _walletService = walletService;
+            _orderService = orderService;
+            _logger = logger;
+            _userAddressRepository = userAddressRepository;
+        }
+
+
+        // ----------------------------------------------------------------------------------------
+        // ✅ CREATE SCHEDULED ORDER (MILKBASKET LOGIC: Order today → Delivery tomorrow)
+        // ----------------------------------------------------------------------------------------
+        public async Task<ScheduledOrderResponseDto> CreateScheduledOrderAsync(Guid authId, CreateScheduledOrderDto dto)
+        {
+            var user = await _userRepository.GetByAuthIdAsync(authId);
+            if (user == null)
+                throw new InvalidOperationException("User not found");
+
+            // ✅ Determine delivery address: use DTO's address or fall back to primary
+            int? deliveryAddressId = dto.DeliveryAddressId;
+            UserAddress? primaryAddress = null;
+            
+            if (deliveryAddressId == null)
+            {
+                primaryAddress = await _userAddressRepository.GetPrimaryAddressByUserIdAsync(user.UserId);
+                
+                if (primaryAddress == null)
+                {
+                    throw new InvalidOperationException(
+                        "Please add a delivery address before scheduling an order. Go to Profile → Manage Addresses."
+                    );
+                }
+                deliveryAddressId = primaryAddress.Id;
+            }
+            else
+            {
+                // ⭐ FIXED: Use GetByIdWithDetailsAsync to load ServiceableLocation
+                primaryAddress = await _userAddressRepository.GetByIdWithDetailsAsync(deliveryAddressId.Value);
+                if (primaryAddress == null || primaryAddress.UserId != user.UserId)
+                {
+                    throw new InvalidOperationException("Invalid delivery address");
+                }
+            }
+
+            if (primaryAddress.ServiceableLocation == null || !primaryAddress.ServiceableLocation.IsActive)
+            {
+                throw new InvalidOperationException(
+                    $"Sorry, we don't deliver to {primaryAddress.ServiceableLocation?.Area ?? "your location"} currently. " +
+                    "Please update your delivery address."
+                );
+            }
+
+            _logger.LogInformation($"✅ Delivery address validated: {primaryAddress.ServiceableLocation.Area}, {primaryAddress.ServiceableLocation.City}");
+
+            // ✅ FIXED: Handle ScheduledFor as DateTime (not string)
+            DateTime deliveryDate;
+            
+            if (dto.ScheduledFor != default(DateTime))
+            {
+                // Use the date from the DTO (already a DateTime)
+                deliveryDate = DateTime.SpecifyKind(dto.ScheduledFor.Date, DateTimeKind.Utc);
+                
+                _logger.LogInformation($"📅 Using scheduled date from request: {deliveryDate:yyyy-MM-dd}");
+            }
+            else
+            {
+                // Fallback: use tomorrow if not provided
+                var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
+                var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
+                var tomorrowIst = istNow.Date.AddDays(1);
+                deliveryDate = DateTime.SpecifyKind(tomorrowIst, DateTimeKind.Utc);
+                
+                _logger.LogInformation($"📅 No date provided, using tomorrow: {deliveryDate:yyyy-MM-dd}");
+            }
+            
+            var istZone2 = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
+            var istNow2 = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone2);
+            
+            _logger.LogInformation($"📦 Order placed at: {istNow2:yyyy-MM-dd HH:mm:ss} IST");
+            _logger.LogInformation($"🚚 Delivery scheduled for: {deliveryDate:yyyy-MM-dd}");
+
+            // ✅ Price calculation logic
+            decimal totalPrice;
+            var ingredients = new List<(Ingredient ingredient, int quantity)>();
+
+            // Load ingredients first (needed for cart display)
+            foreach (var ingredientDto in dto.SelectedIngredients)
+            {
+                var ingredient = await _ingredientRepository.GetByIdAsync(ingredientDto.IngredientId);
+                if (ingredient == null)
+                    throw new InvalidOperationException($"Ingredient {ingredientDto.IngredientId} not found");
+
+                ingredients.Add((ingredient, ingredientDto.Quantity));
+            }
+
+            // ✅ FEATURED MEAL: Use fixed price if provided
+            if (dto.MealPrice.HasValue && dto.MealPrice.Value > 0)
+            {
+                totalPrice = dto.MealPrice.Value;
+                _logger.LogInformation($"💰 Using featured meal fixed price: ₹{totalPrice}");
+            }
+            else
+            {
+                // ✅ CUSTOM MEAL: Calculate from ingredients
+                totalPrice = ingredients.Sum(i => i.ingredient.Price * i.quantity);
+                _logger.LogInformation($"💰 Calculated price from ingredients: ₹{totalPrice}");
+            }
+
+            // Check wallet balance
+            if (!await CheckWalletBalanceAsync(authId, totalPrice))
+                throw new InvalidOperationException("Insufficient wallet balance");
+
+            // Create ScheduledOrder
+            var scheduledOrder = new ScheduledOrder
+            {
+                UserId = user.UserId,
+                AuthId = authId,
+                MealName = dto.MealName ?? "Custom Overnight Oats",
+                ScheduledFor = deliveryDate,
+                DeliveryTimeSlot = dto.DeliveryTimeSlot ?? "8:00 AM",
+                TotalPrice = totalPrice,
+                NutritionalSummary = dto.NutritionalSummary != null
+                    ? JsonSerializer.Serialize(dto.NutritionalSummary)
+                    : null,
+                OrderStatus = "scheduled",
+                CanModify = true,
+                ExpiresAt = deliveryDate.AddDays(1),
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow,
+                DeliveryAddressId = deliveryAddressId,
+                // ✅ ADD: Link to subscription if provided
+                SubscriptionId = dto.SubscriptionId
+            };
+
+            foreach (var (ingredient, quantity) in ingredients)
+            {
+                scheduledOrder.Ingredients.Add(new ScheduledOrderIngredient
+                {
+                    IngredientId = ingredient.IngredientId,
+                    Quantity = quantity,
+                    UnitPrice = ingredient.Price,
+                    TotalPrice = ingredient.Price * quantity
+                });
+            }
+
+            var createdOrder = await _scheduledOrderRepository.CreateAsync(scheduledOrder);
+            
+            _logger.LogInformation($"✅ Order #{createdOrder.ScheduledOrderId} created for {deliveryDate:yyyy-MM-dd} delivery");
+            _logger.LogInformation($"   💳 Total price: ₹{totalPrice}");
+            
+            return await MapToResponseDto(createdOrder);
+        }
+
+
+        // ----------------------------------------------------------------------------------------
+        // ✅ DUPLICATE SCHEDULED ORDER - Creates exact copy without navigation
+        // ----------------------------------------------------------------------------------------
+        public async Task<ScheduledOrderResponseDto> DuplicateScheduledOrderAsync(Guid authId, int scheduledOrderId)
+        {
+            try
+            {
+                _logger.LogInformation($"🔄 Duplicating order #{scheduledOrderId} for user {authId}");
+
+                // 1. Find original order
+                var originalOrder = await _scheduledOrderRepository.GetByIdAndAuthIdAsync(scheduledOrderId, authId);
+                if (originalOrder == null)
+                {
+                    _logger.LogWarning($"❌ Order #{scheduledOrderId} not found");
+                    throw new InvalidOperationException("Scheduled order not found");
+                }
+
+                _logger.LogInformation($"✅ Found original order: {originalOrder.MealName}");
+
+                // 2. Validate order can be duplicated
+                if (originalOrder.OrderStatus.ToLower() != "scheduled")
+                {
+                    _logger.LogWarning($"❌ Cannot duplicate order with status: {originalOrder.OrderStatus}");
+                    throw new InvalidOperationException($"Cannot duplicate order with status '{originalOrder.OrderStatus}'");
+                }
+
+                // 3. Check wallet balance
+                if (!await CheckWalletBalanceAsync(authId, originalOrder.TotalPrice))
+                {
+                    _logger.LogWarning($"❌ Insufficient balance for duplication");
+                    throw new InvalidOperationException("Insufficient wallet balance");
+                }
+
+                // 4. Verify user exists
+                var user = await _userRepository.GetByAuthIdAsync(authId);
+                if (user == null)
+                {
+                    _logger.LogWarning($"❌ User not found");
+                    throw new InvalidOperationException("User not found");
+                }
+
+                // ✅ Validate primary address
+                var primaryAddress = await _userAddressRepository.GetPrimaryAddressByUserIdAsync(user.UserId);
+                if (primaryAddress == null)
+                {
+                    _logger.LogWarning($"❌ No primary address for user");
+                    throw new InvalidOperationException("Please add a delivery address before duplicating order");
+                }
+
+                if (!primaryAddress.ServiceableLocation.IsActive)
+                {
+                    _logger.LogWarning($"❌ Location inactive");
+                    throw new InvalidOperationException($"We don't deliver to {primaryAddress.ServiceableLocation.Area} currently");
+                }
+
+                // 5. Validate all ingredients still exist
+                if (originalOrder.Ingredients == null || originalOrder.Ingredients.Count == 0)
+                {
+                    _logger.LogWarning($"❌ Original order has no ingredients");
+                    throw new InvalidOperationException("Original order has no ingredients");
+                }
+
+                foreach (var ingredient in originalOrder.Ingredients)
+                {
+                    var currentIngredient = await _ingredientRepository.GetByIdAsync(ingredient.IngredientId);
+                    if (currentIngredient == null)
+                    {
+                        _logger.LogWarning($"❌ Ingredient {ingredient.IngredientId} not available");
+                        throw new InvalidOperationException("Some ingredients are no longer available");
+                    }
+                }
+
+                _logger.LogInformation($"✅ All validations passed, creating duplicate...");
+
+                // 6. Create duplicate order with UTC DateTimes
+                var duplicateOrder = new ScheduledOrder
+                {
+                    UserId = user.UserId,
+                    AuthId = authId,
+                    MealName = originalOrder.MealName,
+                    ScheduledFor = DateTime.SpecifyKind(originalOrder.ScheduledFor, DateTimeKind.Utc),
+                    DeliveryTimeSlot = originalOrder.DeliveryTimeSlot,
+                    TotalPrice = originalOrder.TotalPrice,
+                    NutritionalSummary = originalOrder.NutritionalSummary,
+                    OrderStatus = "scheduled",
+                    CanModify = true,
+                    ExpiresAt = DateTime.SpecifyKind(originalOrder.ExpiresAt, DateTimeKind.Utc),
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow,
+                    DeliveryAddressId = originalOrder.DeliveryAddressId
+                };
+
+                // 7. Copy ingredients
+                foreach (var originalIngredient in originalOrder.Ingredients)
+                {
+                    duplicateOrder.Ingredients.Add(new ScheduledOrderIngredient
+                    {
+                        IngredientId = originalIngredient.IngredientId,
+                        Quantity = originalIngredient.Quantity,
+                        UnitPrice = originalIngredient.UnitPrice,
+                        TotalPrice = originalIngredient.TotalPrice,
+                        CreatedAt = DateTime.UtcNow
+                    });
+                }
+
+                _logger.LogInformation($"✅ Duplicate prepared with {duplicateOrder.Ingredients.Count} ingredients");
+
+                // 8. Save to database
+                var createdOrder = await _scheduledOrderRepository.CreateAsync(duplicateOrder);
+
+                _logger.LogInformation(
+                    $"✅ Duplicated order #{scheduledOrderId} → #{createdOrder.ScheduledOrderId} " +
+                    $"for {createdOrder.ScheduledFor:yyyy-MM-dd} (₹{createdOrder.TotalPrice})");
+
+                return await MapToResponseDto(createdOrder);
+            }
+            catch (InvalidOperationException ex)
+            {
+                _logger.LogWarning($"⚠️ Duplication validation failed: {ex.Message}");
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"❌ Unexpected error duplicating order #{scheduledOrderId}");
+                throw new InvalidOperationException("Failed to duplicate order. Please try again.", ex);
+            }
+        }
+
+
+        // ----------------------------------------------------------------------------------------
+        // GET SCHEDULED ORDERS FOR SPECIFIC DATE
+        // ----------------------------------------------------------------------------------------
+        public async Task<List<ScheduledOrderResponseDto>> GetScheduledOrdersForDateAsync(Guid authId, DateTime date)
+        {
+            var orders = await _scheduledOrderRepository.GetByAuthIdAndDateAsync(authId, date);
+            var result = new List<ScheduledOrderResponseDto>();
+
+            foreach (var order in orders)
+            {
+                result.Add(await MapToResponseDto(order));
+            }
+
+            return result;
+        }
+
+
+        // ----------------------------------------------------------------------------------------
+        // MODIFY SCHEDULED ORDER
+        // ----------------------------------------------------------------------------------------
+        public async Task ModifyScheduledOrderAsync(Guid authId, int scheduledOrderId, ModifyScheduledOrderDto dto)
+        {
+            var scheduledOrder = await _scheduledOrderRepository.GetByIdAndAuthIdAsync(scheduledOrderId, authId);
+            if (scheduledOrder == null)
+                throw new InvalidOperationException("Scheduled order not found");
+
+            // Check if still editable
+            if (!scheduledOrder.CanModify || scheduledOrder.OrderStatus != "scheduled")
+                throw new InvalidOperationException("Order can no longer be modified");
+
+            var ingredients = new List<(Ingredient ingredient, int quantity)>();
+            decimal newTotalPrice = 0;
+
+            foreach (var ingredientDto in dto.SelectedIngredients)
+            {
+                var ingredient = await _ingredientRepository.GetByIdAsync(ingredientDto.IngredientId);
+                if (ingredient == null)
+                    throw new InvalidOperationException($"Ingredient {ingredientDto.IngredientId} not found");
+
+                ingredients.Add((ingredient, ingredientDto.Quantity));
+                newTotalPrice += ingredient.Price * ingredientDto.Quantity;
+            }
+
+            if (!await CheckWalletBalanceAsync(authId, newTotalPrice))
+                throw new InvalidOperationException("Insufficient wallet balance for modified order");
+
+            // Reset ingredients
+            scheduledOrder.Ingredients.Clear();
+
+            foreach (var (ingredient, quantity) in ingredients)
+            {
+                scheduledOrder.Ingredients.Add(new ScheduledOrderIngredient
+                {
+                    ScheduledOrderId = scheduledOrder.ScheduledOrderId,
+                    IngredientId = ingredient.IngredientId,
+                    Quantity = quantity,
+                    UnitPrice = ingredient.Price,
+                    TotalPrice = ingredient.Price * quantity
+                });
+            }
+
+            scheduledOrder.TotalPrice = newTotalPrice;
+            scheduledOrder.DeliveryTimeSlot = dto.DeliveryTimeSlot ?? scheduledOrder.DeliveryTimeSlot;
+            scheduledOrder.NutritionalSummary = dto.NutritionalSummary != null
+                ? JsonSerializer.Serialize(dto.NutritionalSummary)
+                : scheduledOrder.NutritionalSummary;
+            scheduledOrder.UpdatedAt = DateTime.UtcNow;
+
+            await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
+            
+            _logger.LogInformation($"✏️ Order #{scheduledOrderId} modified - New total: ₹{newTotalPrice}");
+        }
+
+
+        // ----------------------------------------------------------------------------------------
+        // CANCEL SCHEDULED ORDER - DELETE FROM DATABASE
+        // ----------------------------------------------------------------------------------------
+        public async Task CancelScheduledOrderAsync(Guid authId, int scheduledOrderId)
+        {
+            var scheduledOrder = await _scheduledOrderRepository.GetByIdAndAuthIdAsync(scheduledOrderId, authId);
+            if (scheduledOrder == null)
+                throw new InvalidOperationException("Scheduled order not found");
+
+            if (!scheduledOrder.CanModify || scheduledOrder.OrderStatus != "scheduled")
+                throw new InvalidOperationException("Order can no longer be cancelled");
+
+            _logger.LogInformation($"🗑️ User cancelled order #{scheduledOrderId} - deleting from cart");
+            
+            await _scheduledOrderRepository.DeleteAsync(scheduledOrderId);
+            
+            _logger.LogInformation($"✅ Order #{scheduledOrderId} successfully removed from cart");
+        }
+
+
+        // ----------------------------------------------------------------------------------------
+        // BALANCE CHECK
+        // ----------------------------------------------------------------------------------------
+        public async Task<bool> CheckWalletBalanceAsync(Guid authId, decimal amount)
+        {
+            var user = await _userRepository.GetByAuthIdAsync(authId);
+            return user != null && user.WalletBalance >= amount;
+        }
+
+
+        // ----------------------------------------------------------------------------------------
+        // ✅ MIDNIGHT JOB – CONFIRM SCHEDULED ORDERS FOR TODAY (MILKBASKET LOGIC)
+        // This runs at 12:00 AM every night to confirm orders for TODAY's delivery
+        // ----------------------------------------------------------------------------------------
+        public async Task ConfirmAllScheduledOrdersAsync()
+        {
+            var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
+            var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
+            
+            // ✅ Process orders for TODAY (not tomorrow)
+            var today = istNow.Date;
+            
+            _logger.LogInformation($"🌙 [MIDNIGHT JOB] Started at {istNow:yyyy-MM-dd HH:mm:ss} IST");
+            _logger.LogInformation($"🚚 Processing orders for TODAY's delivery: {today:yyyy-MM-dd}");
+            _logger.LogInformation($"⏰ Current UTC: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}");
+            _logger.LogInformation($"⏰ Current IST: {istNow:yyyy-MM-dd HH:mm:ss}");
+            _logger.LogInformation($"📅 Target Date: {today:yyyy-MM-dd}");
+            
+            // Process orders for TODAY
+            var scheduledOrders = await _scheduledOrderRepository.GetScheduledOrdersForDateAsync(today);
+
+            _logger.LogInformation($"📦 Found {scheduledOrders.Count} total orders for {today:yyyy-MM-dd}");
+
+            var pendingOrders = scheduledOrders
+                .Where(o => o.OrderStatus.ToLower() == "scheduled")
+                .ToList();
+
+            _logger.LogInformation($"📋 {pendingOrders.Count} orders pending confirmation");
+
+            int confirmedCount = 0;
+            int failedCount = 0;
+
+            foreach (var scheduledOrder in pendingOrders)
+            {
+                try
+                {
+                    _logger.LogInformation($"🔄 Processing order #{scheduledOrder.ScheduledOrderId}");
+
+                    var user = await _userRepository.GetByAuthIdAsync(scheduledOrder.AuthId);
+                    if (user == null)
+                    {
+                        _logger.LogWarning($"❌ User not found for order #{scheduledOrder.ScheduledOrderId}");
+                        scheduledOrder.OrderStatus = "failed";
+                        scheduledOrder.CanModify = false;
+                        await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
+                        failedCount++;
+                        continue;
+                    }
+
+                    // ✅ Use the scheduled order's DeliveryAddressId (preserve original address)
+                    var deliveryAddressId = scheduledOrder.DeliveryAddressId;
+                    
+                    if (deliveryAddressId == null)
+                    {
+                        _logger.LogWarning($"❌ No delivery address for order #{scheduledOrder.ScheduledOrderId}");
+                        scheduledOrder.OrderStatus = "failed";
+                        scheduledOrder.CanModify = false;
+                        await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
+                        failedCount++;
+                        continue;
+                    }
+
+                    // ✅ Use GetByIdWithDetailsAsync to load ServiceableLocation
+                    var address = await _userAddressRepository.GetByIdWithDetailsAsync(deliveryAddressId.Value);
+                    
+                    _logger.LogInformation($"🔍 Validating order #{scheduledOrder.ScheduledOrderId}");
+                    _logger.LogInformation($"📍 Address loaded: {address != null}");
+                    _logger.LogInformation($"📍 ServiceableLocation loaded: {address?.ServiceableLocation != null}");
+                    _logger.LogInformation($"📍 ServiceableLocation active: {address?.ServiceableLocation?.IsActive}");
+                    
+                    if (address == null)
+                    {
+                        _logger.LogWarning($"❌ FAIL: Address not found for order #{scheduledOrder.ScheduledOrderId}");
+                        scheduledOrder.OrderStatus = "failed";
+                        scheduledOrder.CanModify = false;
+                        await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
+                        failedCount++;
+                        continue;
+                    }
+                    
+                    if (address.ServiceableLocation == null)
+                    {
+                        _logger.LogWarning($"❌ FAIL: ServiceableLocation is null for address #{deliveryAddressId}");
+                        scheduledOrder.OrderStatus = "failed";
+                        scheduledOrder.CanModify = false;
+                        await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
+                        failedCount++;
+                        continue;
+                    }
+                    
+                    if (!address.ServiceableLocation.IsActive)
+                    {
+                        _logger.LogWarning($"❌ FAIL: ServiceableLocation inactive for order #{scheduledOrder.ScheduledOrderId}");
+                        scheduledOrder.OrderStatus = "failed";
+                        scheduledOrder.CanModify = false;
+                        await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
+                        failedCount++;
+                        continue;
+                    }
+
+                    // Check wallet balance
+                    if (user.WalletBalance < scheduledOrder.TotalPrice)
+                    {
+                        _logger.LogWarning(
+                            $"❌ Insufficient balance for order #{scheduledOrder.ScheduledOrderId}. " +
+                            $"Required: ₹{scheduledOrder.TotalPrice}, Available: ₹{user.WalletBalance}");
+                        
+                        scheduledOrder.OrderStatus = "cancelled";
+                        scheduledOrder.CanModify = false;
+                        await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
+                        failedCount++;
+                        continue;
+                    }
+
+                    // ✅ Create the actual Order using the scheduled order's DeliveryAddressId
+                    var createOrderDto = new CreateOrderFromMealBuilderDto
+                    {
+                        MealId = 1,
+                        SelectedIngredients = scheduledOrder.Ingredients.Select(i => new SelectedIngredientDto
+                        {
+                            IngredientId = i.IngredientId,
+                            Quantity = i.Quantity
+                        }).ToList(),
+                        ScheduledFor = DateTime.SpecifyKind(scheduledOrder.ScheduledFor, DateTimeKind.Utc)
+                    };
+
+                    // ✅ Pass the scheduled order's DeliveryAddressId to preserve the original delivery address
+                    var orderResponse = await _orderService.CreateOrderFromMealBuilderAsync(
+                        createOrderDto, 
+                        scheduledOrder.UserId, 
+                        scheduledOrder.DeliveryAddressId);
+
+                    _logger.LogInformation(
+                        $"✅ Confirmed! Created Order #{orderResponse.OrderId} from cart order #{scheduledOrder.ScheduledOrderId}");
+                    _logger.LogInformation($"   📍 Delivers to address ID: {scheduledOrder.DeliveryAddressId}");
+                    _logger.LogInformation($"   💰 Amount charged: ₹{scheduledOrder.TotalPrice}");
+
+                    scheduledOrder.OrderStatus = "processed";
+                    scheduledOrder.CanModify = false;
+                    scheduledOrder.ConfirmedAt = DateTime.UtcNow;
+                    await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
+
+                    confirmedCount++;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, $"❌ Failed to confirm order #{scheduledOrder.ScheduledOrderId}");
+                    scheduledOrder.OrderStatus = "failed";
+                    scheduledOrder.CanModify = false;
+                    await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
+                    failedCount++;
+                }
+            }
+
+            _logger.LogInformation($"🎉 [MIDNIGHT JOB] Complete!");
+            _logger.LogInformation($"   ✅ Confirmed: {confirmedCount}");
+            _logger.LogInformation($"   ❌ Failed: {failedCount}");
+            _logger.LogInformation($"   ⏭️  Already processed: {scheduledOrders.Count - pendingOrders.Count}");
+        }
+
+
+        // ----------------------------------------------------------------------------------------
+        // TIME TILL MIDNIGHT (IST)
+        // ----------------------------------------------------------------------------------------
+        public static TimeSpan GetTimeTillMidnightIST()
+        {
+            var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
+            var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
+            var midnight = istNow.Date.AddDays(1);
+            return midnight - istNow;
+        }
+
+
+        // ----------------------------------------------------------------------------------------
+        // ✅ TIME TILL MIDNIGHT IN MINUTES (for countdown display)
+        // ----------------------------------------------------------------------------------------
+        public async Task<int> GetTimeUntilMidnightMinutesAsync()
+        {
+            var timeTillMidnight = GetTimeTillMidnightIST();
+            return (int)timeTillMidnight.TotalMinutes;
+        }
+
+
+        // ----------------------------------------------------------------------------------------
+        // PRIVATE MAPPING METHODS
+        // ----------------------------------------------------------------------------------------
+        private async Task<ScheduledOrderResponseDto> MapToResponseDto(ScheduledOrder order)
+        {
+            return new ScheduledOrderResponseDto
+            {
+                ScheduledOrderId = order.ScheduledOrderId,
+                MealName = order.MealName,
+                ScheduledFor = order.ScheduledFor,
+                DeliveryTimeSlot = order.DeliveryTimeSlot,
+                TotalPrice = order.TotalPrice,
+                OrderStatus = order.OrderStatus,
+                CanModify = order.CanModify,
+                CreatedAt = order.CreatedAt,
+                ExpiresAt = order.ExpiresAt,
+                Ingredients = order.Ingredients?.Select(i => new ScheduledOrderIngredientDetailDto
+                {
+                    IngredientId = i.IngredientId,
+                    Quantity = i.Quantity,
+                    UnitPrice = i.UnitPrice,
+                    TotalPrice = i.TotalPrice
+                }).ToList() ?? new List<ScheduledOrderIngredientDetailDto>()
+            };
+        }
+    }
+}
+
+
+================ MEALS & INGREDIENTS ================
+using HealthyBreakfastApp.Application.DTOs;
+using HealthyBreakfastApp.Application.Interfaces;
+using HealthyBreakfastApp.Infrastructure.Data;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using System.Threading.Tasks;
+
+namespace HealthyBreakfastApp.WebAPI.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    public class MealsController : ControllerBase
+    {
+        private readonly IMealService _mealService;
+        private readonly AppDbContext _context;
+
+        public MealsController(IMealService mealService, AppDbContext context)
+        {
+            _mealService = mealService;
+            _context = context;
+        }
+
+        // ========== EXISTING CUSTOMER ENDPOINTS ==========
+
+        [HttpPost]
+        public async Task<IActionResult> CreateMeal([FromBody] CreateMealDto dto)
+        {
+            var mealId = await _mealService.CreateMealAsync(dto);
+            return CreatedAtAction(nameof(GetMealById), new { id = mealId }, null);
+        }
+
+        [HttpGet("{id}")]
+        public async Task<IActionResult> GetMealById(int id)
+        {
+            var meal = await _mealService.GetMealByIdAsync(id);
+            if (meal == null) return NotFound();
+            return Ok(meal);
+        }
+
+        [HttpPost("calculate-price")]
+        public async Task<ActionResult<MealPriceResponseDto>> CalculateMealPrice([FromBody] MealPriceCalculationDto calculationDto)
+        {
+            try
+            {
+                var priceResponse = await _mealService.CalculateMealPriceAsync(calculationDto);
+                return Ok(priceResponse);
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(ex.Message);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(ex.Message);
+            }
+        }
+
+        [HttpPost("validate-selection")]
+        public async Task<ActionResult<bool>> ValidateIngredientSelection([FromBody] MealPriceCalculationDto calculationDto)
+        {
+            try
+            {
+                var isValid = await _mealService.ValidateIngredientSelectionAsync(
+                    calculationDto.MealId, 
+                    calculationDto.SelectedIngredients);
+                
+                return Ok(new { isValid, message = isValid ? "Selection is valid" : "Invalid ingredient selection" });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(ex.Message);
+            }
+        }
+
+        [HttpPost("nutritional-summary")]
+        public async Task<ActionResult> GetNutritionalSummary([FromBody] List<SelectedIngredientDto> ingredients)
+        {
+            try
+            {
+                var (calories, protein, fiber) = await _mealService.GetNutritionalSummaryAsync(ingredients);
+                
+                return Ok(new 
+                { 
+                    totalCalories = calories, 
+                    totalProtein = protein, 
+                    totalFiber = fiber,
+                    ingredientCount = ingredients.Count
+                });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(ex.Message);
+            }
+        }
+
+        // ========== NEW ADMIN ENDPOINTS ==========
+
+        /// <summary>
+        /// Get all meals for admin dashboard (with meal options count and completion status)
+        /// </summary>
+        [HttpGet("admin/all")]
+        public async Task<ActionResult<List<AdminMealListDto>>> GetAllMealsForAdmin()
+        {
+            try
+            {
+                var meals = await _mealService.GetAllMealsForAdminAsync();
+                return Ok(meals);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error retrieving meals", error = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Get meal details with all options and ingredients for admin editing
+        /// </summary>
+        [HttpGet("admin/{id}")]
+        public async Task<ActionResult<AdminMealDetailDto>> GetMealDetailForAdmin(int id)
+        {
+            try
+            {
+                var meal = await _mealService.GetMealDetailForAdminAsync(id);
+                if (meal == null) 
+                    return NotFound(new { message = $"Meal with ID {id} not found" });
+                
+                return Ok(meal);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error retrieving meal details", error = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Create meal with options and ingredients (Admin only)
+        /// </summary>
+        [HttpPost("admin")]
+        public async Task<IActionResult> CreateMealWithOptions([FromBody] AdminCreateMealDto dto)
+        {
+            try
+            {
+                var mealId = await _mealService.CreateMealWithOptionsAsync(dto);
+                return CreatedAtAction(nameof(GetMealDetailForAdmin), new { id = mealId }, new { mealId, message = "Meal created successfully" });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error creating meal", error = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Update meal with options and ingredients (Admin only)
+        /// </summary>
+        [HttpPut("admin/{id}")]
+        public async Task<IActionResult> UpdateMeal(int id, [FromBody] UpdateMealDto dto)
+        {
+            try
+            {
+                var success = await _mealService.UpdateMealAsync(id, dto);
+                if (!success) 
+                    return NotFound(new { message = $"Meal with ID {id} not found" });
+                
+                return Ok(new { message = "Meal updated successfully" });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error updating meal", error = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Delete meal (Admin only) - Cascades to meal options and ingredients
+        /// </summary>
+        [HttpDelete("admin/{id}")]
+        public async Task<IActionResult> DeleteMeal(int id)
+        {
+            try
+            {
+                var success = await _mealService.DeleteMealAsync(id);
+                if (!success) 
+                    return NotFound(new { message = $"Meal with ID {id} not found" });
+                
+                return Ok(new { message = "Meal deleted successfully" });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error deleting meal", error = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Get all categories with their available ingredients (for meal builder UI)
+        /// </summary>
+        [HttpGet("admin/categories-with-ingredients")]
+        public async Task<ActionResult<List<CategoryWithIngredientsDto>>> GetCategoriesWithIngredients()
+        {
+            try
+            {
+                var categories = await _mealService.GetCategoriesWithIngredientsAsync();
+                return Ok(categories);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error retrieving categories", error = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Get all meals with details (bulk endpoint for admin)
+        /// </summary>
+        [HttpGet("admin/all-with-details")]
+        [Authorize]
+        public async Task<ActionResult<List<MealWithDetailsDto>>> GetAllMealsWithDetails()
+        {
+            try
+            {
+                var meals = await _context.Meals
+                    .Include(m => m.MealOptions)
+                        .ThenInclude(o => o.MealOptionIngredients)
+                            .ThenInclude(moi => moi.Ingredient)
+                    .AsNoTracking()
+                    .ToListAsync();
+
+                return Ok(meals.Select(m => new MealWithDetailsDto
+                {
+                    MealId = m.MealId,
+                    MealName = m.MealName,
+                    Description = m.Description,
+                    BasePrice = m.BasePrice,
+                    ApproxCalories = m.ApproxCalories,
+                    ApproxProtein = m.ApproxProtein,
+                    ApproxCarbs = m.ApproxCarbs,
+                    ApproxFats = m.ApproxFats,
+                    CreatedAt = m.CreatedAt,
+                    UpdatedAt = m.UpdatedAt,
+                    MealOptionsCount = m.MealOptions.Count,
+                    MealOptions = m.MealOptions.Select(o => new MealOptionDto
+                    {
+                        MealOptionId = o.MealOptionId,
+                        MealId = o.MealId,
+                        CategoryId = o.CategoryId,
+                        IsRequired = o.IsRequired,
+                        MaxSelectable = o.MaxSelectable,
+                        CreatedAt = o.CreatedAt,
+                        UpdatedAt = o.UpdatedAt
+                    }).ToList()
+                }));
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error retrieving meals with details", error = ex.Message });
+            }
+        }
+    }
+}
+using HealthyBreakfastApp.Application.DTOs;
+using HealthyBreakfastApp.Application.Interfaces;
+using Microsoft.AspNetCore.Mvc;
+using System;
+using System.Threading.Tasks;
+
+namespace HealthyBreakfastApp.WebAPI.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    public class IngredientsController : ControllerBase
+    {
+        private readonly IIngredientService _ingredientService;
+
+        public IngredientsController(IIngredientService ingredientService)
+        {
+            _ingredientService = ingredientService;
+        }
+
+        // ==================== READ OPERATIONS ====================
+
+        /// <summary>
+        /// Get all ingredients
+        /// </summary>
+        [HttpGet]
+        public async Task<IActionResult> GetAll()
+        {
+            var ingredients = await _ingredientService.GetAllIngredientsAsync();
+            return Ok(ingredients);
+        }
+
+        /// <summary>
+        /// Get ingredients by category ID
+        /// </summary>
+        [HttpGet("category/{categoryId}")]
+        public async Task<IActionResult> GetByCategory(int categoryId)
+        {
+            var ingredients = await _ingredientService.GetIngredientsByCategoryIdAsync(categoryId);
+            return Ok(ingredients);
+        }
+
+        /// <summary>
+        /// Get ingredient by ID
+        /// </summary>
+        [HttpGet("{id}")]
+        public async Task<IActionResult> GetIngredientById(int id)
+        {
+            var ingredient = await _ingredientService.GetIngredientByIdAsync(id);
+            if (ingredient == null) 
+                return NotFound(new { message = $"Ingredient with ID {id} not found" });
+            
+            return Ok(ingredient);
+        }
+
+        // ==================== CREATE OPERATIONS ====================
+
+        /// <summary>
+        /// Create a new ingredient
+        /// </summary>
+        [HttpPost]
+        public async Task<IActionResult> CreateIngredient([FromBody] CreateIngredientDto dto)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            var ingredientId = await _ingredientService.CreateIngredientAsync(dto);
+            return CreatedAtAction(
+                nameof(GetIngredientById), 
+                new { id = ingredientId }, 
+                new { ingredientId, message = "Ingredient created successfully" }
+            );
+        }
+
+        // ==================== UPDATE OPERATIONS ====================
+
+        /// <summary>
+        /// Update an existing ingredient
+        /// </summary>
+        [HttpPut("{id}")]
+        public async Task<IActionResult> UpdateIngredient(int id, [FromBody] UpdateIngredientDto dto)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            var success = await _ingredientService.UpdateIngredientAsync(id, dto);
+            if (!success)
+                return NotFound(new { message = $"Ingredient with ID {id} not found" });
+
+            return Ok(new { message = "Ingredient updated successfully" });
+        }
+
+        /// <summary>
+        /// Toggle ingredient availability (active/inactive)
+        /// </summary>
+        [HttpPatch("{id}/toggle-availability")]
+        public async Task<IActionResult> ToggleAvailability(int id)
+        {
+            var success = await _ingredientService.ToggleIngredientAvailabilityAsync(id);
+            if (!success)
+                return NotFound(new { message = $"Ingredient with ID {id} not found" });
+
+            var ingredient = await _ingredientService.GetIngredientByIdAsync(id);
+            return Ok(new 
+            { 
+                message = "Availability toggled successfully",
+                ingredientId = id,
+                available = ingredient?.Available 
+            });
+        }
+
+        // ==================== DELETE OPERATIONS ====================
+
+        /// <summary>
+        /// Delete an ingredient
+        /// </summary>
+        [HttpDelete("{id}")]
+        public async Task<IActionResult> DeleteIngredient(int id)
+        {
+            try
+            {
+                var success = await _ingredientService.DeleteIngredientAsync(id);
+                if (!success)
+                    return NotFound(new { message = $"Ingredient with ID {id} not found" });
+
+                return Ok(new { message = "Ingredient deleted successfully" });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+    }
+}
+using HealthyBreakfastApp.Application.DTOs;
+using HealthyBreakfastApp.Application.Interfaces;
+using Microsoft.AspNetCore.Mvc;
+using System.Threading.Tasks;
+
+namespace HealthyBreakfastApp.WebAPI.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    public class IngredientCategoriesController : ControllerBase
+    {
+        private readonly IIngredientCategoryService _service;
+
+        public IngredientCategoriesController(IIngredientCategoryService service)
+        {
+            _service = service;
+        }
+
+        // ADD THIS NEW METHOD ⬇️ (This fixes the 405 error!)
+        [HttpGet]
+        public async Task<IActionResult> GetAll()
+        {
+            var categories = await _service.GetAllIngredientCategoriesAsync();
+            return Ok(categories);
+        }
+
+        [HttpPost]
+        public async Task<IActionResult> Create([FromBody] CreateIngredientCategoryDto dto)
+        {
+            var categoryId = await _service.CreateIngredientCategoryAsync(dto);
+            return CreatedAtAction(nameof(GetById), new { id = categoryId }, null);
+        }
+
+        [HttpGet("{id}")]
+        public async Task<IActionResult> GetById(int id)
+        {
+            var category = await _service.GetIngredientCategoryByIdAsync(id);
+            if (category == null) return NotFound();
+            return Ok(category);
+        }
+    }
+}
+
+
+================ USER MANAGEMENT ================
+using HealthyBreakfastApp.Application.DTOs;
+using HealthyBreakfastApp.Application.Interfaces;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
+
+namespace HealthyBreakfastApp.WebAPI.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    public class UsersController : ControllerBase
+    {
+        private readonly IUserService _userService;
+        private readonly ILogger<UsersController> _logger;
+
+        public UsersController(IUserService userService, ILogger<UsersController> logger)
+        {
+            _userService = userService;
+            _logger = logger;
+        }
+
+        [HttpGet]
+        public async Task<ActionResult<List<UserDto>>> GetAllUsers()
+        {
+            var users = await _userService.GetAllUsersAsync();
+            return Ok(users);
+        }
+
+        [HttpPost]
+        public async Task<IActionResult> CreateUser([FromBody] CreateUserDto dto)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            var userId = await _userService.CreateUserAsync(dto);
+            return CreatedAtAction(nameof(GetUserById), new { id = userId }, null);
+        }
+
+        [HttpGet("{id}")]
+        public async Task<IActionResult> GetUserById(int id)
+        {
+            var userDto = await _userService.GetUserByIdAsync(id);
+            if (userDto == null)
+                return NotFound();
+
+            return Ok(userDto);
+        }
+
+        // ✅ NEW: Get current user's profile
+        [HttpGet("profile")]
+        [Authorize]
+        public async Task<ActionResult<UserDto>> GetUserProfile()
+        {
+            try
+            {
+                // Get AuthId from JWT token (sub claim)
+                var authIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value 
+                               ?? User.FindFirst("sub")?.Value;
+                
+                if (string.IsNullOrEmpty(authIdClaim) || !Guid.TryParse(authIdClaim, out Guid authId))
+                {
+                    return Unauthorized(new { message = "Invalid user token" });
+                }
+
+                var userDto = await _userService.GetUserProfileByAuthIdAsync(authId);
+                if (userDto == null)
+                {
+                    return NotFound(new { message = "User not found" });
+                }
+
+                return Ok(userDto);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error fetching user profile");
+                return StatusCode(500, new { message = "An error occurred while fetching profile" });
+            }
+        }
+
+        // ✅ NEW: Update current user's profile
+        [HttpPut("profile")]
+        [Authorize]
+        public async Task<ActionResult<UserDto>> UpdateUserProfile([FromBody] UpdateUserProfileDto updateDto)
+        {
+            try
+            {
+                // Get AuthId from JWT token
+                var authIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value 
+                               ?? User.FindFirst("sub")?.Value;
+                
+                if (string.IsNullOrEmpty(authIdClaim) || !Guid.TryParse(authIdClaim, out Guid authId))
+                {
+                    return Unauthorized(new { message = "Invalid user token" });
+                }
+
+                // Validation
+                if (updateDto.Name != null && string.IsNullOrWhiteSpace(updateDto.Name))
+                {
+                    return BadRequest(new { message = "Name cannot be empty" });
+                }
+
+                var updatedUser = await _userService.UpdateUserProfileAsync(authId, updateDto);
+                return Ok(updatedUser);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return NotFound(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error updating user profile");
+                return StatusCode(500, new { message = "An error occurred while updating profile" });
+            }
+        }
+    }
+}
+using HealthyBreakfastApp.Application.DTOs;
+using HealthyBreakfastApp.Application.Interfaces;
+using HealthyBreakfastApp.Domain.Entities;
+
+namespace HealthyBreakfastApp.Application.Services
+{
+    public class UserService : IUserService
+    {
+        private readonly IUserRepository _userRepository;
+
+        public UserService(IUserRepository userRepository)
+        {
+            _userRepository = userRepository;
+        }
+
+        // ✅ EXISTING METHODS (updated to include new fields)
+        public async Task<int> CreateUserAsync(CreateUserDto dto)
+        {
+            var user = new User
+            {
+                Name = dto.Name,
+                Email = dto.Email,
+                Phone = dto.Phone,
+                WalletBalance = 0,
+                AccountStatus = "Active",
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+
+            await _userRepository.AddUserAsync(user);
+            await _userRepository.SaveChangesAsync();
+            return user.UserId;
+        }
+
+        public async Task<UserDto?> GetUserByIdAsync(int id)
+        {
+            var user = await _userRepository.GetByIdAsync(id);
+            if (user == null) return null;
+
+            return MapToUserDto(user);
+        }
+
+        public async Task<bool> UserExistsAsync(string email)
+        {
+            var user = await _userRepository.GetByEmailAsync(email);
+            return user != null;
+        }
+
+        public async Task<List<UserDto>> GetAllUsersAsync()
+        {
+            var users = await _userRepository.GetAllAsync();
+            return users.Select(MapToUserDto).ToList();
+        }
+
+        public async Task<UserDto?> GetUserByEmailAsync(string email)
+        {
+            var user = await _userRepository.GetByEmailAsync(email);
+            if (user == null) return null;
+
+            return MapToUserDto(user);
+        }
+
+        public async Task<UserDto> RegisterUserAsync(RegisterUserRequest request)
+        {
+            // Check if user already exists with this AuthId
+            var existingUser = await _userRepository.GetUserByAuthIdAsync(request.AuthId);
+            if (existingUser != null)
+            {
+                throw new InvalidOperationException("User already registered with this authentication ID");
+            }
+
+            // Check if email already exists
+            var emailExists = await _userRepository.GetByEmailAsync(request.Email);
+            if (emailExists != null)
+            {
+                throw new InvalidOperationException("Email already registered");
+            }
+
+            // Create new user with auth mapping
+            var user = new User
+            {
+                Name = request.Name,
+                Email = request.Email,
+                Phone = request.Phone ?? string.Empty,
+                WalletBalance = 0.00m,
+                AccountStatus = "Active",
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+
+            var createdUser = await _userRepository.CreateUserWithAuthMappingAsync(user, request.AuthId);
+
+            return MapToUserDto(createdUser);
+        }
+
+        public async Task<UserDto?> GetUserByAuthIdAsync(Guid authId)
+        {
+            var user = await _userRepository.GetUserByAuthIdAsync(authId);
+            if (user == null) return null;
+
+            return MapToUserDto(user);
+        }
+
+        // ✅ NEW: Get user profile by AuthId (for profile page)
+        public async Task<UserDto?> GetUserProfileByAuthIdAsync(Guid authId)
+        {
+            var user = await _userRepository.GetUserByAuthIdAsync(authId);
+            if (user == null) return null;
+
+            return MapToUserDto(user);
+        }
+
+        // ✅ NEW: Update user profile
+        public async Task<UserDto> UpdateUserProfileAsync(Guid authId, UpdateUserProfileDto dto)
+        {
+            var user = await _userRepository.GetUserByAuthIdAsync(authId);
+            if (user == null)
+            {
+                throw new InvalidOperationException("User not found");
+            }
+
+            // Update only provided fields (partial update)
+            if (!string.IsNullOrWhiteSpace(dto.Name))
+            {
+                user.Name = dto.Name.Trim();
+            }
+
+            if (dto.Phone != null) // Allow empty string to clear phone
+            {
+                user.Phone = dto.Phone.Trim();
+            }
+
+            if (dto.DeliveryAddress != null) // Allow empty string to clear address
+            {
+                user.DeliveryAddress = dto.DeliveryAddress.Trim();
+            }
+
+            user.UpdatedAt = DateTime.UtcNow;
+
+            await _userRepository.UpdateUserAsync(user);
+            await _userRepository.SaveChangesAsync();
+
+            return MapToUserDto(user);
+        }
+
+        // ✅ HELPER: Map User entity to UserDto
+        private UserDto MapToUserDto(User user)
+        {
+            return new UserDto
+            {
+                UserId = user.UserId,
+                Name = user.Name,
+                Email = user.Email,
+                Phone = user.Phone,
+                DeliveryAddress = user.DeliveryAddress,
+                AccountStatus = user.AccountStatus,
+                WalletBalance = user.WalletBalance,
+                CreatedAt = user.CreatedAt,
+                UpdatedAt = user.UpdatedAt,
+                ProfileComplete = !string.IsNullOrWhiteSpace(user.Name) &&
+                                !string.IsNullOrWhiteSpace(user.Phone) &&
+                                !string.IsNullOrWhiteSpace(user.DeliveryAddress)
+            };
+        }
+    }
+}
+using HealthyBreakfastApp.Application.Interfaces;
+using HealthyBreakfastApp.Domain.Entities;
+using HealthyBreakfastApp.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
+
+namespace HealthyBreakfastApp.Infrastructure.Repositories
+{
+    public class UserRepository : IUserRepository
+    {
+        private readonly AppDbContext _context;
+
+        public UserRepository(AppDbContext context)
+        {
+            _context = context;
+        }
+
+        // ✅ FIXED: Now includes AuthMapping
+        public async Task<User?> GetByIdAsync(int id)
+        {
+            return await _context.Users
+                .Include(u => u.AuthMapping)
+                .FirstOrDefaultAsync(u => u.UserId == id);
+        }
+
+        public async Task UpdateUserAsync(User user)
+        {
+            _context.Users.Update(user);
+            // SaveChangesAsync will be called by the service
+        }
+
+        public async Task<User?> GetByEmailAsync(string email)
+        {
+            return await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
+        }
+
+        public async Task<List<User>> GetAllAsync()
+        {
+            return await _context.Users.ToListAsync();
+        }
+
+        public async Task AddUserAsync(User user)
+        {
+            await _context.Users.AddAsync(user);
+        }
+
+        public async Task SaveChangesAsync()
+        {
+            await _context.SaveChangesAsync();
+        }
+
+        // ✅ NEW METHOD: Get user by Supabase AuthId (used by ScheduledOrderService)
+        public async Task<User?> GetByAuthIdAsync(Guid authId)
+        {
+            return await _context.Users
+                .Include(u => u.AuthMapping)
+                .FirstOrDefaultAsync(u => u.AuthMapping != null && u.AuthMapping.AuthId == authId);
+        }
+
+        // ✅ NEW METHOD: Get user by Supabase AuthId (alternative name for clarity)
+        public async Task<User?> GetUserByAuthIdAsync(Guid authId)
+        {
+            return await _context.Users
+                .Include(u => u.AuthMapping)
+                .FirstOrDefaultAsync(u => u.AuthMapping != null && u.AuthMapping.AuthId == authId);
+        }
+
+        // ✅ NEW METHOD: Create user with auth mapping in transaction
+        public async Task<User> CreateUserWithAuthMappingAsync(User user, Guid authId)
+        {
+            using var transaction = await _context.Database.BeginTransactionAsync();
+            try
+            {
+                // Create user
+                _context.Users.Add(user);
+                await _context.SaveChangesAsync();
+
+                // Create auth mapping
+                var authMapping = new UserAuthMapping
+                {
+                    AuthId = authId,
+                    UserId = user.UserId,
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                _context.UserAuthMappings.Add(authMapping);
+                await _context.SaveChangesAsync();
+                await transaction.CommitAsync();
+
+                return user;
+            }
+            catch
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
+        }
+    }
+}
+
+
+================ SUBSCRIPTIONS ================
+using System.Security.Claims;
+using HealthyBreakfastApp.Application.DTOs;
+using HealthyBreakfastApp.Application.Interfaces;
+using HealthyBreakfastApp.Infrastructure.Data;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+
+namespace HealthyBreakfastApp.WebAPI.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    [Authorize]
+    public class SubscriptionsController : ControllerBase
+    {
+        private readonly ISubscriptionService _subscriptionService;
+        private readonly ISubscriptionSchedulingService _subscriptionSchedulingService;
+        private readonly IScheduledOrderService _scheduledOrderService;
+        private readonly IScheduledOrderRepository _scheduledOrderRepository;
+        private readonly AppDbContext _context;
+        private readonly ILogger<SubscriptionsController> _logger;
+
+        public SubscriptionsController(
+            ISubscriptionService subscriptionService,
+            ISubscriptionSchedulingService subscriptionSchedulingService,
+            IScheduledOrderService scheduledOrderService,
+            IScheduledOrderRepository scheduledOrderRepository,
+            AppDbContext context,
+            ILogger<SubscriptionsController> logger)
+        {
+            _subscriptionService = subscriptionService;
+            _subscriptionSchedulingService = subscriptionSchedulingService;
+            _scheduledOrderService = scheduledOrderService;
+            _scheduledOrderRepository = scheduledOrderRepository;
+            _context = context;
+            _logger = logger;
+        }
+
+        // Helper to get current userId from JWT + AuthMapping
+        private async Task<int?> GetCurrentUserIdAsync()
+        {
+            var authId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(authId))
+                return null;
+
+            var mapping = await _context.UserAuthMappings
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.AuthId.ToString() == authId);
+
+            return mapping?.UserId;
+        }
+
+        private async Task<Guid?> GetCurrentAuthIdAsync()
+        {
+            var authId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(authId) || !Guid.TryParse(authId, out var guid))
+                return null;
+            return guid;
+        }
+
+        [HttpGet]
+        public async Task<ActionResult<IEnumerable<SubscriptionDto>>> GetAllSubscriptions()
+        {
+            var userId = await GetCurrentUserIdAsync();
+            if (userId == null)
+                return Unauthorized();
+
+            var subscriptions = await _subscriptionService.GetSubscriptionsByUserIdAsync(userId.Value);
+            return Ok(subscriptions);
+        }
+
+        [HttpGet("{id}")]
+        public async Task<ActionResult<SubscriptionDto>> GetSubscription(int id)
+        {
+            var userId = await GetCurrentUserIdAsync();
+            if (userId == null)
+                return Unauthorized();
+
+            var subscription = await _subscriptionService.GetSubscriptionByIdAsync(id);
+            if (subscription == null)
+                return NotFound();
+
+            if (subscription.UserId != userId.Value)
+                return Forbid();
+
+            return Ok(subscription);
+        }
+
+        [HttpGet("user/me")]
+        public async Task<ActionResult<IEnumerable<SubscriptionDto>>> GetMySubscriptions()
+        {
+            var userId = await GetCurrentUserIdAsync();
+            if (userId == null)
+                return Unauthorized();
+
+            var subscriptions = await _subscriptionService.GetSubscriptionsByUserIdAsync(userId.Value);
+            return Ok(subscriptions);
+        }
+
+        [HttpGet("active")]
+        public async Task<ActionResult<IEnumerable<SubscriptionDto>>> GetActiveSubscriptions()
+        {
+            var userId = await GetCurrentUserIdAsync();
+            if (userId == null)
+                return Unauthorized();
+
+            var subscriptions = await _subscriptionService.GetActiveSubscriptionsAsync();
+            return Ok(subscriptions);
+        }
+
+        /// <summary>
+        /// ✅ UPDATED: Creates subscription AND generates tomorrow's order immediately
+        /// </summary>
+        [HttpPost]
+        public async Task<ActionResult<SubscriptionDto>> CreateSubscription(CreateSubscriptionDto createSubscriptionDto)
+        {
+            var userId = await GetCurrentUserIdAsync();
+            var authId = await GetCurrentAuthIdAsync();
+            
+            if (userId == null || authId == null)
+                return Unauthorized();
+
+            try
+            {
+                _logger.LogInformation($"📦 Creating subscription for user {userId}");
+
+                // 1. Create subscription
+                var internalDto = new CreateSubscriptionInternalDto
+                {
+                    UserId = userId.Value,
+                    UserMealId = createSubscriptionDto.UserMealId,
+                    Frequency = createSubscriptionDto.Frequency,
+                    StartDate = createSubscriptionDto.StartDate,
+                    EndDate = createSubscriptionDto.EndDate,
+                    Active = createSubscriptionDto.Active,
+                    WeeklySchedule = createSubscriptionDto.WeeklySchedule
+                };
+
+                var subscription = await _subscriptionService.CreateSubscriptionAsync(internalDto);
+
+                _logger.LogInformation($"✅ Subscription #{subscription.SubscriptionId} created");
+
+                // ✅ Order is already created inside CreateSubscriptionAsync() via CreateFirstScheduledOrderAsync()
+                // No need to generate it again!
+
+                return CreatedAtAction(nameof(GetSubscription),
+                    new { id = subscription.SubscriptionId },
+                    subscription);
+            }
+            catch (InvalidOperationException ex)
+            {
+                // ✅ This catches duplicate subscription attempts
+                _logger.LogWarning(ex, "⚠️ Duplicate subscription attempt blocked");
+                return Conflict(new { message = ex.Message }); // ✅ Returns 409 Conflict
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                // ✅ This catches security violations
+                _logger.LogWarning(ex, "⚠️ Unauthorized subscription attempt");
+                return Forbid(); // ✅ Returns 403 Forbidden
+            }
+            catch (ArgumentException ex)
+            {
+                _logger.LogError(ex, "❌ Invalid argument");
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ Unexpected error creating subscription");
+                return StatusCode(500, new { message = "An error occurred while creating the subscription" });
+            }
+        }
+
+        [HttpPut("{id}")]
+        public async Task<ActionResult<SubscriptionDto>> UpdateSubscription(int id, UpdateSubscriptionDto updateSubscriptionDto)
+        {
+            var userId = await GetCurrentUserIdAsync();
+            if (userId == null)
+                return Unauthorized();
+
+            var existing = await _subscriptionService.GetSubscriptionByIdAsync(id);
+            if (existing == null)
+                return NotFound();
+
+            if (existing.UserId != userId.Value)
+                return Forbid();
+
+            try
+            {
+                var subscription = await _subscriptionService.UpdateSubscriptionAsync(id, updateSubscriptionDto);
+                if (subscription == null)
+                    return NotFound();
+
+                return Ok(subscription);
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        [HttpDelete("{id}")]
+        public async Task<IActionResult> DeleteSubscription(int id)
+        {
+            var userId = await GetCurrentUserIdAsync();
+            if (userId == null)
+                return Unauthorized();
+
+            try
+            {
+                var existing = await _subscriptionService.GetSubscriptionByIdAsync(id);
+                if (existing == null)
+                    return NotFound();
+
+                if (existing.UserId != userId.Value)
+                    return Forbid();
+
+                _logger.LogInformation($"🗑️ Deleting subscription #{id}");
+
+                // ✅ Delete associated scheduled orders first
+                try
+                {
+                    var orders = await _scheduledOrderRepository.GetBySubscriptionIdAsync(id);
+                    foreach (var order in orders)
+                    {
+                        await _scheduledOrderRepository.DeleteAsync(order.ScheduledOrderId);
+                        _logger.LogInformation($"✅ Deleted order #{order.ScheduledOrderId}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, $"⚠️ Failed to delete orders for subscription #{id}");
+                }
+
+                // ✅ Delete the subscription
+                var result = await _subscriptionService.DeleteSubscriptionAsync(id);
+                if (!result)
+                {
+                    _logger.LogWarning($"⚠️ Subscription #{id} not found during delete");
+                    return NotFound();
+                }
+
+                _logger.LogInformation($"✅ Subscription #{id} deleted successfully");
+                return NoContent();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"❌ Error deleting subscription #{id}");
+                return StatusCode(500, new { message = "Failed to delete subscription", error = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// ✅ UPDATED: Activates subscription AND generates tomorrow's order immediately
+        /// </summary>
+        [HttpPatch("{id}/activate")]
+        public async Task<IActionResult> ActivateSubscription(int id)
+        {
+            var userId = await GetCurrentUserIdAsync();
+            var authId = await GetCurrentAuthIdAsync();
+            
+            if (userId == null || authId == null)
+                return Unauthorized();
+
+            var existing = await _subscriptionService.GetSubscriptionByIdAsync(id);
+            if (existing == null || existing.UserId != userId.Value)
+                return Forbid();
+
+            _logger.LogInformation($"▶️ Resuming subscription #{id}");
+
+            var result = await _subscriptionService.ActivateSubscriptionAsync(id);
+            
+            if (!result)
+                return NotFound();
+
+            // ✅ NEW: Generate tomorrow's order immediately when resuming
+            try
+            {
+                await _subscriptionSchedulingService.GenerateOrderForSubscriptionAsync(id, authId.Value);
+                _logger.LogInformation($"✅ Generated order for resumed subscription #{id}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, $"⚠️ Failed to generate order for resumed subscription #{id}");
+            }
+
+            return Ok(new { message = "Subscription activated and order generated" });
+        }
+
+        /// <summary>
+        /// ✅ UPDATED: Deactivates subscription AND cancels tomorrow's order
+        /// </summary>
+        [HttpPatch("{id}/deactivate")]
+        public async Task<IActionResult> DeactivateSubscription(int id)
+        {
+            var userId = await GetCurrentUserIdAsync();
+            var authId = await GetCurrentAuthIdAsync();
+            
+            if (userId == null || authId == null)
+                return Unauthorized();
+
+            var existing = await _subscriptionService.GetSubscriptionByIdAsync(id);
+            if (existing == null || existing.UserId != userId.Value)
+                return Forbid();
+
+            _logger.LogInformation($"⏸️ Pausing subscription #{id}");
+
+            // ✅ NEW: Cancel tomorrow's order when pausing
+            try
+            {
+                await _subscriptionSchedulingService.CancelOrderForSubscriptionAsync(id, authId.Value);
+                _logger.LogInformation($"✅ Cancelled order for paused subscription #{id}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, $"⚠️ Failed to cancel order for subscription #{id}");
+            }
+
+            var result = await _subscriptionService.DeactivateSubscriptionAsync(id);
+            
+            return result ? Ok(new { message = "Subscription paused and order cancelled" }) : NotFound();
+        }
+
+        /// <summary>
+        /// ✅ Manual endpoint to sync all subscription dates
+        /// </summary>
+        [HttpPost("sync-dates")]
+        public async Task<IActionResult> SyncSubscriptionDates()
+        {
+            try
+            {
+                await _subscriptionService.UpdateNextScheduledDatesAsync();
+                
+                return Ok(new 
+                { 
+                    success = true,
+                    message = "Subscription dates synchronized successfully",
+                    timestamp = DateTime.UtcNow
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new 
+                { 
+                    success = false,
+                    message = "Failed to sync subscription dates", 
+                    error = ex.Message 
+                });
+            }
+        }
+    }
+}
+// HealthyBreakfastApp.Application/Services/SubscriptionService.cs
+
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+using System.Linq;
+using System.Threading.Tasks;
+using HealthyBreakfastApp.Application.DTOs;
+using HealthyBreakfastApp.Application.Interfaces;
+using HealthyBreakfastApp.Domain.Entities;
+using HealthyBreakfastApp.Domain.Enums;
+using Microsoft.Extensions.Logging;
+
+namespace HealthyBreakfastApp.Application.Services
+{
+    public class SubscriptionService : ISubscriptionService
+    {
+        private readonly ISubscriptionRepository _subscriptionRepository;
+        private readonly IUserRepository _userRepository;
+        private readonly IUserMealRepository _userMealRepository;
+        private readonly IUserAddressRepository _userAddressRepository;
+        private readonly IScheduledOrderRepository _scheduledOrderRepository;
+        private readonly IIngredientRepository _ingredientRepository;
+        private readonly IUserMealIngredientRepository _userMealIngredientRepository;
+        private readonly ILogger<SubscriptionService> _logger;
+        private readonly IUserLoader _userLoader;
+
+        // ✅ FIX: Use IST timezone for consistent date calculations
+        private static readonly TimeZoneInfo IstTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
+
+        public SubscriptionService(
+            ISubscriptionRepository subscriptionRepository,
+            IUserRepository userRepository,
+            IUserMealRepository userMealRepository,
+            IUserAddressRepository userAddressRepository,
+            IScheduledOrderRepository scheduledOrderRepository,
+            IIngredientRepository ingredientRepository,
+            IUserMealIngredientRepository userMealIngredientRepository,
+            ILogger<SubscriptionService> logger,
+            IUserLoader userLoader)
+        {
+            _subscriptionRepository = subscriptionRepository;
+            _userRepository = userRepository;
+            _userMealRepository = userMealRepository;
+            _userAddressRepository = userAddressRepository;
+            _scheduledOrderRepository = scheduledOrderRepository;
+            _ingredientRepository = ingredientRepository;
+            _userMealIngredientRepository = userMealIngredientRepository;
+            _logger = logger;
+            _userLoader = userLoader;
+        }
+
+        public async Task<IEnumerable<SubscriptionDto>> GetAllSubscriptionsAsync()
+        {
+            var subscriptions = await _subscriptionRepository.GetAllAsync();
+            return subscriptions.Select(MapToDto);
+        }
+
+        public async Task<SubscriptionDto?> GetSubscriptionByIdAsync(int subscriptionId)
+        {
+            var subscription = await _subscriptionRepository.GetByIdAsync(subscriptionId);
+            return subscription != null ? MapToDto(subscription) : null;
+        }
+
+        public async Task<IEnumerable<SubscriptionDto>> GetSubscriptionsByUserIdAsync(int userId)
+        {
+            var subscriptions = await _subscriptionRepository.GetByUserIdAsync(userId);
+            return subscriptions.Select(MapToDto);
+        }
+
+        public async Task<IEnumerable<SubscriptionDto>> GetActiveSubscriptionsAsync()
+        {
+            var subscriptions = await _subscriptionRepository.GetActiveSubscriptionsAsync();
+            return subscriptions.Select(MapToDto);
+        }
+
+        public async Task<SubscriptionDto> CreateSubscriptionAsync(CreateSubscriptionInternalDto dto)
+        {
+            // ✅ FIXED: Load user WITH AuthMapping eagerly
+            var user = await _userLoader.GetUserWithAuthMappingAsync(dto.UserId);
+            if (user == null)
+                throw new ArgumentException("User not found");
+
+            var userMeal = await _userMealRepository.GetByIdAsync(dto.UserMealId);
+            if (userMeal == null)
+                throw new ArgumentException("User meal not found");
+
+            // ✅ ADD: Check for existing active subscription for this UserMeal
+            _logger.LogInformation("🔍 Checking for existing subscription: UserId={UserId}, UserMealId={UserMealId}", dto.UserId, dto.UserMealId);
+            
+            var existingSubscription = await _subscriptionRepository.GetActiveSubscriptionByUserMealIdAsync(
+                dto.UserId, 
+                dto.UserMealId
+            );
+            
+            if (existingSubscription != null)
+            {
+                _logger.LogWarning(
+                    "❌ Duplicate subscription attempt: User {UserId} tried to subscribe to UserMeal {UserMealId} again. Existing subscription ID: {ExistingSubId}",
+                    dto.UserId, dto.UserMealId, existingSubscription.SubscriptionId);
+                    
+                throw new InvalidOperationException(
+                    $"You already have an active subscription for '{userMeal.MealName}'. " +
+                    "Please edit your existing subscription instead of creating a new one."
+                );
+            }
+
+            // ✅ ADD: Security check - ensure user owns this meal
+            if (userMeal.UserId != dto.UserId)
+            {
+                _logger.LogWarning(
+                    "❌ Security violation: User {UserId} attempted to subscribe to UserMeal {UserMealId} owned by {OwnerId}",
+                    dto.UserId, dto.UserMealId, userMeal.UserId);
+                    
+                throw new UnauthorizedAccessException(
+                    "You can only subscribe to your own meals"
+                );
+            }
+
+            _logger.LogInformation($"✅ Validation passed. Creating new subscription for UserMeal {dto.UserMealId}");
+
+            // ✅ ADD: Get user's primary address
+            var primaryAddress = await _userAddressRepository.GetPrimaryAddressAsync(dto.UserId);
+            if (primaryAddress == null)
+            {
+                throw new InvalidOperationException(
+                    "Please set a default delivery address before creating a subscription"
+                );
+            }
+
+            if (dto.StartDate >= dto.EndDate)
+                throw new ArgumentException("Start date must be before end date");
+
+            if (dto.Frequency == SubscriptionFrequency.Weekly)
+            {
+                if (dto.WeeklySchedule == null || !dto.WeeklySchedule.Any())
+                {
+                    throw new ArgumentException("Weekly schedule is required for Weekly subscriptions");
+                }
+
+                if (dto.WeeklySchedule.Any(s => s.DayOfWeek < 0 || s.DayOfWeek > 6))
+                {
+                    throw new ArgumentException("DayOfWeek must be between 0 (Sunday) and 6 (Saturday)");
+                }
+
+                if (dto.WeeklySchedule.Any(s => s.Quantity <= 0))
+                {
+                    throw new ArgumentException("Quantity must be greater than 0");
+                }
+
+                var duplicateDays = dto.WeeklySchedule
+                    .GroupBy(s => s.DayOfWeek)
+                    .Where(g => g.Count() > 1)
+                    .Select(g => ((DayOfWeek)g.Key).ToString());
+                    
+                if (duplicateDays.Any())
+                {
+                    throw new ArgumentException($"Duplicate days found: {string.Join(", ", duplicateDays)}");
+                }
+            }
+
+            var subscription = new Subscription
+            {
+                UserId = dto.UserId,
+                UserMealId = dto.UserMealId,
+                Frequency = dto.Frequency,
+                StartDate = dto.StartDate,
+                EndDate = dto.EndDate,
+                Active = dto.Active,
+                DeliveryAddressId = primaryAddress.Id, // ✅ ADD: Link to primary address
+                NextScheduledDate = CalculateInitialNextDeliveryDate(dto.StartDate, dto.Frequency, dto.WeeklySchedule)
+            };
+
+            var createdSubscription = await _subscriptionRepository.CreateAsync(subscription);
+
+            if (dto.Frequency == SubscriptionFrequency.Weekly && dto.WeeklySchedule != null)
+            {
+                var now = DateTime.UtcNow;
+                var schedules = dto.WeeklySchedule.Select(s => new SubscriptionSchedule
+                {
+                    SubscriptionId = createdSubscription.SubscriptionId,
+                    DayOfWeek = s.DayOfWeek,
+                    Quantity = s.Quantity,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                });
+
+                await _subscriptionRepository.AddSchedulesAsync(createdSubscription.SubscriptionId, schedules);
+            }
+
+            // ✅ NEW: Create first scheduled order for immediate visibility
+            Console.WriteLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            Console.WriteLine("🟢 BEFORE CreateFirstScheduledOrderAsync call");
+            Console.WriteLine($"🟢 Subscription: {createdSubscription.SubscriptionId}");
+            Console.WriteLine($"🟢 User: {user.UserId}");
+            Console.WriteLine($"🟢 UserMeal: {userMeal.UserMealId}");
+            Console.WriteLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+            var firstOrderResult = await CreateFirstScheduledOrderAsync(
+                createdSubscription, 
+                user,              // ✅ Pass explicitly
+                userMeal,          // ✅ Pass explicitly
+                primaryAddress     // ✅ Pass explicitly
+            );
+
+            Console.WriteLine("🟢 AFTER CreateFirstScheduledOrderAsync call");
+            Console.WriteLine($"🟢 FirstOrderResult: Success={firstOrderResult.Success}, Error={firstOrderResult.Error ?? "null"}");
+            Console.WriteLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+            // ✅ Log result but don't fail subscription creation
+            if (!firstOrderResult.Success)
+            {
+                _logger.LogWarning($"⚠️ Subscription created but first order failed: {firstOrderResult.Error}");
+            }
+
+            var result = await _subscriptionRepository.GetByIdAsync(createdSubscription.SubscriptionId);
+            return MapToDto(result!);
+        }
+
+        // ✅ Return result object instead of throwing
+        private async Task<(bool Success, string? Error)> CreateFirstScheduledOrderAsync(
+            Subscription subscription,
+            User user,
+            UserMeal userMeal,
+            UserAddress deliveryAddress)
+        {
+            // 🔴 ADD AGGRESSIVE DEBUG LOGGING
+            Console.WriteLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            Console.WriteLine("🔴 CreateFirstScheduledOrderAsync CALLED!");
+            Console.WriteLine($"🔴 SubscriptionId: {subscription.SubscriptionId}");
+            Console.WriteLine($"🔴 UserId: {user.UserId}");
+            Console.WriteLine($"🔴 UserMealId: {userMeal.UserMealId}");
+            Console.WriteLine($"🔴 UserMeal Name: {userMeal.MealName}");
+            Console.WriteLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            
+            try
+            {
+                _logger.LogInformation($"📦 Creating first order for subscription #{subscription.SubscriptionId}");
+
+                // Load ingredients from UserMeal
+                var ingredients = await _userMealIngredientRepository.GetByUserMealIdAsync(userMeal.UserMealId);
+                
+                Console.WriteLine($"🔴 Loaded {ingredients.Count()} ingredients from UserMeal #{userMeal.UserMealId}");
+                
+                if (!ingredients.Any())
+                {
+                    var error = $"No ingredients found for UserMeal #{userMeal.UserMealId}";
+                    _logger.LogWarning($"⚠️ {error}");
+                    Console.WriteLine($"🔴 ERROR: {error}");
+                    return (false, error);
+                }
+
+                _logger.LogInformation($"✅ Found {ingredients.Count()} ingredients");
+
+                // Calculate first delivery date
+                var firstDeliveryDate = CalculateFirstDeliveryDate(subscription);
+                _logger.LogInformation($"📅 First delivery: {firstDeliveryDate:yyyy-MM-dd}");
+
+                // Build scheduled order (async)
+                var scheduledOrder = await BuildScheduledOrder(
+                    subscription, 
+                    user, 
+                    userMeal, 
+                    deliveryAddress, 
+                    ingredients,
+                    firstDeliveryDate
+                );
+
+                // Save to database
+                var created = await _scheduledOrderRepository.CreateAsync(scheduledOrder);
+                
+                Console.WriteLine($"🔴 SUCCESS: ScheduledOrder #{created.ScheduledOrderId} created for {firstDeliveryDate:yyyy-MM-dd}");
+                _logger.LogInformation($"✅ ScheduledOrder #{created.ScheduledOrderId} created successfully for {firstDeliveryDate:yyyy-MM-dd}");
+                return (true, null);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"❌ Failed to create first order for subscription #{subscription.SubscriptionId}");
+                Console.WriteLine($"🔴 ERROR: Failed to create first order - {ex.Message}");
+                Console.WriteLine($"🔴 StackTrace: {ex.StackTrace}");
+                return (false, ex.Message);
+            }
+        }
+
+        // ✅ Helper method to calculate first delivery date
+        private DateOnly CalculateFirstDeliveryDate(Subscription subscription)
+        {
+            var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, IstTimeZone);
+            var today = DateOnly.FromDateTime(istNow);
+            
+            // If subscription starts in the future, use start date
+            if (subscription.StartDate > today)
+            {
+                return subscription.StartDate;
+            }
+
+            // Subscription starts today or in past - first delivery is tomorrow
+            var firstDeliveryDate = today.AddDays(1);
+            
+            // For weekly subscriptions, check if tomorrow is a scheduled day
+            if (subscription.Frequency == SubscriptionFrequency.Weekly)
+            {
+                var tomorrowDayOfWeek = (int)firstDeliveryDate.DayOfWeek;
+                var isScheduledDay = subscription.WeeklySchedule.Any(ws => ws.DayOfWeek == tomorrowDayOfWeek);
+                
+                if (!isScheduledDay)
+                {
+                    _logger.LogInformation($"⏭️ Tomorrow is not a scheduled day, finding next delivery date");
+                    
+                    // Find next scheduled day
+                    var scheduledDays = subscription.WeeklySchedule.Select(s => s.DayOfWeek).ToList();
+                    firstDeliveryDate = FindNextWeeklyDate(today, scheduledDays);
+                }
+            }
+
+            return firstDeliveryDate;
+        }
+
+        // ✅ Helper method to build scheduled order
+        private async Task<ScheduledOrder> BuildScheduledOrder(
+            Subscription subscription,
+            User user,
+            UserMeal userMeal,
+            UserAddress deliveryAddress,
+            IEnumerable<UserMealIngredient> ingredients,
+            DateOnly firstDeliveryDate)
+        {
+            // Calculate total price
+            decimal totalPrice = 0;
+            var scheduledOrderIngredients = new List<ScheduledOrderIngredient>();
+
+            foreach (var userMealIngredient in ingredients)
+            {
+                var ingredient = await _ingredientRepository.GetByIdAsync(userMealIngredient.IngredientId);
+                if (ingredient == null) continue;
+
+                var quantity = userMealIngredient.Quantity;
+                var unitPrice = ingredient.Price;
+                var itemTotal = unitPrice * quantity;
+                
+                totalPrice += itemTotal;
+
+                scheduledOrderIngredients.Add(new ScheduledOrderIngredient
+                {
+                    IngredientId = ingredient.IngredientId,
+                    Quantity = quantity,
+                    UnitPrice = unitPrice,
+                    TotalPrice = itemTotal,
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
+
+            var deliveryDateTime = firstDeliveryDate.ToDateTime(TimeOnly.MinValue);
+            var deliveryDateTimeUtc = DateTime.SpecifyKind(deliveryDateTime, DateTimeKind.Utc);
+
+            return new ScheduledOrder
+            {
+                UserId = subscription.UserId,
+                AuthId = user.AuthMapping?.AuthId ?? Guid.Empty, // ✅ Get AuthId from UserAuthMapping
+                MealName = userMeal.MealName,
+                ScheduledFor = deliveryDateTimeUtc,
+                DeliveryTimeSlot = "8:00 AM",
+                TotalPrice = totalPrice,
+                OrderStatus = "scheduled",
+                CanModify = true,
+                ExpiresAt = deliveryDateTimeUtc.AddDays(1),
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow,
+                DeliveryAddressId = deliveryAddress.Id,
+                SubscriptionId = subscription.SubscriptionId, // ✅ Link to subscription
+                Ingredients = scheduledOrderIngredients
+            };
+        }
+
+        public async Task<SubscriptionDto?> UpdateSubscriptionAsync(int subscriptionId, UpdateSubscriptionDto dto)
+        {
+            var subscription = await _subscriptionRepository.GetByIdAsync(subscriptionId);
+            if (subscription == null)
+                return null;
+
+            if (dto.Frequency.HasValue)
+                subscription.Frequency = dto.Frequency.Value;
+
+            if (dto.StartDate.HasValue)
+                subscription.StartDate = dto.StartDate.Value;
+
+            if (dto.EndDate.HasValue)
+                subscription.EndDate = dto.EndDate.Value;
+
+            if (dto.Active.HasValue)
+                subscription.Active = dto.Active.Value;
+
+            if (subscription.StartDate >= subscription.EndDate)
+                throw new ArgumentException("Start date must be before end date");
+
+            if (dto.WeeklySchedule != null && subscription.Frequency == SubscriptionFrequency.Weekly)
+            {
+                if (dto.WeeklySchedule.Any(s => s.DayOfWeek < 0 || s.DayOfWeek > 6))
+                {
+                    throw new ArgumentException("DayOfWeek must be between 0 (Sunday) and 6 (Saturday)");
+                }
+
+                if (dto.WeeklySchedule.Any(s => s.Quantity <= 0))
+                {
+                    throw new ArgumentException("Quantity must be greater than 0");
+                }
+
+                var duplicateDays = dto.WeeklySchedule
+                    .GroupBy(s => s.DayOfWeek)
+                    .Where(g => g.Count() > 1)
+                    .Select(g => ((DayOfWeek)g.Key).ToString());
+                    
+                if (duplicateDays.Any())
+                {
+                    throw new ArgumentException($"Duplicate days found: {string.Join(", ", duplicateDays)}");
+                }
+
+                await _subscriptionRepository.RemoveSchedulesAsync(subscriptionId);
+
+                if (dto.WeeklySchedule.Any())
+                {
+                    var now = DateTime.UtcNow;
+                    var schedules = dto.WeeklySchedule.Select(s => new SubscriptionSchedule
+                    {
+                        SubscriptionId = subscriptionId,
+                        DayOfWeek = s.DayOfWeek,
+                        Quantity = s.Quantity,
+                        CreatedAt = now,
+                        UpdatedAt = now
+                    });
+
+                    await _subscriptionRepository.AddSchedulesAsync(subscriptionId, schedules);
+                }
+            }
+
+            var today = GetTodayInIST();
+            subscription.NextScheduledDate = CalculateNextDeliveryDate(subscription, today);
+
+            var updatedSubscription = await _subscriptionRepository.UpdateAsync(subscription);
+            
+            var result = await _subscriptionRepository.GetByIdAsync(subscriptionId);
+            return MapToDto(result!);
+        }
+
+        public async Task<bool> DeleteSubscriptionAsync(int subscriptionId)
+        {
+            return await _subscriptionRepository.DeleteAsync(subscriptionId);
+        }
+
+        public async Task<bool> ActivateSubscriptionAsync(int subscriptionId)
+        {
+            var subscription = await _subscriptionRepository.GetByIdAsync(subscriptionId);
+            if (subscription == null)
+                return false;
+
+            subscription.Active = true;
+            await _subscriptionRepository.UpdateAsync(subscription);
+            return true;
+        }
+
+        public async Task<bool> DeactivateSubscriptionAsync(int subscriptionId)
+        {
+            var subscription = await _subscriptionRepository.GetByIdAsync(subscriptionId);
+            if (subscription == null)
+                return false;
+
+            subscription.Active = false;
+            await _subscriptionRepository.UpdateAsync(subscription);
+            return true;
+        }
+
+        /// <summary>
+        /// ✅ FIXED: Updates NextScheduledDate for all active subscriptions using IST timezone
+        /// </summary>
+        public async Task UpdateNextScheduledDatesAsync()
+        {
+            var activeSubscriptions = await _subscriptionRepository.GetActiveSubscriptionsAsync();
+            var today = GetTodayInIST();
+            
+            var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, IstTimeZone);
+            
+            Console.WriteLine($"[SYNC] ========================================");
+            Console.WriteLine($"[SYNC] Starting subscription date sync");
+            Console.WriteLine($"[SYNC] UTC Time: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}");
+            Console.WriteLine($"[SYNC] IST Time: {istNow:yyyy-MM-dd HH:mm:ss}");
+            Console.WriteLine($"[SYNC] Today (IST): {today:yyyy-MM-dd}");
+            Console.WriteLine($"[SYNC] Active subscriptions found: {activeSubscriptions.Count()}");
+            Console.WriteLine($"[SYNC] ========================================");
+            
+            int updatedCount = 0;
+            int skippedCount = 0;
+            
+            foreach (var subscription in activeSubscriptions)
+            {
+                var oldNextDate = subscription.NextScheduledDate;
+                var newNextDate = CalculateNextDeliveryDate(subscription, today);
+                
+                Console.WriteLine($"[SYNC] Sub #{subscription.SubscriptionId}: " +
+                                 $"Freq={subscription.Frequency}, " +
+                                 $"Start={subscription.StartDate:yyyy-MM-dd}, " +
+                                 $"OldNext={oldNextDate?.ToString("yyyy-MM-dd") ?? "NULL"}, " +
+                                 $"NewNext={newNextDate:yyyy-MM-dd}");
+                
+                if (subscription.NextScheduledDate != newNextDate)
+                {
+                    subscription.NextScheduledDate = newNextDate;
+                    await _subscriptionRepository.UpdateAsync(subscription);
+                    updatedCount++;
+                    Console.WriteLine($"[SYNC]   ✅ UPDATED to {newNextDate:yyyy-MM-dd}");
+                }
+                else
+                {
+                    skippedCount++;
+                    Console.WriteLine($"[SYNC]   ⏭️ SKIPPED (already correct)");
+                }
+            }
+            
+            Console.WriteLine($"[SYNC] ========================================");
+            Console.WriteLine($"[SYNC] Sync complete: {updatedCount} updated, {skippedCount} skipped");
+            Console.WriteLine($"[SYNC] ========================================");
+        }
+
+        /// <summary>
+        /// ✅ NEW: Get today's date in IST timezone
+        /// </summary>
+        private static DateOnly GetTodayInIST()
+        {
+            var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, IstTimeZone);
+            return DateOnly.FromDateTime(istNow);
+        }
+
+        private static DateOnly CalculateInitialNextDeliveryDate(
+            DateOnly startDate, 
+            SubscriptionFrequency frequency,
+            List<WeeklyScheduleDto>? weeklySchedule)
+        {
+            var today = GetTodayInIST();
+            
+            if (startDate > today)
+                return startDate;
+            
+            switch (frequency)
+            {
+                case SubscriptionFrequency.Daily:
+                    return today >= startDate ? today.AddDays(1) : startDate;
+                
+                case SubscriptionFrequency.Weekly:
+                    if (weeklySchedule == null || !weeklySchedule.Any())
+                        return today.AddDays(7);
+                    
+                    return FindNextWeeklyDate(today, weeklySchedule.Select(s => s.DayOfWeek).ToList());
+                
+                case SubscriptionFrequency.Monthly:
+                    return startDate.AddMonths(1);
+                
+                default:
+                    return today.AddDays(1);
+            }
+        }
+
+        /// <summary>
+        /// ✅ FIXED: Always recalculate next delivery date based on IST timezone
+        /// </summary>
+        private static DateOnly CalculateNextDeliveryDate(Subscription subscription, DateOnly fromDate)
+        {
+            switch (subscription.Frequency)
+            {
+                case SubscriptionFrequency.Daily:
+                    // ✅ FIX: For daily subscriptions started in the past or today, next delivery is tomorrow
+                    if (subscription.StartDate <= fromDate)
+                    {
+                        return fromDate.AddDays(1); // Tomorrow (IST)
+                    }
+                    // If subscription starts in the future, next delivery is start date
+                    return subscription.StartDate;
+                
+                case SubscriptionFrequency.Weekly:
+                    if (!subscription.WeeklySchedule.Any())
+                        return fromDate.AddDays(7);
+                    
+                    var scheduledDays = subscription.WeeklySchedule.Select(s => s.DayOfWeek).ToList();
+                    return FindNextWeeklyDate(fromDate, scheduledDays);
+                
+                case SubscriptionFrequency.Monthly:
+                    if (subscription.NextScheduledDate == null || subscription.NextScheduledDate <= fromDate)
+                    {
+                        var startDay = subscription.StartDate.Day;
+                        var nextMonth = fromDate.AddMonths(1);
+                        var maxDay = DateTime.DaysInMonth(nextMonth.Year, nextMonth.Month);
+                        var day = Math.Min(startDay, maxDay);
+                        return new DateOnly(nextMonth.Year, nextMonth.Month, day);
+                    }
+                    return subscription.NextScheduledDate.Value;
+                
+                default:
+                    return fromDate.AddDays(1);
+            }
+        }
+
+        private static DateOnly FindNextWeeklyDate(DateOnly currentDate, List<int> scheduledDays)
+        {
+            if (!scheduledDays.Any())
+                return currentDate.AddDays(7);
+            
+            var orderedDays = scheduledDays.OrderBy(d => d).ToList();
+            int currentDayOfWeek = (int)currentDate.DayOfWeek;
+            
+            var nextDayInWeek = orderedDays.FirstOrDefault(d => d > currentDayOfWeek);
+            
+            if (nextDayInWeek > 0)
+            {
+                int daysUntilNext = nextDayInWeek - currentDayOfWeek;
+                return currentDate.AddDays(daysUntilNext);
+            }
+            else
+            {
+                int firstDay = orderedDays.First();
+                int daysUntilNext = (7 - currentDayOfWeek) + firstDay;
+                return currentDate.AddDays(daysUntilNext);
+            }
+        }
+
+        private static SubscriptionDto MapToDto(Subscription subscription)
+        {
+            return new SubscriptionDto
+            {
+                SubscriptionId = subscription.SubscriptionId,
+                UserId = subscription.UserId,
+                UserMealId = subscription.UserMealId,
+                Frequency = subscription.Frequency,
+                StartDate = subscription.StartDate,
+                EndDate = subscription.EndDate,
+                Active = subscription.Active,
+                NextScheduledDate = subscription.NextScheduledDate,
+                CreatedAt = subscription.CreatedAt,
+                UpdatedAt = subscription.UpdatedAt,
+                UserName = subscription.User?.Name ?? string.Empty,
+                MealName = subscription.UserMeal?.MealName ?? string.Empty,
+                MealPrice = subscription.UserMeal?.TotalPrice ?? 0,
+                
+                WeeklySchedule = subscription.WeeklySchedule
+                    .Select(s => new WeeklyScheduleDto
+                    {
+                        DayOfWeek = s.DayOfWeek,
+                        Quantity = s.Quantity
+                    })
+                    .OrderBy(s => s.DayOfWeek)
+                    .ToList()
+            };
+        }
+    }
+}

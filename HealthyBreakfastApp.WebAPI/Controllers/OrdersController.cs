@@ -8,6 +8,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
+    [Authorize]
     public class OrdersController : ControllerBase
     {
         private readonly IOrderService _orderService;
@@ -28,14 +29,18 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         // 🟢 GET ALL ORDER HISTORY (ENHANCED)
         // ============================
         [HttpGet("history")]
-        [Authorize]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
         public async Task<ActionResult<IEnumerable<EnhancedOrderHistoryDto>>> GetAllOrderHistory()
         {
             try
             {
-                var orderHistory = await _orderService.GetAllOrderHistoryWithDetailsAsync();
+                // ✅ Filter to current user only
+                var userId = await GetCurrentUserIdAsync();
+                if (userId == null)
+                    return Unauthorized("User not authenticated");
+
+                var orderHistory = await _orderService.GetUserOrdersWithDetailsAsync(userId.Value);
                 return Ok(orderHistory);
             }
             catch (Exception ex)
@@ -50,7 +55,6 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         // 🟢 GET CURRENT USER ORDERS (ENHANCED)
         // ============================
         [HttpGet("users/me/orders")]
-        [Authorize]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]
         public async Task<ActionResult<IEnumerable<EnhancedOrderHistoryDto>>> GetMyOrders()
@@ -76,7 +80,6 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         // 🟢 BACKWARD COMPATIBILITY: Simple order endpoints
         // ============================
         [HttpGet("users/me/orders/simple")]
-        [Authorize]
         public async Task<ActionResult<IEnumerable<OrderDto>>> GetMyOrdersSimple()
         {
             try
@@ -100,7 +103,6 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         // ✅ SECURE: CREATE ORDER (userId from JWT token)
         // ============================
         [HttpPost]
-        [Authorize]
         public async Task<IActionResult> Create([FromBody] CreateOrderDto dto)
         {
             var userId = await GetCurrentUserIdAsync();
@@ -116,12 +118,19 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         // 🟢 GET ORDER BY ID
         // ============================
         [HttpGet("{id}")]
-        [Authorize]
         public async Task<IActionResult> GetById(int id)
         {
             var order = await _orderService.GetOrderByIdAsync(id);
             if (order == null)
                 return NotFound();
+
+            // ✅ Verify ownership - user can only see their own orders
+            var userId = await GetCurrentUserIdAsync();
+            if (userId == null)
+                return Unauthorized("User not authenticated");
+
+            if (order.UserId != userId.Value)
+                return Forbid(); // 403 — not your order
 
             return Ok(order);
         }

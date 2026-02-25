@@ -5,6 +5,9 @@ namespace HealthyBreakfastApp.Application.Interfaces
 {
     public interface IMealService
     {
+        // ✅ Public method for meal builder
+        Task<List<MealDto>> GetActiveMealsAsync();
+
         // Existing methods
         Task<int> CreateMealAsync(CreateMealDto dto);
         Task<MealDto?> GetMealByIdAsync(int id);
@@ -16,6 +19,7 @@ namespace HealthyBreakfastApp.Application.Interfaces
         // NEW ADMIN METHODS
         Task<List<AdminMealListDto>> GetAllMealsForAdminAsync();
         Task<AdminMealDetailDto?> GetMealDetailForAdminAsync(int id);
+        Task<List<AdminMealDetailDto>> GetMealsBatchDetailsAsync(List<int> mealIds);
         Task<int> CreateMealWithOptionsAsync(AdminCreateMealDto dto);
         Task<bool> UpdateMealAsync(int id, UpdateMealDto dto);
         Task<bool> DeleteMealAsync(int id);

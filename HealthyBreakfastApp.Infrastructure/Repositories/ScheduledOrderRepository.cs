@@ -27,11 +27,18 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
 
         public async Task<List<ScheduledOrder>> GetByAuthIdAndDateAsync(Guid authId, DateTime date)
         {
+            // ✅ Range comparison — sargable, can use B-tree index on ScheduledFor
+            var startOfDay = date.Date;
+            var endOfDay = date.Date.AddDays(1);
+
             return await _context.ScheduledOrders
+                .AsNoTracking()
                 .Include(so => so.Ingredients)
                     .ThenInclude(soi => soi.Ingredient)
                         .ThenInclude(i => i.IngredientCategory)
-                .Where(so => so.AuthId == authId && so.ScheduledFor.Date == date.Date)
+                .Where(so => so.AuthId == authId
+                          && so.ScheduledFor >= startOfDay
+                          && so.ScheduledFor < endOfDay)
                 .OrderBy(so => so.CreatedAt)
                 .ToListAsync();
         }
@@ -117,10 +124,14 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
 
         public async Task<bool> HasScheduledOrdersForDateAsync(Guid authId, DateTime date)
         {
+            var startOfDay = date.Date;
+            var endOfDay = date.Date.AddDays(1);
+
             return await _context.ScheduledOrders
-                .AnyAsync(so => so.AuthId == authId && 
-                              so.ScheduledFor.Date == date.Date && 
-                              so.OrderStatus == "scheduled");
+                .AnyAsync(so => so.AuthId == authId
+                              && so.ScheduledFor >= startOfDay
+                              && so.ScheduledFor < endOfDay
+                              && so.OrderStatus == "scheduled");
         }
 
         public async Task<List<ScheduledOrder>> GetBySubscriptionIdAsync(int subscriptionId)

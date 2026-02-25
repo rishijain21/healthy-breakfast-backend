@@ -69,7 +69,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error creating scheduled order");
-                return StatusCode(500, new { message = "An error occurred while creating the scheduled order", details = ex.Message });
+                return StatusCode(500, new { message = "An error occurred while creating the scheduled order" });
             }
         }
 /// <summary>
@@ -114,8 +114,7 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
     {
         _logger.LogError(ex, $"❌ Error duplicating scheduled order {id}");
         return StatusCode(500, new { 
-            message = "An error occurred while duplicating the order", 
-            details = ex.Message 
+            message = "An error occurred while duplicating the order" 
         });
     }
 }
@@ -162,7 +161,7 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error retrieving tomorrow's scheduled orders");
-                return StatusCode(500, new { message = "An error occurred while retrieving scheduled orders", details = ex.Message });
+                return StatusCode(500, new { message = "An error occurred while retrieving scheduled orders" });
             }
         }
 
@@ -203,7 +202,7 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Error modifying scheduled order {id}");
-                return StatusCode(500, new { message = "An error occurred while modifying the scheduled order", details = ex.Message });
+                return StatusCode(500, new { message = "An error occurred while modifying the scheduled order" });
             }
         }
 
@@ -244,7 +243,7 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Error cancelling scheduled order {id}");
-                return StatusCode(500, new { message = "An error occurred while cancelling the scheduled order", details = ex.Message });
+                return StatusCode(500, new { message = "An error occurred while cancelling the scheduled order" });
             }
         }
 
@@ -260,7 +259,7 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error getting time until midnight");
-                return StatusCode(500, new { message = "An error occurred while getting time until midnight", details = ex.Message });
+                return StatusCode(500, new { message = "An error occurred while getting time until midnight" });
             }
         }
 
@@ -269,7 +268,7 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
         // ============================================================================
 
         [HttpPost("process-today-manual")]
-        [AllowAnonymous]
+        [Authorize(Roles = "Admin")]
         public async Task<ActionResult<ProcessOrdersResponseDto>> ProcessTodayManual()
         {
             try
@@ -290,7 +289,7 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
         }
 
         [HttpPost("process-yesterday-manual")]
-        [AllowAnonymous]
+        [Authorize(Roles = "Admin")]
         public async Task<ActionResult<ProcessOrdersResponseDto>> ProcessYesterdayManual()
         {
             try
@@ -311,7 +310,7 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
         }
 
         [HttpPost("process-tomorrow-manual")]
-        [AllowAnonymous]
+        [Authorize(Roles = "Admin")]
         public async Task<ActionResult<ProcessOrdersResponseDto>> ProcessTomorrowManual()
         {
             try

@@ -13,6 +13,10 @@ namespace HealthyBreakfastApp.Application.DTOs
         public bool ProfileComplete { get; set; } // Computed property
         
         public decimal WalletBalance { get; set; }
+
+        // ✅ ADD THIS - Role for authorization
+        public string Role { get; set; } = "User";
+
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
     }

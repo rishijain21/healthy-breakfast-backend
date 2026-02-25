@@ -182,7 +182,7 @@ namespace HealthyBreakfastApp.Application.Services
             _logger.LogInformation($"✅ Order #{createdOrder.ScheduledOrderId} created for {deliveryDate:yyyy-MM-dd} delivery");
             _logger.LogInformation($"   💳 Total price: ₹{totalPrice}");
             
-            return await MapToResponseDto(createdOrder);
+            return MapToResponseDto(createdOrder);
         }
 
 
@@ -300,7 +300,7 @@ namespace HealthyBreakfastApp.Application.Services
                     $"✅ Duplicated order #{scheduledOrderId} → #{createdOrder.ScheduledOrderId} " +
                     $"for {createdOrder.ScheduledFor:yyyy-MM-dd} (₹{createdOrder.TotalPrice})");
 
-                return await MapToResponseDto(createdOrder);
+                return MapToResponseDto(createdOrder);
             }
             catch (InvalidOperationException ex)
             {
@@ -325,7 +325,7 @@ namespace HealthyBreakfastApp.Application.Services
 
             foreach (var order in orders)
             {
-                result.Add(await MapToResponseDto(order));
+                result.Add(MapToResponseDto(order));
             }
 
             return result;
@@ -605,8 +605,24 @@ namespace HealthyBreakfastApp.Application.Services
         // ----------------------------------------------------------------------------------------
         // PRIVATE MAPPING METHODS
         // ----------------------------------------------------------------------------------------
-        private async Task<ScheduledOrderResponseDto> MapToResponseDto(ScheduledOrder order)
+        private ScheduledOrderResponseDto MapToResponseDto(ScheduledOrder order)
         {
+            // ✅ Deserialize NutritionalSummary from stored JSON string
+            NutritionalSummaryDto? nutritionalSummary = null;
+            if (!string.IsNullOrEmpty(order.NutritionalSummary))
+            {
+                try
+                {
+                    nutritionalSummary = JsonSerializer.Deserialize<NutritionalSummaryDto>(
+                        order.NutritionalSummary
+                    );
+                }
+                catch
+                {
+                    // Silently ignore malformed JSON — legacy orders may not have it
+                }
+            }
+
             return new ScheduledOrderResponseDto
             {
                 ScheduledOrderId = order.ScheduledOrderId,
@@ -618,12 +634,16 @@ namespace HealthyBreakfastApp.Application.Services
                 CanModify = order.CanModify,
                 CreatedAt = order.CreatedAt,
                 ExpiresAt = order.ExpiresAt,
+                NutritionalSummary = nutritionalSummary,
                 Ingredients = order.Ingredients?.Select(i => new ScheduledOrderIngredientDetailDto
                 {
                     IngredientId = i.IngredientId,
+                    IngredientName = i.Ingredient?.IngredientName ?? string.Empty,
                     Quantity = i.Quantity,
                     UnitPrice = i.UnitPrice,
-                    TotalPrice = i.TotalPrice
+                    TotalPrice = i.TotalPrice,
+                    Category = i.Ingredient?.IngredientCategory?.CategoryName ?? string.Empty,
+                    ImageUrl = string.Empty
                 }).ToList() ?? new List<ScheduledOrderIngredientDetailDto>()
             };
         }

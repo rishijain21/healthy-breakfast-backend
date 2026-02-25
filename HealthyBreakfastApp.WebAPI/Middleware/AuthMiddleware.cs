@@ -75,7 +75,23 @@ namespace HealthyBreakfastApp.WebAPI.Middleware
                         context.Items["auth_id"] = authId;
                         context.Items["AuthId"] = authGuid;
                         
-                        _logger.LogInformation($"✅ AuthMiddleware: Existing user {userDto.UserId} authenticated");
+                        // ✅ ADD: Inject role into the ClaimsPrincipal so [Authorize(Roles="Admin")] works
+                        var identity = context.User.Identity as System.Security.Claims.ClaimsIdentity;
+                        if (identity != null)
+                        {
+                            // Remove any existing role claims from Supabase ("authenticated")
+                            var existingRoleClaims = identity.FindAll(identity.RoleClaimType).ToList();
+                            foreach (var claim in existingRoleClaims)
+                                identity.RemoveClaim(claim);
+
+                            // Inject the role from your database
+                            identity.AddClaim(new System.Security.Claims.Claim(
+                                identity.RoleClaimType,
+                                userDto.Role ?? "User"
+                            ));
+                        }
+                        
+                        _logger.LogInformation($"✅ AuthMiddleware: User {userDto.UserId} authenticated with role {userDto.Role}");
                     }
                     else
                     {

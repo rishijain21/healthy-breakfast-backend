@@ -23,6 +23,7 @@ namespace HealthyBreakfastApp.Application.Services
                 Phone = dto.Phone,
                 WalletBalance = 0,
                 AccountStatus = "Active",
+                Role = "User",  // Default role
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
@@ -84,6 +85,7 @@ namespace HealthyBreakfastApp.Application.Services
                 Phone = request.Phone ?? string.Empty,
                 WalletBalance = 0.00m,
                 AccountStatus = "Active",
+                Role = "User",  // Default role for new users
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
@@ -155,12 +157,33 @@ namespace HealthyBreakfastApp.Application.Services
                 DeliveryAddress = user.DeliveryAddress,
                 AccountStatus = user.AccountStatus,
                 WalletBalance = user.WalletBalance,
+                Role = user.Role,  // ✅ Include role
                 CreatedAt = user.CreatedAt,
                 UpdatedAt = user.UpdatedAt,
                 ProfileComplete = !string.IsNullOrWhiteSpace(user.Name) &&
                                 !string.IsNullOrWhiteSpace(user.Phone) &&
                                 !string.IsNullOrWhiteSpace(user.DeliveryAddress)
             };
+        }
+
+        // ✅ ADMIN: Update user role
+        public async Task<bool> UpdateUserRoleAsync(int userId, string role)
+        {
+            var user = await _userRepository.GetByIdAsync(userId);
+            if (user == null)
+                return false;
+
+            var validRoles = new[] { "User", "Admin" };
+            if (!validRoles.Contains(role))
+                throw new ArgumentException($"Invalid role. Must be one of: {string.Join(", ", validRoles)}");
+
+            user.Role = role;
+            user.UpdatedAt = DateTime.UtcNow;
+
+            await _userRepository.UpdateUserAsync(user);
+            await _userRepository.SaveChangesAsync();
+
+            return true;
         }
     }
 }

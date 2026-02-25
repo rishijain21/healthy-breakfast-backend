@@ -35,6 +35,13 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
             return await _context.Meals.ToListAsync();
         }
 
+        // ✅ Public method for meal builder
+        public async Task<IEnumerable<Meal>> GetActiveMealsAsync()
+        {
+            // Returns all meals - if you add IsActive field to Meal entity, filter here
+            return await _context.Meals.ToListAsync();
+        }
+
         // NEW METHODS
         public async Task<Meal?> GetByIdWithOptionsAsync(int id)
         {

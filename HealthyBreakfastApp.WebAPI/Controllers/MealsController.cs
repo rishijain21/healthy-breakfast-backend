@@ -1,6 +1,10 @@
 using HealthyBreakfastApp.Application.DTOs;
 using HealthyBreakfastApp.Application.Interfaces;
+using HealthyBreakfastApp.Infrastructure.Data;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using System.Threading.Tasks;
 
 namespace HealthyBreakfastApp.WebAPI.Controllers
@@ -10,13 +14,69 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
     public class MealsController : ControllerBase
     {
         private readonly IMealService _mealService;
+        private readonly AppDbContext _context;
+        private readonly ILogger<MealsController> _logger;
 
-        public MealsController(IMealService mealService)
+        public MealsController(IMealService mealService, AppDbContext context, ILogger<MealsController> logger)
         {
             _mealService = mealService;
+            _context = context;
+            _logger = logger;
         }
 
         // ========== EXISTING CUSTOMER ENDPOINTS ==========
+
+        // ✅ Public endpoint — no [Authorize] needed
+        [HttpGet("public")]
+        [AllowAnonymous]
+        public async Task<IActionResult> GetPublicMeals()
+        {
+            var meals = await _mealService.GetActiveMealsAsync();
+            return Ok(meals);
+        }
+
+        // ✅ ADD THIS — meal details for logged-in users (meal builder)
+        [HttpGet("{id}/details")]
+        [Authorize]
+        public async Task<IActionResult> GetMealDetails(int id)
+        {
+            try
+            {
+                var meal = await _mealService.GetMealDetailForAdminAsync(id);
+                if (meal == null)
+                    return NotFound(new { message = $"Meal with ID {id} not found" });
+
+                return Ok(meal);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving meal details");
+                return StatusCode(500, new { message = "Error retrieving meal details" });
+            }
+        }
+
+        // ✅ ADD after GetMealDetails — batch meal details for logged-in users
+        [HttpPost("batch-details")]
+        [Authorize]
+        public async Task<IActionResult> GetMealsBatchDetails([FromBody] BatchMealRequestDto request)
+        {
+            try
+            {
+                if (request.MealIds == null || request.MealIds.Count == 0)
+                    return BadRequest(new { message = "No meal IDs provided" });
+
+                if (request.MealIds.Count > 20)
+                    return BadRequest(new { message = "Maximum 20 meals per batch request" });
+
+                var meals = await _mealService.GetMealsBatchDetailsAsync(request.MealIds);
+                return Ok(meals);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving batch meal details");
+                return StatusCode(500, new { message = "Error retrieving meal details" });
+            }
+        }
 
         [HttpPost]
         public async Task<IActionResult> CreateMeal([FromBody] CreateMealDto dto)
@@ -95,6 +155,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         /// Get all meals for admin dashboard (with meal options count and completion status)
         /// </summary>
         [HttpGet("admin/all")]
+        [Authorize(Roles = "Admin")]
         public async Task<ActionResult<List<AdminMealListDto>>> GetAllMealsForAdmin()
         {
             try
@@ -104,7 +165,8 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = "Error retrieving meals", error = ex.Message });
+                _logger.LogError(ex, "Error retrieving meals");
+                return StatusCode(500, new { message = "Error retrieving meals" });
             }
         }
 
@@ -112,6 +174,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         /// Get meal details with all options and ingredients for admin editing
         /// </summary>
         [HttpGet("admin/{id}")]
+        [Authorize(Roles = "Admin")]
         public async Task<ActionResult<AdminMealDetailDto>> GetMealDetailForAdmin(int id)
         {
             try
@@ -124,7 +187,8 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = "Error retrieving meal details", error = ex.Message });
+                _logger.LogError(ex, "Error retrieving meal details");
+                return StatusCode(500, new { message = "Error retrieving meal details" });
             }
         }
 
@@ -132,6 +196,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         /// Create meal with options and ingredients (Admin only)
         /// </summary>
         [HttpPost("admin")]
+        [Authorize(Roles = "Admin")]
         public async Task<IActionResult> CreateMealWithOptions([FromBody] AdminCreateMealDto dto)
         {
             try
@@ -145,7 +210,8 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = "Error creating meal", error = ex.Message });
+                _logger.LogError(ex, "Error creating meal");
+                return StatusCode(500, new { message = "Error creating meal" });
             }
         }
 
@@ -153,6 +219,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         /// Update meal with options and ingredients (Admin only)
         /// </summary>
         [HttpPut("admin/{id}")]
+        [Authorize(Roles = "Admin")]
         public async Task<IActionResult> UpdateMeal(int id, [FromBody] UpdateMealDto dto)
         {
             try
@@ -169,7 +236,8 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = "Error updating meal", error = ex.Message });
+                _logger.LogError(ex, "Error updating meal");
+                return StatusCode(500, new { message = "Error updating meal" });
             }
         }
 
@@ -177,6 +245,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         /// Delete meal (Admin only) - Cascades to meal options and ingredients
         /// </summary>
         [HttpDelete("admin/{id}")]
+        [Authorize(Roles = "Admin")]
         public async Task<IActionResult> DeleteMeal(int id)
         {
             try
@@ -189,7 +258,8 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = "Error deleting meal", error = ex.Message });
+                _logger.LogError(ex, "Error deleting meal");
+                return StatusCode(500, new { message = "Error deleting meal" });
             }
         }
 
@@ -197,6 +267,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         /// Get all categories with their available ingredients (for meal builder UI)
         /// </summary>
         [HttpGet("admin/categories-with-ingredients")]
+        [Authorize(Roles = "Admin")]
         public async Task<ActionResult<List<CategoryWithIngredientsDto>>> GetCategoriesWithIngredients()
         {
             try
@@ -206,7 +277,56 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = "Error retrieving categories", error = ex.Message });
+                _logger.LogError(ex, "Error retrieving categories");
+                return StatusCode(500, new { message = "Error retrieving categories" });
+            }
+        }
+
+        /// <summary>
+        /// Get all meals with details (bulk endpoint for admin)
+        /// </summary>
+        [HttpGet("admin/all-with-details")]
+        [Authorize]
+        public async Task<ActionResult<List<MealWithDetailsDto>>> GetAllMealsWithDetails()
+        {
+            try
+            {
+                var meals = await _context.Meals
+                    .Include(m => m.MealOptions)
+                        .ThenInclude(o => o.MealOptionIngredients)
+                            .ThenInclude(moi => moi.Ingredient)
+                    .AsNoTracking()
+                    .ToListAsync();
+
+                return Ok(meals.Select(m => new MealWithDetailsDto
+                {
+                    MealId = m.MealId,
+                    MealName = m.MealName,
+                    Description = m.Description,
+                    BasePrice = m.BasePrice,
+                    ApproxCalories = m.ApproxCalories,
+                    ApproxProtein = m.ApproxProtein,
+                    ApproxCarbs = m.ApproxCarbs,
+                    ApproxFats = m.ApproxFats,
+                    CreatedAt = m.CreatedAt,
+                    UpdatedAt = m.UpdatedAt,
+                    MealOptionsCount = m.MealOptions.Count,
+                    MealOptions = m.MealOptions.Select(o => new MealOptionDto
+                    {
+                        MealOptionId = o.MealOptionId,
+                        MealId = o.MealId,
+                        CategoryId = o.CategoryId,
+                        IsRequired = o.IsRequired,
+                        MaxSelectable = o.MaxSelectable,
+                        CreatedAt = o.CreatedAt,
+                        UpdatedAt = o.UpdatedAt
+                    }).ToList()
+                }));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving meals with details");
+                return StatusCode(500, new { message = "Error retrieving meals with details" });
             }
         }
     }

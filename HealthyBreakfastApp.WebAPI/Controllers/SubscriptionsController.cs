@@ -17,6 +17,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         private readonly ISubscriptionSchedulingService _subscriptionSchedulingService;
         private readonly IScheduledOrderService _scheduledOrderService;
         private readonly IScheduledOrderRepository _scheduledOrderRepository;
+        private readonly ICurrentUserService _currentUserService;
         private readonly AppDbContext _context;
         private readonly ILogger<SubscriptionsController> _logger;
 
@@ -25,6 +26,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             ISubscriptionSchedulingService subscriptionSchedulingService,
             IScheduledOrderService scheduledOrderService,
             IScheduledOrderRepository scheduledOrderRepository,
+            ICurrentUserService currentUserService,
             AppDbContext context,
             ILogger<SubscriptionsController> logger)
         {
@@ -32,27 +34,20 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             _subscriptionSchedulingService = subscriptionSchedulingService;
             _scheduledOrderService = scheduledOrderService;
             _scheduledOrderRepository = scheduledOrderRepository;
+            _currentUserService = currentUserService;
             _context = context;
             _logger = logger;
         }
 
-        // Helper to get current userId from JWT + AuthMapping
+        // Helper to get current userId from ICurrentUserService
         private async Task<int?> GetCurrentUserIdAsync()
         {
-            var authId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(authId))
-                return null;
-
-            var mapping = await _context.UserAuthMappings
-                .AsNoTracking()
-                .FirstOrDefaultAsync(x => x.AuthId.ToString() == authId);
-
-            return mapping?.UserId;
+            return await _currentUserService.GetCurrentUserIdAsync();
         }
 
         private async Task<Guid?> GetCurrentAuthIdAsync()
         {
-            var authId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            var authId = _currentUserService.GetAuthId();
             if (string.IsNullOrEmpty(authId) || !Guid.TryParse(authId, out var guid))
                 return null;
             return guid;
@@ -104,8 +99,10 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             if (userId == null)
                 return Unauthorized();
 
-            var subscriptions = await _subscriptionService.GetActiveSubscriptionsAsync();
-            return Ok(subscriptions);
+            // ✅ Filter by the current user only
+            var subscriptions = await _subscriptionService.GetSubscriptionsByUserIdAsync(userId.Value);
+            var active = subscriptions.Where(s => s.Active);
+            return Ok(active);
         }
 
         /// <summary>
@@ -246,7 +243,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"❌ Error deleting subscription #{id}");
-                return StatusCode(500, new { message = "Failed to delete subscription", error = ex.Message });
+                return StatusCode(500, new { message = "Failed to delete subscription" });
             }
         }
 
@@ -325,6 +322,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         /// ✅ Manual endpoint to sync all subscription dates
         /// </summary>
         [HttpPost("sync-dates")]
+        [Authorize(Roles = "Admin")]   // ← ADD: only admin should trigger batch operations
         public async Task<IActionResult> SyncSubscriptionDates()
         {
             try
@@ -343,8 +341,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                 return StatusCode(500, new 
                 { 
                     success = false,
-                    message = "Failed to sync subscription dates", 
-                    error = ex.Message 
+                    message = "Failed to sync subscription dates" 
                 });
             }
         }

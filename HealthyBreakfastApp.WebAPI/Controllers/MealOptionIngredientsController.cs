@@ -1,11 +1,13 @@
 using HealthyBreakfastApp.Application.DTOs;
 using HealthyBreakfastApp.Application.Interfaces;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace HealthyBreakfastApp.WebAPI.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
+    [Authorize(Roles = "Admin")]   // ← ADD: only admin configures meal option ingredients
     public class MealOptionIngredientsController : ControllerBase
     {
         private readonly IMealOptionIngredientService _service;

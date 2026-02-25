@@ -118,6 +118,7 @@ namespace HealthyBreakfastApp.Application.Services
             return orders.Select(order => new EnhancedOrderHistoryDto
             {
                 OrderId = order.OrderId,
+                MealId = order.UserMeal?.MealId ?? 0,
                 UserId = order.UserId,
                 OrderStatus = order.OrderStatus,
                 TotalPrice = order.TotalPrice,

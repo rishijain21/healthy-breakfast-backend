@@ -18,5 +18,8 @@ namespace HealthyBreakfastApp.Application.Interfaces
         // ✅ NEW PROFILE METHODS
         Task<UserDto?> GetUserProfileByAuthIdAsync(Guid authId);
         Task<UserDto> UpdateUserProfileAsync(Guid authId, UpdateUserProfileDto dto);
+
+        // ✅ ADMIN METHODS
+        Task<bool> UpdateUserRoleAsync(int userId, string role);
     }
 }

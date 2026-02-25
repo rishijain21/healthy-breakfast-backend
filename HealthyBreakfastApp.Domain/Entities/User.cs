@@ -19,6 +19,10 @@ public ICollection<UserAddress> Addresses { get; set; } = new List<UserAddress>(
         public string AccountStatus { get; set; } = "Active"; // "Active", "Deactivated", "Deleted"
 
         public decimal WalletBalance { get; set; }
+
+        // ✅ ADD THIS - Role for authorization
+        public string Role { get; set; } = "User"; // "User" or "Admin"
+
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
 

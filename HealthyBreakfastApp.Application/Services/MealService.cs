@@ -30,6 +30,19 @@ namespace HealthyBreakfastApp.Application.Services
             _mealOptionIngredientRepository = mealOptionIngredientRepository;
         }
 
+        // ✅ Public method for meal builder - returns all meals for public browsing
+        public async Task<List<MealDto>> GetActiveMealsAsync()
+        {
+            var meals = await _mealRepository.GetAllAsync();
+            return meals.Select(m => new MealDto
+            {
+                MealId = m.MealId,
+                MealName = m.MealName,
+                Description = m.Description,
+                BasePrice = m.BasePrice
+            }).ToList();
+        }
+
         // EXISTING METHODS
         public async Task<int> CreateMealAsync(CreateMealDto dto)
         {
@@ -281,6 +294,17 @@ namespace HealthyBreakfastApp.Application.Services
             }
 
             return mealDetail;
+        }
+
+        public async Task<List<AdminMealDetailDto>> GetMealsBatchDetailsAsync(List<int> mealIds)
+        {
+            var results = new List<AdminMealDetailDto>();
+            foreach (var id in mealIds)
+            {
+                var meal = await GetMealDetailForAdminAsync(id);
+                if (meal != null) results.Add(meal);
+            }
+            return results;
         }
 
         public async Task<int> CreateMealWithOptionsAsync(AdminCreateMealDto dto)
