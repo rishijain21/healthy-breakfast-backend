@@ -15,32 +15,64 @@ namespace HealthyBreakfastApp.Application.Services
         private readonly IMealOptionRepository _mealOptionRepository;
         private readonly IIngredientCategoryRepository _ingredientCategoryRepository;
         private readonly IMealOptionIngredientRepository _mealOptionIngredientRepository;
+        private readonly ISupabaseStorageService _storageService;
 
         public MealService(
             IMealRepository mealRepository,
             IIngredientRepository ingredientRepository,
             IMealOptionRepository mealOptionRepository,
             IIngredientCategoryRepository ingredientCategoryRepository,
-            IMealOptionIngredientRepository mealOptionIngredientRepository)
+            IMealOptionIngredientRepository mealOptionIngredientRepository,
+            ISupabaseStorageService storageService)
         {
             _mealRepository = mealRepository;
             _ingredientRepository = ingredientRepository;
             _mealOptionRepository = mealOptionRepository;
             _ingredientCategoryRepository = ingredientCategoryRepository;
             _mealOptionIngredientRepository = mealOptionIngredientRepository;
+            _storageService = storageService;
         }
 
-        // ✅ Public method for meal builder - returns all meals for public browsing
+        // ✅ Public method for meal builder - returns only complete meals for public browsing
         public async Task<List<MealDto>> GetActiveMealsAsync()
         {
             var meals = await _mealRepository.GetAllAsync();
-            return meals.Select(m => new MealDto
+            var result = new List<MealDto>();
+            
+            foreach (var m in meals.Where(m => m.IsComplete))
             {
-                MealId = m.MealId,
-                MealName = m.MealName,
-                Description = m.Description,
-                BasePrice = m.BasePrice
-            }).ToList();
+                var dto = new MealDto
+                {
+                    MealId = m.MealId,
+                    MealName = m.MealName,
+                    Description = m.Description,
+                    BasePrice = m.BasePrice,
+                    IsComplete = m.IsComplete
+                };
+                
+                // Generate signed URL for secure image access (expires in 1 hour)
+                if (!string.IsNullOrEmpty(m.ImageUrl))
+                {
+                    var filePath = ExtractStoragePath(m.ImageUrl);
+                    dto.ImageUrl = await _storageService.GetSignedUrlAsync(filePath);
+                }
+                
+                result.Add(dto);
+            }
+            
+            return result;
+        }
+
+        // Helper to extract storage path from full URL or clean path
+        private static string ExtractStoragePath(string imageUrl)
+        {
+            // Handles both old full URLs and new relative paths
+            const string marker = "/meal-images/";
+            var idx = imageUrl.IndexOf(marker);
+            // Returns "meal-10/abc.png" regardless of whether input is:
+            // - "https://.../object/public/meal-images/meal-10/abc.png"  (old)
+            // - "meal-images/meal-10/abc.png"                            (new)
+            return idx >= 0 ? imageUrl[(idx + marker.Length)..] : imageUrl;
         }
 
         // EXISTING METHODS
@@ -73,7 +105,7 @@ namespace HealthyBreakfastApp.Application.Services
             var meal = await _mealRepository.GetByIdAsync(id);
             if (meal == null) return null;
 
-            return new MealDto
+            var dto = new MealDto
             {
                 MealId = meal.MealId,
                 MealName = meal.MealName,
@@ -82,6 +114,15 @@ namespace HealthyBreakfastApp.Application.Services
                 CreatedAt = meal.CreatedAt,
                 UpdatedAt = meal.UpdatedAt
             };
+
+            // Generate signed URL for secure image access (expires in 1 hour)
+            if (!string.IsNullOrEmpty(meal.ImageUrl))
+            {
+                var filePath = ExtractStoragePath(meal.ImageUrl);
+                dto.ImageUrl = await _storageService.GetSignedUrlAsync(filePath);
+            }
+
+            return dto;
         }
 
         public async Task<MealPriceResponseDto> CalculateMealPriceAsync(MealPriceCalculationDto calculationDto)
@@ -230,6 +271,11 @@ namespace HealthyBreakfastApp.Application.Services
                     ApproxCarbs = meal.ApproxCarbs,
                     ApproxFats = meal.ApproxFats,
                     
+                    // Image URL (generate signed URL for secure access)
+                    ImageUrl = !string.IsNullOrEmpty(meal.ImageUrl) 
+                        ? await _storageService.GetSignedUrlAsync(meal.ImageUrl) 
+                        : null,
+                    
                     CreatedAt = meal.CreatedAt,
                     UpdatedAt = meal.UpdatedAt
                 });
@@ -255,6 +301,11 @@ namespace HealthyBreakfastApp.Application.Services
                 ApproxProtein = meal.ApproxProtein,
                 ApproxCarbs = meal.ApproxCarbs,
                 ApproxFats = meal.ApproxFats,
+                
+                // Image URL (generate signed URL for secure access)
+                ImageUrl = !string.IsNullOrEmpty(meal.ImageUrl) 
+                    ? await _storageService.GetSignedUrlAsync(meal.ImageUrl) 
+                    : null,
                 
                 CreatedAt = meal.CreatedAt,
                 UpdatedAt = meal.UpdatedAt,
@@ -459,6 +510,11 @@ namespace HealthyBreakfastApp.Application.Services
             // Delete cascade will handle meal options and meal option ingredients
             await _mealRepository.DeleteMealAsync(meal);
             return true;
+        }
+
+        public async Task<bool> UpdateMealStatusAsync(int id, bool isComplete)
+        {
+            return await _mealRepository.UpdateMealStatusAsync(id, isComplete);
         }
 
         public async Task<List<CategoryWithIngredientsDto>> GetCategoriesWithIngredientsAsync()

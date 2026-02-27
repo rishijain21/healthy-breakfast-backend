@@ -22,6 +22,7 @@ namespace HealthyBreakfastApp.Application.Interfaces
         Task<List<AdminMealDetailDto>> GetMealsBatchDetailsAsync(List<int> mealIds);
         Task<int> CreateMealWithOptionsAsync(AdminCreateMealDto dto);
         Task<bool> UpdateMealAsync(int id, UpdateMealDto dto);
+        Task<bool> UpdateMealStatusAsync(int id, bool isComplete);
         Task<bool> DeleteMealAsync(int id);
         Task<List<CategoryWithIngredientsDto>> GetCategoriesWithIngredientsAsync();
     }

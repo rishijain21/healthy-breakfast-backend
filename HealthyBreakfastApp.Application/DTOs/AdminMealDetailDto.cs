@@ -12,6 +12,9 @@ namespace HealthyBreakfastApp.Application.DTOs
         public decimal? ApproxProtein { get; set; }
         public decimal? ApproxCarbs { get; set; }
         public decimal? ApproxFats { get; set; }
+
+        // Image URL for display
+        public string? ImageUrl { get; set; }
         
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }

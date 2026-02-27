@@ -11,7 +11,9 @@ namespace HealthyBreakfastApp.Application.DTOs
         public decimal? ApproxProtein { get; set; }
         public decimal? ApproxCarbs { get; set; }
         public decimal? ApproxFats { get; set; }
-        
+
+        // Optional: Image file to upload (base64 or handled via separate endpoint)
+        // For separate upload endpoint, this can be null
         public List<AdminMealOptionDto> MealOptions { get; set; } = new();
     }
 

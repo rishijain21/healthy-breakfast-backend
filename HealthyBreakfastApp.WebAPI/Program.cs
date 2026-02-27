@@ -5,6 +5,7 @@ using HealthyBreakfastApp.Application.Services;
 using HealthyBreakfastApp.Infrastructure.Data;
 using HealthyBreakfastApp.Infrastructure.Repositories;
 using HealthyBreakfastApp.WebAPI.Middleware;
+using HealthyBreakfastApp.WebAPI.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -92,6 +93,12 @@ builder.Services.AddScoped<IScheduledOrderService, ScheduledOrderService>();
 
 // ✅ NEW: Subscription scheduling service
 builder.Services.AddScoped<ISubscriptionSchedulingService, SubscriptionSchedulingService>();
+
+// ========================================
+// 🖼️ SUPABASE STORAGE SERVICE (Image Upload)
+// ========================================
+builder.Services.AddScoped<ISupabaseStorageService, SupabaseStorageService>();
+builder.Services.AddHttpClient<ISupabaseStorageService, SupabaseStorageService>();
 
 // ========================================
 // 🌐 UTILITIES & HELPERS

@@ -65,5 +65,15 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
             _context.Meals.Remove(meal);
             await _context.SaveChangesAsync();
         }
+
+        public async Task<bool> UpdateMealStatusAsync(int id, bool isComplete)
+        {
+            var meal = await _context.Meals.FindAsync(id);
+            if (meal == null) return false;
+
+            meal.IsComplete = isComplete;
+            await _context.SaveChangesAsync();
+            return true;
+        }
     }
 }

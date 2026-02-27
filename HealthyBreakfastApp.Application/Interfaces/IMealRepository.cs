@@ -16,6 +16,7 @@ namespace HealthyBreakfastApp.Application.Interfaces
         // NEW ADMIN METHODS
         Task<Meal?> GetByIdWithOptionsAsync(int id);
         Task UpdateMealAsync(Meal meal);
+        Task<bool> UpdateMealStatusAsync(int id, bool isComplete);
         Task DeleteMealAsync(Meal meal);
     }
 }

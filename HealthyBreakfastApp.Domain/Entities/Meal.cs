@@ -28,6 +28,12 @@ namespace HealthyBreakfastApp.Domain.Entities
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
         
+        // Active/Complete status - true means meal is available/complete
+        public bool IsComplete { get; set; } = true;
+        
+        // Image URL for meal photos (stored in Supabase)
+        public string? ImageUrl { get; set; }
+        
         // Navigation property
         public ICollection<MealOption> MealOptions { get; set; } = new List<MealOption>();
     }

@@ -1,10 +1,12 @@
 using HealthyBreakfastApp.Application.DTOs;
 using HealthyBreakfastApp.Application.Interfaces;
 using HealthyBreakfastApp.Infrastructure.Data;
+using HealthyBreakfastApp.WebAPI.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using System.IO;
 using System.Threading.Tasks;
 
 namespace HealthyBreakfastApp.WebAPI.Controllers
@@ -16,12 +18,14 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         private readonly IMealService _mealService;
         private readonly AppDbContext _context;
         private readonly ILogger<MealsController> _logger;
+        private readonly ISupabaseStorageService _storageService;
 
-        public MealsController(IMealService mealService, AppDbContext context, ILogger<MealsController> logger)
+        public MealsController(IMealService mealService, AppDbContext context, ILogger<MealsController> logger, ISupabaseStorageService storageService)
         {
             _mealService = mealService;
             _context = context;
             _logger = logger;
+            _storageService = storageService;
         }
 
         // ========== EXISTING CUSTOMER ENDPOINTS ==========
@@ -264,6 +268,29 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         }
 
         /// <summary>
+        /// Update meal completion status (Admin only) - PATCH endpoint
+        /// </summary>
+        [HttpPatch("admin/{id}/status")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> UpdateMealStatus(int id, [FromBody] UpdateMealStatusDto dto)
+        {
+            try
+            {
+                var updated = await _mealService.UpdateMealStatusAsync(id, dto.IsComplete);
+
+                if (!updated)
+                    return NotFound(new { message = $"Meal with ID {id} not found." });
+
+                return Ok(new { id, isComplete = dto.IsComplete, message = "Meal status updated successfully." });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error updating meal status");
+                return StatusCode(500, new { message = "Error updating meal status" });
+            }
+        }
+
+        /// <summary>
         /// Get all categories with their available ingredients (for meal builder UI)
         /// </summary>
         [HttpGet("admin/categories-with-ingredients")]
@@ -327,6 +354,45 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             {
                 _logger.LogError(ex, "Error retrieving meals with details");
                 return StatusCode(500, new { message = "Error retrieving meals with details" });
+            }
+        }
+
+        /// <summary>
+        /// Upload image for a meal (Admin only)
+        /// </summary>
+        [HttpPost("admin/{id}/image")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> UploadMealImage(int id, IFormFile image)
+        {
+            try
+            {
+                if (image == null || image.Length == 0)
+                    return BadRequest(new { message = "No image provided" });
+
+                var meal = await _context.Meals.FindAsync(id);
+                if (meal == null)
+                    return NotFound(new { message = $"Meal {id} not found" });
+
+                var ext = Path.GetExtension(image.FileName).ToLower();
+                var fileName = $"meal-{id}/{Guid.NewGuid():N}{ext}";
+
+                var imageUrl = await _storageService.UploadImageAsync(image, fileName);
+
+                meal.ImageUrl = imageUrl;
+                meal.UpdatedAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync();
+
+                _logger.LogInformation("Image uploaded for meal {MealId}: {Url}", id, imageUrl);
+                return Ok(new { imageUrl, message = "Image uploaded successfully" });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Image upload failed for meal {MealId}", id);
+                return StatusCode(500, new { message = "Upload failed" });
             }
         }
     }
