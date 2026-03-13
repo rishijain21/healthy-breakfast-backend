@@ -2,6 +2,7 @@ using HealthyBreakfastApp.Application.DTOs;
 using HealthyBreakfastApp.Application.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using System.Security.Claims;
 
 namespace HealthyBreakfastApp.WebAPI.Controllers
@@ -21,30 +22,31 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
 
         /// <summary>
         /// Check if a user exists in the database by email
+        /// Returns a vague response to prevent user enumeration attacks
         /// </summary>
         [HttpGet("check-user-exists")]
         [AllowAnonymous]
+        [EnableRateLimiting("auth")]
         public async Task<ActionResult> CheckUserExists([FromQuery] string email)
         {
             if (string.IsNullOrWhiteSpace(email))
             {
-                return BadRequest(new { message = "Email is required" });
+                return BadRequest(ApiResponse<object>.Fail("Email is required"));
             }
 
-            _logger.LogInformation("Checking if user exists with email: {Email}", email);
-
+            // ✅ FIX 5: Prevent user enumeration - don't reveal whether user exists
+            // Return same response regardless of outcome
             try
             {
-                var exists = await _userService.UserExistsAsync(email);
-                _logger.LogInformation("User exists check for {Email}: {Exists}", email, exists);
+                await _userService.UserExistsAsync(email);
                 
-                // ✅ FIXED: Return object with "exists" property
-                return Ok(new { exists });
+                // Always return the same response
+                return Ok(ApiResponse<object>.Ok(new { message = "If this email is registered, you will receive further instructions." }));
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error checking user existence for email: {Email}", email);
-                return StatusCode(500, new { message = "Internal server error" });
+                return StatusCode(500, ApiResponse<object>.Fail("Internal server error"));
             }
         }
 
@@ -53,6 +55,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         /// </summary>
         [HttpPost("register")]
         [Authorize]
+        [EnableRateLimiting("auth")]
         public async Task<ActionResult<UserDto>> Register([FromBody] RegisterUserRequest request)
         {
             if (!ModelState.IsValid)
@@ -83,13 +86,9 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                 if (existingUserByAuth != null)
                 {
                     _logger.LogInformation("User already exists with AuthId, returning existing user: {UserId}", existingUserByAuth.UserId);
-                    return Ok(new 
-                    { 
-                        success = true,
-                        message = "User already registered", 
-                        user = existingUserByAuth,
-                        isNewUser = false
-                    });
+                    return Ok(ApiResponse<object>.Ok(
+                        new { user = existingUserByAuth, isNewUser = false },
+                        "User already registered"));
                 }
 
                 // ✅ Check if user already exists by Email
@@ -97,11 +96,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                 if (existingUserByEmail != null)
                 {
                     _logger.LogWarning("User already exists with Email: {Email}", request.Email);
-                    return Conflict(new 
-                    { 
-                        success = false,
-                        message = "Email already registered. Please login instead."
-                    });
+                    return Conflict(ApiResponse<object>.Fail("Email already registered. Please login instead."));
                 }
 
                 // ✅ Create new user
@@ -112,23 +107,19 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                     userDto.UserId, userDto.Email
                 );
 
-                return Ok(new 
-                { 
-                    success = true,
-                    message = "User registered successfully", 
-                    user = userDto,
-                    isNewUser = true
-                });
+                return Ok(ApiResponse<object>.Ok(
+                    new { user = userDto, isNewUser = true },
+                    "User registered successfully"));
             }
             catch (InvalidOperationException ex)
             {
                 _logger.LogWarning(ex, "Registration failed - {Message}", ex.Message);
-                return Conflict(new { success = false, message = ex.Message });
+                return Conflict(ApiResponse<object>.Fail(ex.Message));
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error registering user");
-                return StatusCode(500, new { success = false, message = "Internal server error" });
+                return StatusCode(500, ApiResponse<object>.Fail("Internal server error"));
             }
         }
 
@@ -137,12 +128,13 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         /// </summary>
         [HttpPost("login")]
         [AllowAnonymous]
+        [EnableRateLimiting("auth")]
         public IActionResult Login([FromBody] LoginRequest request)
         {
             _logger.LogInformation("Login attempt for email: {Email}", request.Email);
             
             // This is just a test endpoint - Supabase handles real authentication
-            return Ok(new { message = "Use Supabase authentication for login" });
+            return Ok(ApiResponse<object>.Ok(new { message = "Use Supabase authentication for login" }));
         }
     }
 

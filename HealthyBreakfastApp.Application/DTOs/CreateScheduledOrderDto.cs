@@ -6,6 +6,8 @@ namespace HealthyBreakfastApp.Application.DTOs
     public class CreateScheduledOrderDto
     {
         public string? MealName { get; set; }
+        public int? MealId { get; set; }          // ✅ ADD: Soft reference for traceability
+        public string? MealImageUrl { get; set; } // ✅ ADD: Snapshot for display
         public decimal? MealPrice { get; set; }
         public List<ScheduledOrderIngredientDto> SelectedIngredients { get; set; } = new();
         public DateTime ScheduledFor { get; set; }

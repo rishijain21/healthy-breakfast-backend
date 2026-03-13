@@ -9,7 +9,7 @@ namespace HealthyBreakfastApp.Application.Interfaces
         Task AddAsync(Order entity);
         Task SaveChangesAsync();
         Task<Order?> GetByIdAsync(int id);
-        Task UpdateAsync(Order order);
+        void Update(Order order);
         Task<IEnumerable<Order>> GetByUserIdAsync(int userId);
         
         // ✅ FIXED: Changed from string to OrderStatus enum

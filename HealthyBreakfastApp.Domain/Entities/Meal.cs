@@ -31,6 +31,9 @@ namespace HealthyBreakfastApp.Domain.Entities
         // Active/Complete status - true means meal is available/complete
         public bool IsComplete { get; set; } = true;
         
+        // ✅ Soft delete flag - true means meal is deleted
+        public bool IsDeleted { get; set; } = false;
+        
         // Image URL for meal photos (stored in Supabase)
         public string? ImageUrl { get; set; }
         

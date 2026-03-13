@@ -384,16 +384,9 @@ namespace HealthyBreakfastApp.Application.Services
                 DateTime.SpecifyKind(tomorrow, DateTimeKind.Utc)
             );
 
-            // Filter orders that match this subscription
-            var subscription = await _subscriptionRepo.GetByIdAsync(subscriptionId);
-            if (subscription == null) return;
-
-            var userMeal = await _userMealRepo.GetByIdAsync(subscription.UserMealId);
-            if (userMeal == null) return;
-
+            // ✅ RELIABLE — use direct SubscriptionId FK link instead of fragile string match
             var ordersToCancel = tomorrowOrders
-                .Where(order => order.MealName.Contains(userMeal.MealName) && 
-                               order.MealName.Contains("(Subscription)"))
+                .Where(order => order.SubscriptionId == subscriptionId)
                 .ToList();
 
             _logger.LogInformation($"Found {ordersToCancel.Count} orders to cancel for subscription #{subscriptionId}");

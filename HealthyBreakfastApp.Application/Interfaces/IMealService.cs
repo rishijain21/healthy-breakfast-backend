@@ -25,5 +25,12 @@ namespace HealthyBreakfastApp.Application.Interfaces
         Task<bool> UpdateMealStatusAsync(int id, bool isComplete);
         Task<bool> DeleteMealAsync(int id);
         Task<List<CategoryWithIngredientsDto>> GetCategoriesWithIngredientsAsync();
+
+        // ✅ NEW: Paginated admin list
+        Task<PagedResult<AdminMealListDto>> GetAllMealsForAdminPagedAsync(int page, int pageSize);
+
+        // ✅ NEW: Image management for meals
+        Task<bool> UpdateMealImageAsync(int mealId, string imageUrl);
+        Task<string?> DeleteMealImageAsync(int mealId);
     }
 }

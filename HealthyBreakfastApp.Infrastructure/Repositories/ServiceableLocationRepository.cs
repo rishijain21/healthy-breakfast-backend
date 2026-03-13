@@ -57,10 +57,28 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
         public async Task<IEnumerable<ServiceableLocation>> SearchByAreaAsync(string city, string area)
         {
             return await _context.ServiceableLocations
-                .Where(x => x.City.ToLower().Contains(city.ToLower()) 
-                         && x.Area.ToLower().Contains(area.ToLower()) 
+                .Where(x => x.City.ToLower().Contains(city.ToLower())
+                         && x.Area.ToLower().Contains(area.ToLower())
                          && x.IsActive)
                 .OrderBy(x => x.Locality)
+                .ToListAsync();
+        }
+
+        public async Task<IEnumerable<ServiceableLocation>> SearchByQueryAsync(string query)
+        {
+            var q = query.Trim().ToLower();
+
+            return await _context.ServiceableLocations
+                .Where(x => x.IsActive && (
+                    x.City.ToLower().Contains(q) ||
+                    x.Area.ToLower().Contains(q) ||
+                    x.Locality.ToLower().Contains(q) ||
+                    x.LandmarkOrSociety.ToLower().Contains(q) ||
+                    x.Pincode.Contains(q)
+                ))
+                .OrderBy(x => x.City)
+                .ThenBy(x => x.Area)
+                .Take(20)
                 .ToListAsync();
         }
 
@@ -102,8 +120,7 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
 
         public async Task<bool> ExistsAsync(int id)
         {
-            return await _context.ServiceableLocations
-                .AnyAsync(x => x.Id == id);
+            return await _context.ServiceableLocations.AnyAsync(x => x.Id == id);
         }
 
         public async Task<bool> IsLocationServiceableAsync(int locationId)

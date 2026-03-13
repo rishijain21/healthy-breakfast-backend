@@ -81,6 +81,7 @@ namespace HealthyBreakfastApp.Infrastructure.Data
             {
                 entity.Property(e => e.OrderStatus)
                     .HasColumnName("Status")
+                    .HasConversion<string>()
                     .IsRequired();
                 
                 // ✅ ADD: Delivery address relationship
@@ -88,6 +89,19 @@ namespace HealthyBreakfastApp.Infrastructure.Data
                     .WithMany(a => a.Orders)
                     .HasForeignKey(e => e.DeliveryAddressId)
                     .OnDelete(DeleteBehavior.SetNull);
+
+                // ✅ FIX 5: Add missing indexes
+                entity.HasIndex(e => e.UserId)
+                    .HasDatabaseName("IX_Orders_UserId");
+
+                entity.HasIndex(e => e.OrderStatus)
+                    .HasDatabaseName("IX_Orders_Status");
+
+                entity.HasIndex(e => new { e.UserId, e.OrderStatus })
+                    .HasDatabaseName("IX_Orders_UserId_Status");
+
+                entity.HasIndex(e => e.ScheduledFor)
+                    .HasDatabaseName("IX_Orders_ScheduledFor");
             });
 
             // ScheduledOrder configuration
@@ -102,6 +116,16 @@ namespace HealthyBreakfastApp.Infrastructure.Data
                 
                 entity.Property(e => e.IsProcessedToOrder).HasDefaultValue(false);
                 entity.Property(e => e.ConfirmedOrderId).IsRequired(false);
+                
+                // ✅ PERFORMANCE: Add indexes for common query patterns
+                entity.HasIndex(e => e.ScheduledFor)
+                    .HasDatabaseName("IX_ScheduledOrders_ScheduledFor");
+                
+                entity.HasIndex(e => new { e.AuthId, e.ScheduledFor })
+                    .HasDatabaseName("IX_ScheduledOrders_AuthId_ScheduledFor");
+                
+                entity.HasIndex(e => new { e.ScheduledFor, e.OrderStatus })
+                    .HasDatabaseName("IX_ScheduledOrders_ScheduledFor_OrderStatus");
                 
                 entity.HasOne(e => e.User)
                     .WithMany()
@@ -121,6 +145,10 @@ namespace HealthyBreakfastApp.Infrastructure.Data
                 entity.HasKey(e => e.Id);
                 entity.Property(e => e.UnitPrice).HasColumnType("decimal(10,2)");
                 entity.Property(e => e.TotalPrice).HasColumnType("decimal(10,2)");
+                
+                // ✅ PERFORMANCE: Add index for foreign key lookups
+                entity.HasIndex(e => e.ScheduledOrderId)
+                    .HasDatabaseName("IX_ScheduledOrderIngredients_ScheduledOrderId");
                 
                 entity.HasOne(e => e.ScheduledOrder)
                     .WithMany(so => so.Ingredients)
@@ -146,6 +174,16 @@ namespace HealthyBreakfastApp.Infrastructure.Data
                 entity.Property(e => e.EndDate).IsRequired();
                 entity.Property(e => e.Active).IsRequired();
                 entity.Property(e => e.NextScheduledDate).IsRequired(false);
+                
+                // ✅ PERFORMANCE: Add indexes for common query patterns
+                entity.HasIndex(e => e.UserId)
+                    .HasDatabaseName("IX_Subscriptions_UserId");
+                
+                entity.HasIndex(e => new { e.UserId, e.UserMealId })
+                    .HasDatabaseName("IX_Subscriptions_UserId_UserMealId");
+                
+                entity.HasIndex(e => new { e.Active, e.StartDate, e.EndDate })
+                    .HasDatabaseName("IX_Subscriptions_Active_StartDate_EndDate");
                 
                 entity.HasOne(e => e.User)
                     .WithMany()
@@ -246,10 +284,17 @@ namespace HealthyBreakfastApp.Infrastructure.Data
             );
 
             modelBuilder.Entity<Meal>().HasData(
-                new Meal { MealId = 1, MealName = "Classic Overnight Oats", Description = "Traditional overnight oats base", BasePrice = 40, CreatedAt = seedDate, UpdatedAt = seedDate },
-                new Meal { MealId = 2, MealName = "Custom Breakfast Bowl", Description = "Build your perfect breakfast", BasePrice = 50, CreatedAt = seedDate, UpdatedAt = seedDate },
-                new Meal { MealId = 3, MealName = "Protein Power Bowl", Description = "High protein breakfast option", BasePrice = 60, CreatedAt = seedDate, UpdatedAt = seedDate }
+                new Meal { MealId = 1, MealName = "Classic Overnight Oats", Description = "Traditional overnight oats base", BasePrice = 40, IsComplete = true, IsDeleted = false, CreatedAt = seedDate, UpdatedAt = seedDate },
+                new Meal { MealId = 2, MealName = "Custom Breakfast Bowl", Description = "Build your perfect breakfast", BasePrice = 50, IsComplete = true, IsDeleted = false, CreatedAt = seedDate, UpdatedAt = seedDate },
+                new Meal { MealId = 3, MealName = "Protein Power Bowl", Description = "High protein breakfast option", BasePrice = 60, IsComplete = true, IsDeleted = false, CreatedAt = seedDate, UpdatedAt = seedDate }
             );
+
+            // ✅ User configuration with optimistic concurrency for WalletBalance
+            modelBuilder.Entity<User>(entity =>
+            {
+                entity.Property(u => u.WalletBalance)
+                    .IsConcurrencyToken();
+            });
 
             modelBuilder.Entity<User>().HasData(
                 new User

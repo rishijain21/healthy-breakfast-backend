@@ -150,6 +150,8 @@ namespace HealthyBreakfastApp.Application.Services
                 UserId = user.UserId,
                 AuthId = authId,
                 MealName = dto.MealName ?? "Custom Overnight Oats",
+                MealId = dto.MealId,               // ✅ ADD: Soft reference for traceability
+                MealImageUrl = dto.MealImageUrl,   // ✅ ADD: Snapshot for display
                 ScheduledFor = deliveryDate,
                 DeliveryTimeSlot = dto.DeliveryTimeSlot ?? "8:00 AM",
                 TotalPrice = totalPrice,
@@ -266,6 +268,8 @@ namespace HealthyBreakfastApp.Application.Services
                     UserId = user.UserId,
                     AuthId = authId,
                     MealName = originalOrder.MealName,
+                    MealId = originalOrder.MealId,               // ✅ ADD: Copy soft reference
+                    MealImageUrl = originalOrder.MealImageUrl,   // ✅ ADD: Copy snapshot
                     ScheduledFor = DateTime.SpecifyKind(originalOrder.ScheduledFor, DateTimeKind.Utc),
                     DeliveryTimeSlot = originalOrder.DeliveryTimeSlot,
                     TotalPrice = originalOrder.TotalPrice,
@@ -442,8 +446,9 @@ namespace HealthyBreakfastApp.Application.Services
 
             _logger.LogInformation($"📦 Found {scheduledOrders.Count} total orders for {today:yyyy-MM-dd}");
 
+            // ✅ IDEMPOTENCY: Skip orders already "scheduled" or "processing" to prevent double-run on retry
             var pendingOrders = scheduledOrders
-                .Where(o => o.OrderStatus.ToLower() == "scheduled")
+                .Where(o => o.OrderStatus.ToLower() == "scheduled" || o.OrderStatus.ToLower() == "processing")
                 .ToList();
 
             _logger.LogInformation($"📋 {pendingOrders.Count} orders pending confirmation");
@@ -519,7 +524,7 @@ namespace HealthyBreakfastApp.Application.Services
                         continue;
                     }
 
-                    // Check wallet balance
+                    // ✅ Check wallet balance
                     if (user.WalletBalance < scheduledOrder.TotalPrice)
                     {
                         _logger.LogWarning(
@@ -532,6 +537,11 @@ namespace HealthyBreakfastApp.Application.Services
                         failedCount++;
                         continue;
                     }
+
+                    // ✅ IDEMPOTENCY GUARD: Mark as "processing" FIRST before doing any financial operation
+                    // If the job retries, "processing" orders will be skipped (see filter above)
+                    scheduledOrder.OrderStatus = "processing";
+                    await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
 
                     // ✅ Create the actual Order using the scheduled order's DeliveryAddressId
                     var createOrderDto = new CreateOrderFromMealBuilderDto
@@ -627,6 +637,8 @@ namespace HealthyBreakfastApp.Application.Services
             {
                 ScheduledOrderId = order.ScheduledOrderId,
                 MealName = order.MealName,
+                MealId = order.MealId,               // ✅ ADD: Soft reference for traceability
+                MealImageUrl = order.MealImageUrl,   // ✅ ADD: Snapshot for display
                 ScheduledFor = order.ScheduledFor,
                 DeliveryTimeSlot = order.DeliveryTimeSlot,
                 TotalPrice = order.TotalPrice,
@@ -644,7 +656,10 @@ namespace HealthyBreakfastApp.Application.Services
                     TotalPrice = i.TotalPrice,
                     Category = i.Ingredient?.IngredientCategory?.CategoryName ?? string.Empty,
                     ImageUrl = string.Empty
-                }).ToList() ?? new List<ScheduledOrderIngredientDetailDto>()
+                }).ToList() ?? new List<ScheduledOrderIngredientDetailDto>(),
+                
+                // ✅ ADD: Subscription ID for filtering orders by subscription
+                SubscriptionId = order.SubscriptionId
             };
         }
     }

@@ -132,7 +132,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         /// Set address as primary
         /// </summary>
         [HttpPut("{id}/set-primary")]
-        public async Task<ActionResult> SetPrimary(int id)
+        public async Task<ActionResult<UserAddressDetailDto>> SetPrimary(int id)
         {
             try
             {
@@ -146,7 +146,9 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                 if (!result)
                     return NotFound(new { message = "Address not found" });
 
-                return Ok(new { message = "Primary address updated successfully" });
+                // Return the full updated address so frontend can sync state
+                var updated = await _addressService.GetByIdAsync(id);
+                return Ok(updated);
             }
             catch (KeyNotFoundException ex)
             {

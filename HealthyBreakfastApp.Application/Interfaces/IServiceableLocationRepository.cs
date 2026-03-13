@@ -10,6 +10,7 @@ namespace HealthyBreakfastApp.Application.Interfaces
         Task<IEnumerable<ServiceableLocation>> SearchByPincodeAsync(string pincode);
         Task<IEnumerable<ServiceableLocation>> SearchByCityAsync(string city);
         Task<IEnumerable<ServiceableLocation>> SearchByAreaAsync(string city, string area);
+        Task<IEnumerable<ServiceableLocation>> SearchByQueryAsync(string query);
         Task<ServiceableLocation> CreateAsync(ServiceableLocation location);
         Task<ServiceableLocation> UpdateAsync(ServiceableLocation location);
         Task<bool> DeleteAsync(int id);

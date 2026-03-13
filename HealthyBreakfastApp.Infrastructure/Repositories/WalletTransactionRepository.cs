@@ -41,11 +41,18 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
 
         public async Task<WalletTransaction> CreateAsync(WalletTransaction transaction)
         {
-            transaction.CreatedAt = DateTime.UtcNow;
-            _context.WalletTransactions.Add(transaction);
-            await _context.SaveChangesAsync();
-            await UpdateUserWalletBalance(transaction.UserId);
-            return transaction;
+            try
+            {
+                transaction.CreatedAt = DateTime.UtcNow;
+                _context.WalletTransactions.Add(transaction);
+                await _context.SaveChangesAsync();
+                await UpdateUserWalletBalance(transaction.UserId);
+                return transaction;
+            }
+            catch (DbUpdateConcurrencyException ex)
+            {
+                throw new InvalidOperationException("Wallet balance was updated by another request. Please retry the transaction.", ex);
+            }
         }
 
         public async Task<bool> HasSufficientBalanceAsync(int userId, decimal amount)

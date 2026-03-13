@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using HealthyBreakfastApp.Application.Interfaces;
 using HealthyBreakfastApp.Domain.Entities;
 using HealthyBreakfastApp.Infrastructure.Data;
@@ -12,10 +13,12 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
     public class ScheduledOrderRepository : IScheduledOrderRepository
     {
         private readonly AppDbContext _context;
+        private readonly ILogger<ScheduledOrderRepository> _logger;
 
-        public ScheduledOrderRepository(AppDbContext context)
+        public ScheduledOrderRepository(AppDbContext context, ILogger<ScheduledOrderRepository> logger)
         {
             _context = context;
+            _logger = logger;
         }
 
         public async Task<ScheduledOrder> CreateAsync(ScheduledOrder scheduledOrder)
@@ -46,6 +49,7 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
         public async Task<ScheduledOrder?> GetByIdAndAuthIdAsync(int scheduledOrderId, Guid authId)
         {
             return await _context.ScheduledOrders
+                .AsNoTracking()
                 .Include(so => so.Ingredients)
                     .ThenInclude(soi => soi.Ingredient)
                 .FirstOrDefaultAsync(so => so.ScheduledOrderId == scheduledOrderId && so.AuthId == authId);
@@ -90,19 +94,19 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
             }
         }
 
-        // ✅ FIXED: Use raw SQL for reliable date comparison
+        // ✅ FIXED: Use date range for sargable query
         public async Task<List<ScheduledOrder>> GetScheduledOrdersForDateAsync(DateTime date)
         {
-            // Use raw SQL for reliable date comparison
-            var dateString = date.ToString("yyyy-MM-dd");
+            // Use date range comparison - sargable, can use B-tree index on ScheduledFor
+            var startOfDay = date.Date;
+            var endOfDay = date.Date.AddDays(1);
             
-            Console.WriteLine($"🔍 [ScheduledOrderRepository] Searching for ScheduledFor = {dateString}");
+            // ✅ Replace Console.WriteLine with structured logging
+            _logger.LogDebug("Searching for ScheduledFor >= {Start} AND < {End}", startOfDay, endOfDay);
             
             var orders = await _context.ScheduledOrders
-                .FromSqlRaw(@"
-                    SELECT * FROM ""ScheduledOrders"" 
-                    WHERE CAST(""ScheduledFor"" AS DATE) = CAST({0} AS DATE)
-                ", dateString)
+                .AsNoTracking()
+                .Where(so => so.ScheduledFor >= startOfDay && so.ScheduledFor < endOfDay)
                 .Include(o => o.User)
                 .Include(o => o.Ingredients)
                     .ThenInclude(i => i.Ingredient)
@@ -112,11 +116,12 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
                 .OrderBy(o => o.CreatedAt)
                 .ToListAsync();
             
-            Console.WriteLine($"✅ [ScheduledOrderRepository] Found {orders.Count} orders for {dateString}");
+            _logger.LogDebug("Found {Count} orders for {Date:yyyy-MM-dd}", orders.Count, date);
             
             foreach (var order in orders)
             {
-                Console.WriteLine($"   - Order #{order.ScheduledOrderId}: {order.MealName}, ScheduledFor: {order.ScheduledFor:yyyy-MM-dd HH:mm:ss}, Status: {order.OrderStatus}");
+                _logger.LogTrace("   - Order #{OrderId}: {MealName}, ScheduledFor: {ScheduledFor:yyyy-MM-dd HH:mm:ss}, Status: {Status}",
+                    order.ScheduledOrderId, order.MealName, order.ScheduledFor, order.OrderStatus);
             }
             
             return orders;
@@ -128,6 +133,7 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
             var endOfDay = date.Date.AddDays(1);
 
             return await _context.ScheduledOrders
+                .AsNoTracking()
                 .AnyAsync(so => so.AuthId == authId
                               && so.ScheduledFor >= startOfDay
                               && so.ScheduledFor < endOfDay
@@ -137,6 +143,7 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
         public async Task<List<ScheduledOrder>> GetBySubscriptionIdAsync(int subscriptionId)
         {
             return await _context.ScheduledOrders
+                .AsNoTracking()
                 .Where(so => so.SubscriptionId == subscriptionId)
                 .ToListAsync();
         }

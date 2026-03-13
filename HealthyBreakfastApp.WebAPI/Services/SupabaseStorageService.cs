@@ -102,5 +102,30 @@ namespace HealthyBreakfastApp.WebAPI.Services
             var baseUrl = _storageUrl.Replace("/storage/v1", "");
             return $"{baseUrl}/storage/v1{signedUrl}";
         }
+
+        public async Task DeleteImageAsync(string filePath)
+        {
+            // Ensure we only pass relative path inside bucket
+            var cleanPath = filePath.StartsWith("meal-images/")
+                ? filePath
+                : $"meal-images/{filePath}";
+
+            var request = new HttpRequestMessage(
+                HttpMethod.Delete,
+                $"{_storageUrl}/object/{cleanPath}");
+
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _serviceRoleKey);
+
+            var response = await _httpClient.SendAsync(request);
+
+            if (!response.IsSuccessStatusCode && response.StatusCode != System.Net.HttpStatusCode.NotFound)
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                _logger.LogError("Supabase delete failed: {Error}", error);
+                throw new InvalidOperationException($"Delete failed: {error}");
+            }
+
+            _logger.LogInformation("Deleted image: {FilePath}", cleanPath);
+        }
     }
 }

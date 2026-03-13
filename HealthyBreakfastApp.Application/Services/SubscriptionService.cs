@@ -19,6 +19,7 @@ namespace HealthyBreakfastApp.Application.Services
         private readonly ISubscriptionRepository _subscriptionRepository;
         private readonly IUserRepository _userRepository;
         private readonly IUserMealRepository _userMealRepository;
+        private readonly IMealRepository _mealRepository;  // ✅ ADD: For auto-find-or-create
         private readonly IUserAddressRepository _userAddressRepository;
         private readonly IScheduledOrderRepository _scheduledOrderRepository;
         private readonly IIngredientRepository _ingredientRepository;
@@ -33,6 +34,7 @@ namespace HealthyBreakfastApp.Application.Services
             ISubscriptionRepository subscriptionRepository,
             IUserRepository userRepository,
             IUserMealRepository userMealRepository,
+            IMealRepository mealRepository,  // ✅ ADD: For auto-find-or-create
             IUserAddressRepository userAddressRepository,
             IScheduledOrderRepository scheduledOrderRepository,
             IIngredientRepository ingredientRepository,
@@ -43,6 +45,7 @@ namespace HealthyBreakfastApp.Application.Services
             _subscriptionRepository = subscriptionRepository;
             _userRepository = userRepository;
             _userMealRepository = userMealRepository;
+            _mealRepository = mealRepository;  // ✅ ADD
             _userAddressRepository = userAddressRepository;
             _scheduledOrderRepository = scheduledOrderRepository;
             _ingredientRepository = ingredientRepository;
@@ -82,9 +85,31 @@ namespace HealthyBreakfastApp.Application.Services
             if (user == null)
                 throw new ArgumentException("User not found");
 
-            var userMeal = await _userMealRepository.GetByIdAsync(dto.UserMealId);
+            // ✅ NEW: Auto-find or create UserMeal by MealId
+            var userMeal = await _userMealRepository.GetByUserIdAndMealIdAsync(dto.UserId, dto.MealId);
+
             if (userMeal == null)
-                throw new ArgumentException("User meal not found");
+            {
+                // Fetch meal details for UserMeal record
+                var meal = await _mealRepository.GetByIdAsync(dto.MealId);
+                if (meal == null)
+                    throw new ArgumentException("Meal not found");
+
+                userMeal = new UserMeal
+                {
+                    UserId = dto.UserId,
+                    MealId = dto.MealId,
+                    MealName = meal.MealName,
+                    TotalPrice = meal.BasePrice,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                await _userMealRepository.AddAsync(userMeal);
+                await _userMealRepository.SaveChangesAsync();
+            }
+
+            // Update the UserMealId in the DTO for downstream usage
+            dto.UserMealId = userMeal.UserMealId;
 
             // ✅ ADD: Check for existing active subscription for this UserMeal
             _logger.LogInformation("🔍 Checking for existing subscription: UserId={UserId}, UserMealId={UserMealId}", dto.UserId, dto.UserMealId);

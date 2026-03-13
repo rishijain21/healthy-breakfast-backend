@@ -37,16 +37,12 @@ namespace HealthyBreakfastApp.WebAPI.Middleware
             }
 
             // ✅ CHECK: If this is an API route that needs processing
-            if (context.Request.Path.StartsWithSegments("/api"))
+            // ✅ FIXED: Don't check endpoint metadata — routing hasn't happened yet
+            // UseAuthentication() already ran, so context.User is populated if token is valid
+            if (context.Request.Path.StartsWithSegments("/api")
+                && context.User.Identity?.IsAuthenticated == true)
             {
-                var endpoint = context.GetEndpoint();
-                var requiresAuth = endpoint?.Metadata?.GetMetadata<AuthorizeAttribute>() != null;
-                var allowAnonymous = endpoint?.Metadata?.GetMetadata<AllowAnonymousAttribute>() != null;
-
-                if (requiresAuth && !allowAnonymous)
-                {
-                    await ProcessAuthenticationAsync(context);
-                }
+                await ProcessAuthenticationAsync(context);
             }
 
             await _next(context);
@@ -84,9 +80,9 @@ namespace HealthyBreakfastApp.WebAPI.Middleware
                             foreach (var claim in existingRoleClaims)
                                 identity.RemoveClaim(claim);
 
-                            // Inject the role from your database
+                            // Inject the role from your database into the standard ASP.NET role claim
                             identity.AddClaim(new System.Security.Claims.Claim(
-                                identity.RoleClaimType,
+                                System.Security.Claims.ClaimTypes.Role,
                                 userDto.Role ?? "User"
                             ));
                         }
@@ -120,40 +116,26 @@ namespace HealthyBreakfastApp.WebAPI.Middleware
 
             try
             {
-                var token = authHeader.Substring("Bearer ".Length).Trim();
-                var handler = new JwtSecurityTokenHandler();
-                var jsonToken = handler.ReadJwtToken(token);
-                
-                return jsonToken.Subject ?? jsonToken.Claims.FirstOrDefault(c => c.Type == "sub")?.Value;
+                // ✅ FIX 3: Use already-validated ClaimsPrincipal instead of ReadJwtToken
+                // Since UseAuthentication() runs before this middleware, context.User is already validated
+                return context.User.FindFirst("sub")?.Value
+                    ?? context.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
             }
             catch (Exception ex)
             {
-                _logger.LogError($"❌ Token decode error: {ex.Message}");
+                _logger.LogError($"❌ Token extraction error: {ex.Message}");
                 return null;
             }
         }
 
         private (string? Name, string? Email) ExtractUserInfoFromToken(HttpContext context)
         {
-            var authHeader = context.Request.Headers["Authorization"].FirstOrDefault();
-            if (string.IsNullOrEmpty(authHeader))
-                return (null, null);
+            // ✅ FIX 3: Use already-validated ClaimsPrincipal instead of ReadJwtToken
+            var name = context.User.FindFirst("name")?.Value 
+                ?? context.User.FindFirst("full_name")?.Value;
+            var email = context.User.FindFirst("email")?.Value;
 
-            try
-            {
-                var token = authHeader.Substring("Bearer ".Length).Trim();
-                var handler = new JwtSecurityTokenHandler();
-                var jsonToken = handler.ReadJwtToken(token);
-
-                var name = jsonToken.Claims.FirstOrDefault(c => c.Type == "name" || c.Type == "full_name")?.Value;
-                var email = jsonToken.Claims.FirstOrDefault(c => c.Type == "email")?.Value;
-
-                return (name, email);
-            }
-            catch
-            {
-                return (null, null);
-            }
+            return (name, email);
         }
     }
 }

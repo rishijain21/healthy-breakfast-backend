@@ -12,14 +12,20 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         private readonly IServiceableLocationService _service;
         private readonly ILogger<ServiceableLocationsController> _logger;
 
-        public ServiceableLocationsController(IServiceableLocationService service, ILogger<ServiceableLocationsController> logger)
+        public ServiceableLocationsController(
+            IServiceableLocationService service,
+            ILogger<ServiceableLocationsController> logger)
         {
             _service = service;
             _logger = logger;
         }
 
+        // ══════════════════════════════════════════════════════
+        // PUBLIC ENDPOINTS (users + admin)
+        // ══════════════════════════════════════════════════════
+
         /// <summary>
-        /// Get all active serviceable locations
+        /// Get all ACTIVE serviceable locations (for users selecting delivery address)
         /// </summary>
         [HttpGet]
         [AllowAnonymous]
@@ -44,7 +50,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         }
 
         /// <summary>
-        /// Search locations by pincode
+        /// Search locations by pincode (active only)
         /// </summary>
         [HttpGet("search/pincode/{pincode}")]
         [AllowAnonymous]
@@ -55,7 +61,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         }
 
         /// <summary>
-        /// Search locations by city
+        /// Search locations by city (active only)
         /// </summary>
         [HttpGet("search/city/{city}")]
         [AllowAnonymous]
@@ -66,19 +72,33 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         }
 
         /// <summary>
-        /// Search locations by city and area
+        /// Search locations by free-text query across city, area, locality, landmark, pincode (active only)
+        /// FIX: Frontend LocationService hits GET /search?query=... — this replaces the broken city+area version
         /// </summary>
         [HttpGet("search")]
         [AllowAnonymous]
-        public async Task<ActionResult<IEnumerable<ServiceableLocationDto>>> SearchByArea(
-            [FromQuery] string city, 
-            [FromQuery] string area)
+        public async Task<ActionResult<IEnumerable<ServiceableLocationDto>>> Search(
+            [FromQuery] string? query,
+            [FromQuery] string? city,
+            [FromQuery] string? area)
         {
-            if (string.IsNullOrEmpty(city) || string.IsNullOrEmpty(area))
-                return BadRequest(new { message = "City and area are required" });
+            // Free-text search from frontend LocationService.searchServiceableLocations()
+            if (!string.IsNullOrWhiteSpace(query))
+            {
+                var results = await _service.SearchByQueryAsync(query);
+                return Ok(results);
+            }
 
-            var locations = await _service.SearchByAreaAsync(city, area);
-            return Ok(locations);
+            // Legacy city+area search (keep for backwards compatibility)
+            if (!string.IsNullOrWhiteSpace(city) && !string.IsNullOrWhiteSpace(area))
+            {
+                var results = await _service.SearchByAreaAsync(city, area);
+                return Ok(results);
+            }
+
+            // No params — return all active
+            var all = await _service.GetActiveLocationsAsync();
+            return Ok(all);
         }
 
         /// <summary>
@@ -92,39 +112,68 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             return Ok(result);
         }
 
-        // ========================================
+        // ══════════════════════════════════════════════════════
         // ADMIN ENDPOINTS
-        // ========================================
+        // BUG FIX: Removed [Authorize(Roles = "Admin")] — Supabase JWT
+        // role claim is "authenticated", not "Admin". Role check is handled
+        // by AuthMiddleware which injects the app-level role.
+        // Use [Authorize] + manual role check via HttpContext.Items["UserRole"].
+        // ══════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Get ALL locations including inactive (Admin only)
+        /// BUG FIX: Old GetAll() only returned active — admin needs all zones
+        /// </summary>
+        [HttpGet("admin/all")]
+        [Authorize]
+        public async Task<ActionResult<IEnumerable<ServiceableLocationDto>>> GetAllForAdmin()
+        {
+            if (!IsAdmin())
+                return Forbid();
+
+            var locations = await _service.GetAllAsync();
+            return Ok(locations);
+        }
 
         /// <summary>
         /// Create new serviceable location (Admin only)
         /// </summary>
         [HttpPost]
-        [Authorize(Roles = "Admin")]
+        [Authorize]
         public async Task<ActionResult<ServiceableLocationDto>> Create(
             [FromBody] CreateServiceableLocationDto dto)
         {
+            if (!IsAdmin())
+                return Forbid();
+
             try
             {
-                _logger.LogInformation("Admin creating serviceable location: {City} {Pincode}", dto.City, dto.Pincode);
+                _logger.LogInformation(
+                    "Admin creating serviceable location: {City} {Pincode}", dto.City, dto.Pincode);
+
                 var created = await _service.CreateAsync(dto);
                 return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Error creating serviceable location");
                 return BadRequest(new { message = ex.Message });
             }
         }
 
         /// <summary>
         /// Update serviceable location (Admin only)
+        /// Handles both full updates AND toggle-status (IsActive field)
         /// </summary>
         [HttpPut("{id}")]
-        [Authorize(Roles = "Admin")]
+        [Authorize]
         public async Task<ActionResult<ServiceableLocationDto>> Update(
-            int id, 
+            int id,
             [FromBody] UpdateServiceableLocationDto dto)
         {
+            if (!IsAdmin())
+                return Forbid();
+
             try
             {
                 var updated = await _service.UpdateAsync(id, dto);
@@ -136,23 +185,39 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Error updating serviceable location {Id}", id);
                 return BadRequest(new { message = ex.Message });
             }
         }
 
         /// <summary>
         /// Delete serviceable location (Admin only)
+        /// Note: If location has user addresses linked, it soft-deletes (sets IsActive=false)
         /// </summary>
         [HttpDelete("{id}")]
-        [Authorize(Roles = "Admin")]
+        [Authorize]
         public async Task<ActionResult> Delete(int id)
         {
+            if (!IsAdmin())
+                return Forbid();
+
             var result = await _service.DeleteAsync(id);
             if (!result)
                 return NotFound(new { message = "Serviceable location not found" });
 
-            _logger.LogWarning("Admin deleting serviceable location: {Id}", id);
+            _logger.LogWarning("Admin deleted serviceable location: {Id}", id);
             return Ok(new { message = "Serviceable location deleted successfully" });
+        }
+
+        // ══════════════════════════════════════════════════════
+        // HELPER: Read role from UserDto set by AuthMiddleware
+        // AuthMiddleware sets HttpContext.Items["User"] to UserDto before
+        // calling _next(context), so it's available at action execution time.
+        // ══════════════════════════════════════════════════════
+        private bool IsAdmin()
+        {
+            var user = HttpContext.Items["User"] as HealthyBreakfastApp.Application.DTOs.UserDto;
+            return string.Equals(user?.Role, "Admin", StringComparison.OrdinalIgnoreCase);
         }
     }
 }

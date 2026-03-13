@@ -5,6 +5,7 @@ using System.Linq;
 using HealthyBreakfastApp.Application.DTOs;
 using HealthyBreakfastApp.Application.Interfaces;
 using HealthyBreakfastApp.Domain.Entities;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace HealthyBreakfastApp.Application.Services
 {
@@ -16,6 +17,9 @@ namespace HealthyBreakfastApp.Application.Services
         private readonly IIngredientCategoryRepository _ingredientCategoryRepository;
         private readonly IMealOptionIngredientRepository _mealOptionIngredientRepository;
         private readonly ISupabaseStorageService _storageService;
+        private readonly IMemoryCache _cache;
+        private const string ActiveMealsCacheKey = "active_meals";
+        private const string CategoriesWithIngredientsCacheKey = "meals:categories_with_ingredients";
 
         public MealService(
             IMealRepository mealRepository,
@@ -23,7 +27,8 @@ namespace HealthyBreakfastApp.Application.Services
             IMealOptionRepository mealOptionRepository,
             IIngredientCategoryRepository ingredientCategoryRepository,
             IMealOptionIngredientRepository mealOptionIngredientRepository,
-            ISupabaseStorageService storageService)
+            ISupabaseStorageService storageService,
+            IMemoryCache cache)
         {
             _mealRepository = mealRepository;
             _ingredientRepository = ingredientRepository;
@@ -31,15 +36,21 @@ namespace HealthyBreakfastApp.Application.Services
             _ingredientCategoryRepository = ingredientCategoryRepository;
             _mealOptionIngredientRepository = mealOptionIngredientRepository;
             _storageService = storageService;
+            _cache = cache;
         }
 
         // ✅ Public method for meal builder - returns only complete meals for public browsing
         public async Task<List<MealDto>> GetActiveMealsAsync()
         {
+            // ✅ Try to get from cache first
+            if (_cache.TryGetValue(ActiveMealsCacheKey, out List<MealDto>? cachedMeals))
+                return cachedMeals!;
+
             var meals = await _mealRepository.GetAllAsync();
             var result = new List<MealDto>();
             
-            foreach (var m in meals.Where(m => m.IsComplete))
+            // ✅ Filter: IsComplete AND not soft-deleted
+            foreach (var m in meals.Where(m => m.IsComplete && !m.IsDeleted))
             {
                 var dto = new MealDto
                 {
@@ -59,6 +70,9 @@ namespace HealthyBreakfastApp.Application.Services
                 
                 result.Add(dto);
             }
+            
+            // ✅ Cache for 5 minutes
+            _cache.Set(ActiveMealsCacheKey, result, TimeSpan.FromMinutes(5));
             
             return result;
         }
@@ -96,6 +110,9 @@ namespace HealthyBreakfastApp.Application.Services
 
             await _mealRepository.AddMealAsync(meal);
             await _mealRepository.SaveChangesAsync();
+
+            // ✅ Bust the cache when a meal is created
+            _cache.Remove(ActiveMealsCacheKey);
 
             return meal.MealId;
         }
@@ -247,14 +264,16 @@ namespace HealthyBreakfastApp.Application.Services
 
         // ========== ADMIN METHODS (UPDATED) ==========
 
+        // ✅ FIXED: Use eager loading to avoid N+1 queries
         public async Task<List<AdminMealListDto>> GetAllMealsForAdminAsync()
         {
-            var meals = await _mealRepository.GetAllAsync();
+            var meals = await _mealRepository.GetAllWithOptionsCountAsync();
             var mealList = new List<AdminMealListDto>();
 
             foreach (var meal in meals)
             {
-                var mealOptions = await _mealOptionRepository.GetByMealIdAsync(meal.MealId);
+                // ✅ Options are already loaded via Include - no extra DB call
+                var mealOptions = meal.MealOptions ?? Enumerable.Empty<MealOption>();
                 
                 mealList.Add(new AdminMealListDto
                 {
@@ -282,6 +301,47 @@ namespace HealthyBreakfastApp.Application.Services
             }
 
             return mealList;
+        }
+
+        // ✅ NEW: Paginated admin list
+        public async Task<PagedResult<AdminMealListDto>> GetAllMealsForAdminPagedAsync(int page, int pageSize)
+        {
+            // Clamp inputs — never trust raw user input
+            page = Math.Max(1, page);
+            pageSize = Math.Clamp(pageSize, 1, 50); // max 50 per page
+
+            var (meals, totalCount) = await _mealRepository.GetPagedAsync(page, pageSize);
+
+            var items = new List<AdminMealListDto>();
+            foreach (var meal in meals)
+            {
+                items.Add(new AdminMealListDto
+                {
+                    MealId = meal.MealId,
+                    MealName = meal.MealName,
+                    Description = meal.Description,
+                    BasePrice = meal.BasePrice,
+                    MealOptionsCount = 0, // ← avoids N+1; load separately if needed
+                    IsComplete = meal.IsComplete,
+                    ApproxCalories = meal.ApproxCalories,
+                    ApproxProtein = meal.ApproxProtein,
+                    ApproxCarbs = meal.ApproxCarbs,
+                    ApproxFats = meal.ApproxFats,
+                    ImageUrl = !string.IsNullOrEmpty(meal.ImageUrl)
+                        ? await _storageService.GetSignedUrlAsync(meal.ImageUrl)
+                        : null,
+                    CreatedAt = meal.CreatedAt,
+                    UpdatedAt = meal.UpdatedAt
+                });
+            }
+
+            return new PagedResult<AdminMealListDto>
+            {
+                Items = items,
+                TotalCount = totalCount,
+                Page = page,
+                PageSize = pageSize
+            };
         }
 
         public async Task<AdminMealDetailDto?> GetMealDetailForAdminAsync(int id)
@@ -424,6 +484,9 @@ namespace HealthyBreakfastApp.Application.Services
                 await _mealOptionIngredientRepository.SaveChangesAsync();
             }
 
+            // ✅ Bust the cache when a meal is created
+            _cache.Remove(ActiveMealsCacheKey);
+
             return meal.MealId;
         }
 
@@ -499,6 +562,10 @@ namespace HealthyBreakfastApp.Application.Services
             }
 
             await _mealRepository.UpdateMealAsync(meal);
+            
+            // ✅ Bust the cache when a meal is updated
+            _cache.Remove(ActiveMealsCacheKey);
+            
             return true;
         }
 
@@ -509,6 +576,10 @@ namespace HealthyBreakfastApp.Application.Services
 
             // Delete cascade will handle meal options and meal option ingredients
             await _mealRepository.DeleteMealAsync(meal);
+            
+            // ✅ Bust the cache when a meal is deleted
+            _cache.Remove(ActiveMealsCacheKey);
+            
             return true;
         }
 
@@ -519,6 +590,10 @@ namespace HealthyBreakfastApp.Application.Services
 
         public async Task<List<CategoryWithIngredientsDto>> GetCategoriesWithIngredientsAsync()
         {
+            // ✅ Try to get from cache first
+            if (_cache.TryGetValue(CategoriesWithIngredientsCacheKey, out List<CategoryWithIngredientsDto>? cached))
+                return cached!;
+
             var categories = await _ingredientCategoryRepository.GetAllAsync();
             var result = new List<CategoryWithIngredientsDto>();
 
@@ -546,7 +621,37 @@ namespace HealthyBreakfastApp.Application.Services
                 });
             }
 
+            // ✅ Cache for 10 minutes
+            _cache.Set(CategoriesWithIngredientsCacheKey, result, TimeSpan.FromMinutes(10));
+            
             return result;
+        }
+
+        // ✅ NEW: Update meal image
+        public async Task<bool> UpdateMealImageAsync(int mealId, string imageUrl)
+        {
+            var meal = await _mealRepository.GetByIdAsync(mealId);
+            if (meal == null) return false;
+
+            meal.ImageUrl = imageUrl;
+            meal.UpdatedAt = DateTime.UtcNow;
+            await _mealRepository.UpdateMealAsync(meal);
+            _cache.Remove(ActiveMealsCacheKey);
+            return true;
+        }
+
+        // ✅ NEW: Delete meal image
+        public async Task<string?> DeleteMealImageAsync(int mealId)
+        {
+            var meal = await _mealRepository.GetByIdAsync(mealId);
+            if (meal == null) return null;
+
+            var existingUrl = meal.ImageUrl;
+            meal.ImageUrl = null;
+            meal.UpdatedAt = DateTime.UtcNow;
+            await _mealRepository.UpdateMealAsync(meal);
+            _cache.Remove(ActiveMealsCacheKey);
+            return existingUrl;
         }
     }
 }

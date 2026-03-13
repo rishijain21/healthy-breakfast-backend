@@ -11,6 +11,9 @@ namespace HealthyBreakfastApp.Application.DTOs
     {
         public int UserId { get; set; }  // Set by controller from JWT
 
+        // ✅ ADD: MealId from frontend (used to auto-find or create UserMeal)
+        public int MealId { get; set; }
+
         [Required]
         public int UserMealId { get; set; }
 

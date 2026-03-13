@@ -1,10 +1,8 @@
 using HealthyBreakfastApp.Application.DTOs;
 using HealthyBreakfastApp.Application.Interfaces;
-using HealthyBreakfastApp.Infrastructure.Data;
 using HealthyBreakfastApp.WebAPI.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using System.IO;
 using System.Threading.Tasks;
@@ -16,14 +14,12 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
     public class MealsController : ControllerBase
     {
         private readonly IMealService _mealService;
-        private readonly AppDbContext _context;
         private readonly ILogger<MealsController> _logger;
         private readonly ISupabaseStorageService _storageService;
 
-        public MealsController(IMealService mealService, AppDbContext context, ILogger<MealsController> logger, ISupabaseStorageService storageService)
+        public MealsController(IMealService mealService, ILogger<MealsController> logger, ISupabaseStorageService storageService)
         {
             _mealService = mealService;
-            _context = context;
             _logger = logger;
             _storageService = storageService;
         }
@@ -33,6 +29,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         // ✅ Public endpoint — no [Authorize] needed
         [HttpGet("public")]
         [AllowAnonymous]
+        [ProducesResponseType(typeof(List<MealDto>), 200)]
         public async Task<IActionResult> GetPublicMeals()
         {
             var meals = await _mealService.GetActiveMealsAsync();
@@ -42,6 +39,9 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         // ✅ ADD THIS — meal details for logged-in users (meal builder)
         [HttpGet("{id}/details")]
         [Authorize]
+        [ProducesResponseType(typeof(AdminMealDetailDto), 200)]
+        [ProducesResponseType(401)]
+        [ProducesResponseType(404)]
         public async Task<IActionResult> GetMealDetails(int id)
         {
             try
@@ -82,7 +82,10 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             }
         }
 
+        // ✅ FIX 9: Add authorization to legacy endpoints (or remove if not needed)
+        // These appear to be legacy endpoints - prefer the admin versions below
         [HttpPost]
+        [Authorize(Roles = "Admin")]
         public async Task<IActionResult> CreateMeal([FromBody] CreateMealDto dto)
         {
             var mealId = await _mealService.CreateMealAsync(dto);
@@ -90,6 +93,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         }
 
         [HttpGet("{id}")]
+        [Authorize(Roles = "Admin")]
         public async Task<IActionResult> GetMealById(int id)
         {
             var meal = await _mealService.GetMealByIdAsync(id);
@@ -156,22 +160,20 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         // ========== NEW ADMIN ENDPOINTS ==========
 
         /// <summary>
-        /// Get all meals for admin dashboard (with meal options count and completion status)
+        /// Get paginated meals for admin dashboard
+        /// Usage: GET /api/meals/admin/all?page=1&pageSize=20
         /// </summary>
         [HttpGet("admin/all")]
         [Authorize(Roles = "Admin")]
-        public async Task<ActionResult<List<AdminMealListDto>>> GetAllMealsForAdmin()
+        [ProducesResponseType(typeof(PagedResult<AdminMealListDto>), 200)]
+        [ProducesResponseType(401)]
+        [ProducesResponseType(403)]
+        public async Task<ActionResult<PagedResult<AdminMealListDto>>> GetAllMealsForAdmin(
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 20)
         {
-            try
-            {
-                var meals = await _mealService.GetAllMealsForAdminAsync();
-                return Ok(meals);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error retrieving meals");
-                return StatusCode(500, new { message = "Error retrieving meals" });
-            }
+            var result = await _mealService.GetAllMealsForAdminPagedAsync(page, pageSize);
+            return Ok(result);
         }
 
         /// <summary>
@@ -179,21 +181,17 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         /// </summary>
         [HttpGet("admin/{id}")]
         [Authorize(Roles = "Admin")]
+        [ProducesResponseType(typeof(AdminMealDetailDto), 200)]
+        [ProducesResponseType(401)]
+        [ProducesResponseType(403)]
+        [ProducesResponseType(404)]
         public async Task<ActionResult<AdminMealDetailDto>> GetMealDetailForAdmin(int id)
         {
-            try
-            {
-                var meal = await _mealService.GetMealDetailForAdminAsync(id);
-                if (meal == null) 
-                    return NotFound(new { message = $"Meal with ID {id} not found" });
-                
-                return Ok(meal);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error retrieving meal details");
-                return StatusCode(500, new { message = "Error retrieving meal details" });
-            }
+            var meal = await _mealService.GetMealDetailForAdminAsync(id);
+            if (meal == null) 
+                return NotFound(new { message = $"Meal with ID {id} not found" });
+            
+            return Ok(meal);
         }
 
         /// <summary>
@@ -201,22 +199,14 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         /// </summary>
         [HttpPost("admin")]
         [Authorize(Roles = "Admin")]
+        [ProducesResponseType(typeof(CreatedAtActionResult), 201)]
+        [ProducesResponseType(400)]
+        [ProducesResponseType(401)]
+        [ProducesResponseType(403)]
         public async Task<IActionResult> CreateMealWithOptions([FromBody] AdminCreateMealDto dto)
         {
-            try
-            {
-                var mealId = await _mealService.CreateMealWithOptionsAsync(dto);
-                return CreatedAtAction(nameof(GetMealDetailForAdmin), new { id = mealId }, new { mealId, message = "Meal created successfully" });
-            }
-            catch (ArgumentException ex)
-            {
-                return BadRequest(new { message = ex.Message });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error creating meal");
-                return StatusCode(500, new { message = "Error creating meal" });
-            }
+            var mealId = await _mealService.CreateMealWithOptionsAsync(dto);
+            return CreatedAtAction(nameof(GetMealDetailForAdmin), new { id = mealId }, new { mealId, message = "Meal created successfully" });
         }
 
         /// <summary>
@@ -226,23 +216,11 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         [Authorize(Roles = "Admin")]
         public async Task<IActionResult> UpdateMeal(int id, [FromBody] UpdateMealDto dto)
         {
-            try
-            {
-                var success = await _mealService.UpdateMealAsync(id, dto);
-                if (!success) 
-                    return NotFound(new { message = $"Meal with ID {id} not found" });
-                
-                return Ok(new { message = "Meal updated successfully" });
-            }
-            catch (ArgumentException ex)
-            {
-                return BadRequest(new { message = ex.Message });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error updating meal");
-                return StatusCode(500, new { message = "Error updating meal" });
-            }
+            var success = await _mealService.UpdateMealAsync(id, dto);
+            if (!success) 
+                return NotFound(new { message = $"Meal with ID {id} not found" });
+            
+            return Ok(new { message = "Meal updated successfully" });
         }
 
         /// <summary>
@@ -252,19 +230,11 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         [Authorize(Roles = "Admin")]
         public async Task<IActionResult> DeleteMeal(int id)
         {
-            try
-            {
-                var success = await _mealService.DeleteMealAsync(id);
-                if (!success) 
-                    return NotFound(new { message = $"Meal with ID {id} not found" });
-                
-                return Ok(new { message = "Meal deleted successfully" });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error deleting meal");
-                return StatusCode(500, new { message = "Error deleting meal" });
-            }
+            var success = await _mealService.DeleteMealAsync(id);
+            if (!success) 
+                return NotFound(new { message = $"Meal with ID {id} not found" });
+            
+            return Ok(new { message = "Meal deleted successfully" });
         }
 
         /// <summary>
@@ -274,20 +244,12 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         [Authorize(Roles = "Admin")]
         public async Task<IActionResult> UpdateMealStatus(int id, [FromBody] UpdateMealStatusDto dto)
         {
-            try
-            {
-                var updated = await _mealService.UpdateMealStatusAsync(id, dto.IsComplete);
+            var updated = await _mealService.UpdateMealStatusAsync(id, dto.IsComplete);
 
-                if (!updated)
-                    return NotFound(new { message = $"Meal with ID {id} not found." });
+            if (!updated)
+                return NotFound(new { message = $"Meal with ID {id} not found." });
 
-                return Ok(new { id, isComplete = dto.IsComplete, message = "Meal status updated successfully." });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error updating meal status");
-                return StatusCode(500, new { message = "Error updating meal status" });
-            }
+            return Ok(new { id, isComplete = dto.IsComplete, message = "Meal status updated successfully." });
         }
 
         /// <summary>
@@ -297,16 +259,8 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         [Authorize(Roles = "Admin")]
         public async Task<ActionResult<List<CategoryWithIngredientsDto>>> GetCategoriesWithIngredients()
         {
-            try
-            {
-                var categories = await _mealService.GetCategoriesWithIngredientsAsync();
-                return Ok(categories);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error retrieving categories");
-                return StatusCode(500, new { message = "Error retrieving categories" });
-            }
+            var categories = await _mealService.GetCategoriesWithIngredientsAsync();
+            return Ok(categories);
         }
 
         /// <summary>
@@ -314,47 +268,11 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         /// </summary>
         [HttpGet("admin/all-with-details")]
         [Authorize]
-        public async Task<ActionResult<List<MealWithDetailsDto>>> GetAllMealsWithDetails()
+        public async Task<ActionResult<List<AdminMealListDto>>> GetAllMealsWithDetails()
         {
-            try
-            {
-                var meals = await _context.Meals
-                    .Include(m => m.MealOptions)
-                        .ThenInclude(o => o.MealOptionIngredients)
-                            .ThenInclude(moi => moi.Ingredient)
-                    .AsNoTracking()
-                    .ToListAsync();
-
-                return Ok(meals.Select(m => new MealWithDetailsDto
-                {
-                    MealId = m.MealId,
-                    MealName = m.MealName,
-                    Description = m.Description,
-                    BasePrice = m.BasePrice,
-                    ApproxCalories = m.ApproxCalories,
-                    ApproxProtein = m.ApproxProtein,
-                    ApproxCarbs = m.ApproxCarbs,
-                    ApproxFats = m.ApproxFats,
-                    CreatedAt = m.CreatedAt,
-                    UpdatedAt = m.UpdatedAt,
-                    MealOptionsCount = m.MealOptions.Count,
-                    MealOptions = m.MealOptions.Select(o => new MealOptionDto
-                    {
-                        MealOptionId = o.MealOptionId,
-                        MealId = o.MealId,
-                        CategoryId = o.CategoryId,
-                        IsRequired = o.IsRequired,
-                        MaxSelectable = o.MaxSelectable,
-                        CreatedAt = o.CreatedAt,
-                        UpdatedAt = o.UpdatedAt
-                    }).ToList()
-                }));
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error retrieving meals with details");
-                return StatusCode(500, new { message = "Error retrieving meals with details" });
-            }
+            // ✅ Use existing service method — no direct DB access
+            var meals = await _mealService.GetAllMealsForAdminAsync();
+            return Ok(meals);
         }
 
         /// <summary>
@@ -364,36 +282,49 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         [Authorize(Roles = "Admin")]
         public async Task<IActionResult> UploadMealImage(int id, IFormFile image)
         {
-            try
-            {
-                if (image == null || image.Length == 0)
-                    return BadRequest(new { message = "No image provided" });
+            if (image == null || image.Length == 0)
+                return BadRequest(new { message = "No image provided" });
 
-                var meal = await _context.Meals.FindAsync(id);
-                if (meal == null)
-                    return NotFound(new { message = $"Meal {id} not found" });
+            // ✅ FIX 8: Validate file type and size
+            var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".webp" };
+            var ext = Path.GetExtension(image.FileName).ToLower();
+            
+            if (!allowedExtensions.Contains(ext))
+                return BadRequest(new { message = "Only JPG, PNG, and WebP images are allowed" });
+            
+            if (image.Length > 5 * 1024 * 1024) // 5MB limit
+                return BadRequest(new { message = "Image size cannot exceed 5MB" });
 
-                var ext = Path.GetExtension(image.FileName).ToLower();
-                var fileName = $"meal-{id}/{Guid.NewGuid():N}{ext}";
+            var fileName = $"meal-{id}/{Guid.NewGuid():N}{ext}";
+            var imageUrl = await _storageService.UploadImageAsync(image, fileName);
 
-                var imageUrl = await _storageService.UploadImageAsync(image, fileName);
+            // ✅ Use service method instead of direct DB access
+            var success = await _mealService.UpdateMealImageAsync(id, imageUrl);
+            if (!success) return NotFound(new { message = $"Meal {id} not found" });
 
-                meal.ImageUrl = imageUrl;
-                meal.UpdatedAt = DateTime.UtcNow;
-                await _context.SaveChangesAsync();
+            _logger.LogInformation("Image uploaded for meal {MealId}: {Url}", id, imageUrl);
+            return Ok(new { imageUrl, message = "Image uploaded successfully" });
+        }
 
-                _logger.LogInformation("Image uploaded for meal {MealId}: {Url}", id, imageUrl);
-                return Ok(new { imageUrl, message = "Image uploaded successfully" });
-            }
-            catch (ArgumentException ex)
-            {
-                return BadRequest(new { message = ex.Message });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Image upload failed for meal {MealId}", id);
-                return StatusCode(500, new { message = "Upload failed" });
-            }
+        /// <summary>
+        /// Delete image for a meal (Admin only)
+        /// </summary>
+        [HttpDelete("admin/{id}/image")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> DeleteMealImage(int id)
+        {
+            // ✅ Use service method to get existing URL and clear it
+            var existingUrl = await _mealService.DeleteMealImageAsync(id);
+            if (existingUrl == null)
+                return NotFound(new { message = $"Meal {id} not found" });
+            if (string.IsNullOrEmpty(existingUrl))
+                return Ok(new { message = "No image to delete" });
+
+            // Delete from storage
+            await _storageService.DeleteImageAsync(existingUrl);
+
+            _logger.LogInformation("Image deleted for meal {MealId}", id);
+            return Ok(new { message = "Image deleted successfully" });
         }
     }
 }

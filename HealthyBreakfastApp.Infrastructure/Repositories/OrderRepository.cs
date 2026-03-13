@@ -29,28 +29,28 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
 
         public async Task<Order?> GetByIdAsync(int id)
         {
-            return await _context.Orders.FirstOrDefaultAsync(o => o.OrderId == id);
+            return await _context.Orders.AsNoTracking().FirstOrDefaultAsync(o => o.OrderId == id);
         }
 
-        public async Task UpdateAsync(Order order)
+        public void Update(Order order)
         {
             _context.Orders.Update(order);
-            await _context.SaveChangesAsync();
+            // No SaveChanges here — caller decides when to commit
         }
 
         public async Task<IEnumerable<Order>> GetByUserIdAsync(int userId)
         {
-            return await _context.Orders.Where(o => o.UserId == userId).ToListAsync();
+            return await _context.Orders.AsNoTracking().Where(o => o.UserId == userId).ToListAsync();
         }
 
         public async Task<IEnumerable<Order>> GetByStatusAsync(OrderStatus status)
         {
-            return await _context.Orders.Where(o => o.OrderStatus == status).ToListAsync();
+            return await _context.Orders.AsNoTracking().Where(o => o.OrderStatus == status).ToListAsync();
         }
 
         public async Task<IEnumerable<Order>> GetAllAsync()
         {
-            return await _context.Orders
+            return await _context.Orders.AsNoTracking()
                 .OrderByDescending(o => o.CreatedAt)
                 .ToListAsync();
         }
@@ -58,7 +58,7 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
         // ✅ NEW: Enhanced methods with eager loading for rich data
         public async Task<IEnumerable<Order>> GetUserOrdersWithDetailsAsync(int userId)
         {
-            return await _context.Orders
+            return await _context.Orders.AsNoTracking()
                 .Include(o => o.UserMeal)
                     .ThenInclude(um => um!.Meal)
                 .Include(o => o.UserMeal)
@@ -71,7 +71,7 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
 
         public async Task<IEnumerable<Order>> GetAllOrdersWithDetailsAsync()
         {
-            return await _context.Orders
+            return await _context.Orders.AsNoTracking()
                 .Include(o => o.UserMeal)
                     .ThenInclude(um => um!.Meal)
                 .Include(o => o.UserMeal)

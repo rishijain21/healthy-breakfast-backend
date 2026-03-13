@@ -169,6 +169,9 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                     b.Property<bool>("IsComplete")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
                     b.Property<string>("MealName")
                         .IsRequired()
                         .HasColumnType("text");
@@ -188,6 +191,7 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                             CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Description = "Traditional overnight oats base",
                             IsComplete = true,
+                            IsDeleted = false,
                             MealName = "Classic Overnight Oats",
                             UpdatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)
                         },
@@ -198,6 +202,7 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                             CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Description = "Build your perfect breakfast",
                             IsComplete = true,
+                            IsDeleted = false,
                             MealName = "Custom Breakfast Bowl",
                             UpdatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)
                         },
@@ -208,6 +213,7 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                             CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Description = "High protein breakfast option",
                             IsComplete = true,
+                            IsDeleted = false,
                             MealName = "Protein Power Bowl",
                             UpdatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)
                         });
@@ -297,8 +303,9 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                     b.Property<DateTime>("OrderDate")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<int>("OrderStatus")
-                        .HasColumnType("integer")
+                    b.Property<string>("OrderStatus")
+                        .IsRequired()
+                        .HasColumnType("text")
                         .HasColumnName("Status");
 
                     b.Property<DateTime>("ScheduledFor")
@@ -320,9 +327,19 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
 
                     b.HasIndex("DeliveryAddressId");
 
-                    b.HasIndex("UserId");
+                    b.HasIndex("OrderStatus")
+                        .HasDatabaseName("IX_Orders_Status");
+
+                    b.HasIndex("ScheduledFor")
+                        .HasDatabaseName("IX_Orders_ScheduledFor");
+
+                    b.HasIndex("UserId")
+                        .HasDatabaseName("IX_Orders_UserId");
 
                     b.HasIndex("UserMealId");
+
+                    b.HasIndex("UserId", "OrderStatus")
+                        .HasDatabaseName("IX_Orders_UserId_Status");
 
                     b.ToTable("Orders");
                 });
@@ -401,6 +418,12 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                         .HasColumnType("boolean")
                         .HasDefaultValue(false);
 
+                    b.Property<int?>("MealId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("MealImageUrl")
+                        .HasColumnType("text");
+
                     b.Property<string>("MealName")
                         .IsRequired()
                         .HasMaxLength(255)
@@ -433,9 +456,18 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
 
                     b.HasIndex("DeliveryAddressId");
 
+                    b.HasIndex("ScheduledFor")
+                        .HasDatabaseName("IX_ScheduledOrders_ScheduledFor");
+
                     b.HasIndex("SubscriptionId");
 
                     b.HasIndex("UserId");
+
+                    b.HasIndex("AuthId", "ScheduledFor")
+                        .HasDatabaseName("IX_ScheduledOrders_AuthId_ScheduledFor");
+
+                    b.HasIndex("ScheduledFor", "OrderStatus")
+                        .HasDatabaseName("IX_ScheduledOrders_ScheduledFor_OrderStatus");
 
                     b.ToTable("ScheduledOrders");
                 });
@@ -470,7 +502,8 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
 
                     b.HasIndex("IngredientId");
 
-                    b.HasIndex("ScheduledOrderId");
+                    b.HasIndex("ScheduledOrderId")
+                        .HasDatabaseName("IX_ScheduledOrderIngredients_ScheduledOrderId");
 
                     b.ToTable("ScheduledOrderIngredients");
                 });
@@ -580,9 +613,16 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
 
                     b.HasIndex("DeliveryAddressId");
 
-                    b.HasIndex("UserId");
+                    b.HasIndex("UserId")
+                        .HasDatabaseName("IX_Subscriptions_UserId");
 
                     b.HasIndex("UserMealId");
+
+                    b.HasIndex("UserId", "UserMealId")
+                        .HasDatabaseName("IX_Subscriptions_UserId_UserMealId");
+
+                    b.HasIndex("Active", "StartDate", "EndDate")
+                        .HasDatabaseName("IX_Subscriptions_Active_StartDate_EndDate");
 
                     b.ToTable("Subscriptions");
                 });
@@ -664,6 +704,7 @@ namespace HealthyBreakfastApp.Infrastructure.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<decimal>("WalletBalance")
+                        .IsConcurrencyToken()
                         .HasColumnType("numeric");
 
                     b.HasKey("UserId");

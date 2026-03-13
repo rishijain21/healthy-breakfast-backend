@@ -1,6 +1,7 @@
 using HealthyBreakfastApp.Application.DTOs;
 using HealthyBreakfastApp.Application.Interfaces;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using System.Security.Claims;
 
@@ -10,15 +11,18 @@ namespace HealthyBreakfastApp.Application.Services
     {
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly IUserRepository _userRepository;
+        private readonly IMemoryCache _cache;
         private readonly ILogger<CurrentUserService> _logger;
 
         public CurrentUserService(
             IHttpContextAccessor httpContextAccessor,
             IUserRepository userRepository,
+            IMemoryCache cache,
             ILogger<CurrentUserService> logger)
         {
             _httpContextAccessor = httpContextAccessor;
             _userRepository = userRepository;
+            _cache = cache;
             _logger = logger;
         }
 
@@ -73,8 +77,16 @@ namespace HealthyBreakfastApp.Application.Services
             if (!Guid.TryParse(authId, out var authGuid))
                 return null;
 
+            // ✅ Cache authId → UserId mapping for 5 minutes
+            var cacheKey = $"userid_{authId}";
+            if (_cache.TryGetValue(cacheKey, out int cachedUserId))
+                return cachedUserId;
+
             var user = await _userRepository.GetUserByAuthIdAsync(authGuid);
-            return user?.UserId;
+            if (user == null) return null;
+
+            _cache.Set(cacheKey, user.UserId, TimeSpan.FromMinutes(5));
+            return user.UserId;
         }
 
         // Returns the currently logged-in user's details as UserDto
@@ -87,11 +99,15 @@ namespace HealthyBreakfastApp.Application.Services
             if (!Guid.TryParse(authId, out var authGuid))
                 return null;
 
-            var user = await _userRepository.GetUserByAuthIdAsync(authGuid);
-            if (user == null)
-                return null;
+            // ✅ Cache authId → User mapping for 5 minutes
+            var cacheKey = $"user_{authId}";
+            if (_cache.TryGetValue(cacheKey, out UserDto? cachedUser))
+                return cachedUser;
 
-            return new UserDto
+            var user = await _userRepository.GetUserByAuthIdAsync(authGuid);
+            if (user == null) return null;
+
+            var userDto = new UserDto
             {
                 UserId = user.UserId,
                 Name = user.Name,
@@ -101,6 +117,9 @@ namespace HealthyBreakfastApp.Application.Services
                 CreatedAt = user.CreatedAt,
                 UpdatedAt = user.UpdatedAt
             };
+
+            _cache.Set(cacheKey, userDto, TimeSpan.FromMinutes(5));
+            return userDto;
         }
     }
 }

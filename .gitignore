@@ -1,0 +1,27 @@
+# Build outputs
+bin/
+obj/
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+
+# Logs
+logs/
+*.log
+
+# Secrets - NEVER commit these
+appsettings.json
+appsettings.*.json
+!appsettings.Development.json
+*.pfx
+*.key
+
+# OS
+.DS_Store
+Thumbs.db
+
+# NuGet
+*.nupkg

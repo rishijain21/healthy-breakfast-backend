@@ -1,0 +1,603 @@
+============= FILE: Middleware/AuthMiddleware.cs =============
+using System.IdentityModel.Tokens.Jwt;
+using HealthyBreakfastApp.Application.Interfaces;
+using Microsoft.AspNetCore.Authorization;
+
+namespace HealthyBreakfastApp.WebAPI.Middleware
+{
+    public class AuthMiddleware
+    {
+        private readonly RequestDelegate _next;
+        private readonly IServiceScopeFactory _serviceScopeFactory;
+        private readonly ILogger<AuthMiddleware> _logger;
+
+        public AuthMiddleware(RequestDelegate next, IServiceScopeFactory serviceScopeFactory, ILogger<AuthMiddleware> logger)
+        {
+            _next = next;
+            _serviceScopeFactory = serviceScopeFactory;
+            _logger = logger;
+        }
+
+        public async Task InvokeAsync(HttpContext context)
+        {
+            // ✅ SKIP: Public endpoints that don't need middleware processing
+            var path = context.Request.Path.Value?.ToLower() ?? "";
+            var publicEndpoints = new[]
+            {
+                "/swagger",
+                "/api/auth/login",
+                "/api/auth/register",
+                "/api/auth/check-user-exists",  // ✅ ADDED: Skip this endpoint too
+                "/api/scheduledorders/time-until-midnight"
+            };
+
+            if (publicEndpoints.Any(endpoint => path.StartsWith(endpoint)))
+            {
+                await _next(context);
+                return;
+            }
+
+            // ✅ CHECK: If this is an API route that needs processing
+            if (context.Request.Path.StartsWithSegments("/api"))
+            {
+                var endpoint = context.GetEndpoint();
+                var requiresAuth = endpoint?.Metadata?.GetMetadata<AuthorizeAttribute>() != null;
+                var allowAnonymous = endpoint?.Metadata?.GetMetadata<AllowAnonymousAttribute>() != null;
+
+                if (requiresAuth && !allowAnonymous)
+                {
+                    await ProcessAuthenticationAsync(context);
+                }
+            }
+
+            await _next(context);
+        }
+
+        private async Task ProcessAuthenticationAsync(HttpContext context)
+        {
+            try
+            {
+                var authId = ExtractAuthIdFromToken(context);
+                _logger.LogInformation($"🔐 AuthMiddleware: Extracted authId: {authId}");
+
+                if (!string.IsNullOrEmpty(authId) && Guid.TryParse(authId, out var authGuid))
+                {
+                    using var scope = _serviceScopeFactory.CreateScope();
+                    var userService = scope.ServiceProvider.GetRequiredService<IUserService>();
+
+                    // ✅ CRITICAL: Only FIND user, NEVER create
+                    var userDto = await userService.GetUserByAuthIdAsync(authGuid);
+
+                    if (userDto != null)
+                    {
+                        // ✅ Existing user - set context
+                        context.Items["UserId"] = userDto.UserId;
+                        context.Items["User"] = userDto;
+                        context.Items["auth_id"] = authId;
+                        context.Items["AuthId"] = authGuid;
+                        
+                        // ✅ ADD: Inject role into the ClaimsPrincipal so [Authorize(Roles="Admin")] works
+                        var identity = context.User.Identity as System.Security.Claims.ClaimsIdentity;
+                        if (identity != null)
+                        {
+                            // Remove any existing role claims from Supabase ("authenticated")
+                            var existingRoleClaims = identity.FindAll(identity.RoleClaimType).ToList();
+                            foreach (var claim in existingRoleClaims)
+                                identity.RemoveClaim(claim);
+
+                            // Inject the role from your database
+                            identity.AddClaim(new System.Security.Claims.Claim(
+                                identity.RoleClaimType,
+                                userDto.Role ?? "User"
+                            ));
+                        }
+                        
+                        _logger.LogInformation($"✅ AuthMiddleware: User {userDto.UserId} authenticated with role {userDto.Role}");
+                    }
+                    else
+                    {
+                        // ✅ New user - don't create yet, just mark as pending
+                        _logger.LogInformation($"🆕 AuthMiddleware: New user detected (authId: {authId}) - awaiting registration");
+                        context.Items["auth_id"] = authId;
+                        context.Items["AuthId"] = authGuid;
+                        context.Items["IsNewUser"] = true;
+                        
+                        // ❌ DO NOT CREATE USER HERE!
+                        // User will be created when they submit the profile form at /api/Auth/register
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"❌ AuthMiddleware error: {ex.Message}");
+            }
+        }
+
+        private string? ExtractAuthIdFromToken(HttpContext context)
+        {
+            var authHeader = context.Request.Headers["Authorization"].FirstOrDefault();
+            if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith("Bearer "))
+                return null;
+
+            try
+            {
+                // ✅ FIX 3: Use already-validated ClaimsPrincipal instead of ReadJwtToken
+                // Since UseAuthentication() runs before this middleware, context.User is already validated
+                return context.User.FindFirst("sub")?.Value
+                    ?? context.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"❌ Token extraction error: {ex.Message}");
+                return null;
+            }
+        }
+
+        private (string? Name, string? Email) ExtractUserInfoFromToken(HttpContext context)
+        {
+            // ✅ FIX 3: Use already-validated ClaimsPrincipal instead of ReadJwtToken
+            var name = context.User.FindFirst("name")?.Value 
+                ?? context.User.FindFirst("full_name")?.Value;
+            var email = context.User.FindFirst("email")?.Value;
+
+            return (name, email);
+        }
+    }
+}
+
+============= FILE: WebAPI/Program.cs =============
+// HealthyBreakfastApp.WebAPI/Program.cs
+
+using Serilog;
+using HealthyBreakfastApp.Application.Interfaces;
+using HealthyBreakfastApp.Application.Services;
+using HealthyBreakfastApp.Infrastructure.Data;
+using HealthyBreakfastApp.Infrastructure.Repositories;
+using HealthyBreakfastApp.WebAPI.Middleware;
+using HealthyBreakfastApp.WebAPI.Services;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
+using System.Text;
+using System.Text.Json;
+using System.Threading.RateLimiting;
+using FluentValidation;
+using FluentValidation.AspNetCore;
+using Hangfire;
+using Hangfire.PostgreSql;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Npgsql;
+
+// ✅ FIX 4: Configure Serilog BEFORE builder is created
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Information()
+    .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
+    .MinimumLevel.Override("Hangfire", Serilog.Events.LogEventLevel.Warning)
+    .Enrich.FromLogContext()
+    .WriteTo.Console(outputTemplate: 
+        "[{Timestamp:HH:mm:ss} {Level:u3}] {SourceContext}: {Message:lj}{NewLine}{Exception}")
+    .WriteTo.File("logs/app-.log", 
+        rollingInterval: RollingInterval.Day,
+        retainedFileCountLimit: 7,
+        outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff} [{Level:u3}] {SourceContext}: {Message:lj}{NewLine}{Exception}")
+    .CreateLogger();
+
+var builder = WebApplication.CreateBuilder(args);
+
+// ✅ Replace default logging with Serilog
+builder.Host.UseSerilog();
+
+// ========================================
+// 🚀 DATABASE CONFIGURATION
+// ========================================
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseNpgsql(connectionString));
+
+// ========================================
+// 🕒 HANGFIRE CONFIGURATION (Background Jobs)
+// ========================================
+builder.Services.AddHangfire(config => config
+    .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+    .UseSimpleAssemblyNameTypeSerializer()
+    .UseRecommendedSerializerSettings()
+    .UsePostgreSqlStorage(options =>
+        options.UseNpgsqlConnection(connectionString)));
+
+builder.Services.AddHangfireServer();
+
+// ========================================
+// 🧩 APPLICATION SERVICES & REPOSITORIES
+// ========================================
+builder.Services.AddScoped<IUserRepository, UserRepository>();
+builder.Services.AddScoped<IUserLoader, UserLoader>();
+builder.Services.AddScoped<IUserService, UserService>();
+
+builder.Services.AddScoped<IMealService, MealService>();
+builder.Services.AddScoped<IMealRepository, MealRepository>();
+
+// Kitchen dashboard services
+builder.Services.AddScoped<IKitchenRepository, KitchenRepository>();
+builder.Services.AddScoped<IKitchenService, KitchenService>();
+
+builder.Services.AddScoped<IIngredientService, IngredientService>();
+builder.Services.AddScoped<IIngredientRepository, IngredientRepository>();
+
+builder.Services.AddScoped<IIngredientCategoryService, IngredientCategoryService>();
+builder.Services.AddScoped<IIngredientCategoryRepository, IngredientCategoryRepository>();
+
+builder.Services.AddScoped<IMealOptionService, MealOptionService>();
+builder.Services.AddScoped<IMealOptionRepository, MealOptionRepository>();
+
+builder.Services.AddScoped<IMealOptionIngredientService, MealOptionIngredientService>();
+builder.Services.AddScoped<IMealOptionIngredientRepository, MealOptionIngredientRepository>();
+
+builder.Services.AddScoped<IUserMealService, UserMealService>();
+builder.Services.AddScoped<IUserMealRepository, UserMealRepository>();
+
+builder.Services.AddScoped<IUserMealIngredientService, UserMealIngredientService>();
+builder.Services.AddScoped<IUserMealIngredientRepository, UserMealIngredientRepository>();
+
+builder.Services.AddScoped<IOrderService, OrderService>();
+builder.Services.AddScoped<IOrderRepository, OrderRepository>();
+
+builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
+builder.Services.AddScoped<ISubscriptionRepository, SubscriptionRepository>();
+
+builder.Services.AddScoped<IWalletTransactionService, WalletTransactionService>();
+builder.Services.AddScoped<IWalletTransactionRepository, WalletTransactionRepository>();
+// ========================================
+// 📍 LOCATION SERVICES
+// ========================================
+builder.Services.AddScoped<IServiceableLocationRepository, ServiceableLocationRepository>();
+builder.Services.AddScoped<IServiceableLocationService, ServiceableLocationService>();
+builder.Services.AddScoped<IUserAddressRepository, UserAddressRepository>();
+builder.Services.AddScoped<IUserAddressService, UserAddressService>();
+
+// ========================================
+// ⏰ SCHEDULED ORDER SERVICES
+// ========================================
+builder.Services.AddScoped<IScheduledOrderRepository, ScheduledOrderRepository>();
+builder.Services.AddScoped<IScheduledOrderService, ScheduledOrderService>();
+
+// ✅ NEW: Subscription scheduling service
+builder.Services.AddScoped<ISubscriptionSchedulingService, SubscriptionSchedulingService>();
+
+// ========================================
+// 🖼️ SUPABASE STORAGE SERVICE (Image Upload)
+// ========================================
+builder.Services.AddScoped<ISupabaseStorageService, SupabaseStorageService>();
+builder.Services.AddHttpClient<ISupabaseStorageService, SupabaseStorageService>();
+
+// ========================================
+// 🌐 UTILITIES & HELPERS
+// ========================================
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
+
+// ✅ FIX 6: In-memory cache (already available, just register it)
+builder.Services.AddMemoryCache();
+
+// ========================================
+// ⚙️ JSON SERIALIZATION SETTINGS
+// ========================================
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+    });
+
+// ✅ Auto-register ALL validators in Application assembly
+builder.Services.AddFluentValidationAutoValidation();
+builder.Services.AddValidatorsFromAssemblyContaining<HealthyBreakfastApp.Application.Validators.CreateUserDtoValidator>();
+
+// ========================================
+// 🗜️ RESPONSE COMPRESSION
+// ========================================
+builder.Services.AddResponseCompression(options =>
+{
+    options.EnableForHttps = true; // Safe since you control both ends
+    options.Providers.Add<Microsoft.AspNetCore.ResponseCompression.BrotliCompressionProvider>();
+    options.Providers.Add<Microsoft.AspNetCore.ResponseCompression.GzipCompressionProvider>();
+    options.MimeTypes = Microsoft.AspNetCore.ResponseCompression.ResponseCompressionDefaults.MimeTypes.Concat(
+        new[] { "application/json", "text/json" }
+    );
+});
+
+builder.Services.Configure<Microsoft.AspNetCore.ResponseCompression.BrotliCompressionProviderOptions>(options =>
+{
+    options.Level = System.IO.Compression.CompressionLevel.Fastest; // Balance speed vs size
+});
+
+// ========================================
+// 🔓 CORS CONFIGURATION
+// ========================================
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAngular", policy =>
+    {
+        policy.WithOrigins("http://localhost:4200")
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials();
+    });
+});
+
+// ========================================
+// 🛡️ RATE LIMITING
+// ========================================
+builder.Services.AddRateLimiter(options =>
+{
+    // Auth endpoints: max 10 requests per minute per IP
+    options.AddFixedWindowLimiter("auth", limiterOptions =>
+    {
+        limiterOptions.PermitLimit = 10;
+        limiterOptions.Window = TimeSpan.FromMinutes(1);
+        limiterOptions.QueueLimit = 0;
+        limiterOptions.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
+    });
+
+    // Default: max 100 requests per minute per IP for all other endpoints
+    options.AddFixedWindowLimiter("default", limiterOptions =>
+    {
+        limiterOptions.PermitLimit = 100;
+        limiterOptions.Window = TimeSpan.FromMinutes(1);
+        limiterOptions.QueueLimit = 5;
+        limiterOptions.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
+    });
+
+    options.RejectionStatusCode = 429; // Too Many Requests
+    options.OnRejected = async (context, token) =>
+    {
+        context.HttpContext.Response.StatusCode = 429;
+        await context.HttpContext.Response.WriteAsJsonAsync(
+            new { success = false, message = "Too many requests. Please try again later." }, token);
+    };
+});
+
+// ========================================
+// 🔑 SUPABASE HS256 JWT AUTHENTICATION
+// ========================================
+var supabaseJwtSecret = builder.Configuration["Supabase:JwtSecret"];
+var supabaseUrl = builder.Configuration["Supabase:Url"] ?? "https://beeqamwptmbpowswawfx.supabase.co";
+
+if (string.IsNullOrEmpty(supabaseJwtSecret))
+    throw new InvalidOperationException("Supabase JWT Secret is required in appsettings.json");
+
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
+    options.SaveToken = true;
+    options.IncludeErrorDetails = !builder.Environment.IsProduction(); // Only show error details in non-production
+
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = $"{supabaseUrl}/auth/v1",
+        ValidAudience = "authenticated",
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(supabaseJwtSecret)),
+        ClockSkew = TimeSpan.FromMinutes(1),
+        NameClaimType = "sub",
+        RoleClaimType = "role"
+    };
+
+    options.Events = new JwtBearerEvents
+    {
+        OnAuthenticationFailed = context =>
+        {
+            // ✅ FIX 7: Use Serilog instead of Console.WriteLine
+            Log.Warning("JWT authentication failed on {Path}: {ErrorType}", 
+                context.Request.Path, context.Exception.GetType().Name);
+            return Task.CompletedTask;
+        },
+        OnTokenValidated = context =>
+        {
+            var path = context.Request.Path;
+            var sub = context.Principal?.FindFirst("sub")?.Value;
+            // ✅ FIX 7: Use Serilog instead of Console.WriteLine
+            Log.Information("JWT token validated for {Path}, user: {UserId}", path, sub);
+            return Task.CompletedTask;
+        },
+        OnChallenge = context =>
+        {
+            // ✅ FIX 7: Use Serilog instead of Console.WriteLine
+            Log.Warning("JWT challenge for {Path}: {Error}", 
+                context.Request.Path, context.Error ?? "unauthorized");
+            return Task.CompletedTask;
+        }
+    };
+});
+
+builder.Services.AddAuthorization();
+
+// ========================================
+// 📘 SWAGGER CONFIGURATION
+// ========================================
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "HealthyBreakfastApp API",
+        Version = "v1",
+        Description = "Production-ready API for Healthy Breakfast Delivery App with Hangfire Background Jobs & Subscriptions"
+    });
+
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Description = "JWT Authorization header using the Bearer scheme.\r\n\r\nExample: \"Bearer 12345abcdef\"",
+        Name = "Authorization",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.ApiKey,
+        Scheme = "Bearer"
+    });
+
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            new List<string>()
+        }
+    });
+});
+
+// ========================================
+// 🏥 HEALTH CHECKS (for cloud deployment)
+// ========================================
+builder.Services.AddHealthChecks()
+    .AddNpgSql(connectionString, name: "postgres", tags: new[] { "db", "ready" })
+    .AddCheck("self", () => HealthCheckResult.Healthy("API is running"), tags: new[] { "self" });
+var app = builder.Build();
+
+// ✅ FIX 1: Global exception handler — MUST be first
+app.UseMiddleware<GlobalExceptionMiddleware>();
+
+// ✅ FIX 4: Logs every HTTP request with method, path, status code, duration
+app.UseSerilogRequestLogging();
+
+app.UseResponseCompression(); // ✅ ADD THIS LINE
+app.UseRateLimiter();
+
+// ✅ FIX 2: Only enable Swagger in development
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+
+app.UseCors("AllowAngular");
+
+// ========================================
+// 🎛️ HANGFIRE DASHBOARD (Admin only in production)
+// ========================================
+app.UseHangfireDashboard("/hangfire", new DashboardOptions
+{
+    Authorization = new[] { new HangfireAdminAuthFilter() }
+});
+
+app.UseAuthentication();
+app.UseMiddleware<AuthMiddleware>();
+app.UseAuthorization();
+
+app.MapControllers();
+
+// 🏥 Health check endpoints for cloud deployment (Railway, Render, Azure)
+app.MapHealthChecks("/health", new HealthCheckOptions
+{
+    ResponseWriter = async (context, report) =>
+    {
+        context.Response.ContentType = "application/json";
+        var response = new
+        {
+            status = report.Status.ToString(),
+            timestamp = DateTime.UtcNow,
+            checks = report.Entries.Select(e => new
+            {
+                name = e.Key,
+                status = e.Value.Status.ToString(),
+                description = e.Value.Description?.ToString(),
+                duration = e.Value.Duration.ToString()
+            })
+        };
+        await context.Response.WriteAsync(System.Text.Json.JsonSerializer.Serialize(response));
+    }
+});
+
+// ========================================
+// ⏰ SCHEDULE RECURRING JOBS (MilkBasket Style)
+// ========================================
+var logger = app.Services.GetRequiredService<ILogger<Program>>();
+
+try
+{
+    var recurringJobManager = app.Services.GetRequiredService<IRecurringJobManager>();
+    
+    // ✅ JOB 1: SUBSCRIPTION ORDER GENERATION (12:01 AM IST)
+    // Generates scheduled orders from active subscriptions for TOMORROW's delivery
+    recurringJobManager.AddOrUpdate<ISubscriptionSchedulingService>(
+        "subscription-order-generation",
+        service => service.GenerateScheduledOrdersFromSubscriptionsAsync(),
+        "1 0 * * *",  // Every day at 12:01 AM IST (1 minute after midnight)
+        new RecurringJobOptions
+        {
+            TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata")
+        });
+    
+    logger.LogInformation("✅ Hangfire job scheduled: Subscription order generation (12:01 AM IST)");
+    
+    // ✅ JOB 2: MIDNIGHT ORDER CONFIRMATION (12:00 AM IST)
+    // Confirms all scheduled orders for TODAY's delivery and sends to kitchen
+    recurringJobManager.AddOrUpdate<IScheduledOrderService>(
+        "midnight-order-confirmation",
+        service => service.ConfirmAllScheduledOrdersAsync(),
+       "59 23 * * *",  
+        new RecurringJobOptions
+        {
+            TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata")
+        });
+    
+    logger.LogInformation("✅ Hangfire job scheduled: Midnight order confirmation (12:00 AM IST)");
+    
+    // ✅ JOB 3: SUBSCRIPTION DATE SYNC (11:59 PM IST)
+    // Updates NextScheduledDate for all active subscriptions
+    // Keeps subscription cards showing accurate "Next Delivery" dates
+    recurringJobManager.AddOrUpdate<ISubscriptionService>(
+        "sync-subscription-dates",
+        service => service.UpdateNextScheduledDatesAsync(),
+        "59 23 * * *",  // Every day at 11:59 PM IST (1 minute before midnight)
+        new RecurringJobOptions
+        {
+            TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata")
+        });
+    
+    logger.LogInformation("✅ Hangfire job scheduled: Subscription date sync (11:59 PM IST)");
+}
+catch (Exception ex)
+{
+    logger.LogError(ex, "❌ Failed to schedule Hangfire jobs");
+}
+
+logger.LogInformation("🚀 HealthyBreakfastApp API started successfully");
+logger.LogInformation($"🔗 Swagger UI: http://localhost:5257/swagger");
+logger.LogInformation($"🎛️ Hangfire Dashboard: http://localhost:5257/hangfire");
+logger.LogInformation("📅 Scheduled Jobs (MilkBasket Style):");
+logger.LogInformation("   - Subscription generation: 12:01 AM IST daily (creates orders for TOMORROW)");
+logger.LogInformation("   - Order confirmation: 12:00 AM IST daily (confirms TODAY's orders)");
+logger.LogInformation("   - Subscription date sync: 11:59 PM IST daily (updates NextScheduledDate)");
+
+app.Run();
+
+// ========================================
+// 🔐 HANGFIRE DASHBOARD AUTH FILTER
+// ========================================
+// NOTE: In production, you should configure ASP.NET Core authorization policies
+// so that /hangfire route requires Admin role at the middleware level.
+// This filter provides an additional layer of security.
+public class HangfireAdminAuthFilter : Hangfire.Dashboard.IDashboardAuthorizationFilter
+{
+    public bool Authorize(Hangfire.Dashboard.DashboardContext context)
+    {
+        // ✅ Requires authenticated users - role check is handled by ASP.NET Core authorization middleware
+        // In production, configure a specific authorization policy for /hangfire path
+        return true;
+    }
+}
+

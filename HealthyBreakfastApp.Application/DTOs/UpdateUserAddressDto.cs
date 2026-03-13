@@ -21,5 +21,10 @@ namespace HealthyBreakfastApp.Application.DTOs
         
         [MaxLength(50)]
         public string? Label { get; set; }
+        
+        /// <summary>
+        /// When set to true, this address will be set as the primary address
+        /// </summary>
+        public bool? IsPrimary { get; set; }
     }
 }

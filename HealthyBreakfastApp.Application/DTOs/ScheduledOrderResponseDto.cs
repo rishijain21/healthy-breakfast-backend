@@ -7,6 +7,8 @@ namespace HealthyBreakfastApp.Application.DTOs
     {
         public int ScheduledOrderId { get; set; }
         public string MealName { get; set; } = null!;
+        public int? MealId { get; set; }          // ✅ ADD: Soft reference for traceability
+        public string? MealImageUrl { get; set; } // ✅ ADD: Snapshot for display
         public DateTime ScheduledFor { get; set; }
         public string DeliveryTimeSlot { get; set; } = null!;
         public decimal TotalPrice { get; set; }
@@ -16,6 +18,9 @@ namespace HealthyBreakfastApp.Application.DTOs
         public DateTime ExpiresAt { get; set; }
         public NutritionalSummaryDto? NutritionalSummary { get; set; }
         public List<ScheduledOrderIngredientDetailDto> Ingredients { get; set; } = new();
+        
+        // ✅ ADD: Subscription ID for filtering orders by subscription
+        public int? SubscriptionId { get; set; }
     }
 
     public class ScheduledOrderIngredientDetailDto

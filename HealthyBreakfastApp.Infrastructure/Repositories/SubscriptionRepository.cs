@@ -19,6 +19,7 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
         public async Task<IEnumerable<Subscription>> GetAllAsync()
         {
             return await _context.Subscriptions
+                .AsNoTracking()
                 .Include(s => s.User)
                 .Include(s => s.UserMeal)
                     .ThenInclude(um => um.Meal)
@@ -29,6 +30,7 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
         public async Task<Subscription?> GetByIdAsync(int subscriptionId)
         {
             return await _context.Subscriptions
+                .AsNoTracking()
                 .Include(s => s.User)
                 .Include(s => s.UserMeal)
                     .ThenInclude(um => um.Meal)
@@ -39,6 +41,7 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
         public async Task<IEnumerable<Subscription>> GetByUserIdAsync(int userId)
         {
             return await _context.Subscriptions
+                .AsNoTracking()
                 .Include(s => s.User)
                 .Include(s => s.UserMeal)
                     .ThenInclude(um => um.Meal)
@@ -51,6 +54,7 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
         {
             var today = DateOnly.FromDateTime(DateTime.UtcNow);
             return await _context.Subscriptions
+                .AsNoTracking()
                 .Include(s => s.User)
                     .ThenInclude(u => u.AuthMapping)  // ✅ Important for scheduling
                 .Include(s => s.UserMeal)
@@ -97,6 +101,7 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
         public async Task<IEnumerable<SubscriptionSchedule>> GetSchedulesBySubscriptionIdAsync(int subscriptionId)
         {
             return await _context.Set<SubscriptionSchedule>()
+                .AsNoTracking()
                 .Where(s => s.SubscriptionId == subscriptionId)
                 .OrderBy(s => s.DayOfWeek)
                 .ToListAsync();
@@ -118,6 +123,7 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
         public async Task RemoveSchedulesAsync(int subscriptionId)
         {
             var schedules = await _context.Set<SubscriptionSchedule>()
+                .AsNoTracking()
                 .Where(s => s.SubscriptionId == subscriptionId)
                 .ToListAsync();
                 
@@ -130,6 +136,7 @@ namespace HealthyBreakfastApp.Infrastructure.Repositories
         {
             var today = DateOnly.FromDateTime(DateTime.UtcNow);
             return await _context.Subscriptions
+                .AsNoTracking()
                 .Include(s => s.WeeklySchedule)
                 .FirstOrDefaultAsync(s => 
                     s.UserId == userId && 

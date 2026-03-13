@@ -12,16 +12,16 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
     public class OrdersController : ControllerBase
     {
         private readonly IOrderService _orderService;
-        private readonly IUserService _userService;
+        private readonly ICurrentUserService _currentUserService;
         private readonly ILogger<OrdersController> _logger;
 
         public OrdersController(
             IOrderService orderService, 
-            IUserService userService,
+            ICurrentUserService currentUserService,
             ILogger<OrdersController> logger)
         {
             _orderService = orderService;
-            _userService = userService;
+            _currentUserService = currentUserService;
             _logger = logger;
         }
 
@@ -163,55 +163,9 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         }
 
         // ============================
-        // ✅ UNIFIED USER ID EXTRACTION (FIXED)
+        // ✅ UNIFIED USER ID EXTRACTION (using ICurrentUserService for no DB hit)
         // ============================
         private async Task<int?> GetCurrentUserIdAsync()
-        {
-            try
-            {
-                var supabaseUserId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value 
-                                     ?? User.FindFirst("sub")?.Value;
-
-                _logger.LogInformation($"🔍 Found Supabase User ID: {supabaseUserId}");
-
-                if (string.IsNullOrEmpty(supabaseUserId))
-                {
-                    _logger.LogWarning("❌ No user ID found in token claims");
-                    return null;
-                }
-
-                // Try direct numeric user ID first
-                if (int.TryParse(supabaseUserId, out var directUserId))
-                {
-                    _logger.LogInformation($"✅ Direct numeric user ID: {directUserId}");
-                    return directUserId;
-                }
-
-                // Try GUID (Supabase auth_id)
-                if (Guid.TryParse(supabaseUserId, out var authId))
-                {
-                    _logger.LogInformation($"🔍 Supabase GUID found: {authId}, looking up user in database...");
-
-                    // ✅ FIXED: Only find user, don't create
-                    var userDto = await _userService.GetUserByAuthIdAsync(authId);
-                    if (userDto == null)
-                    {
-                        _logger.LogWarning($"⚠️ User not found for authId: {authId}");
-                        return null;
-                    }
-
-                    _logger.LogInformation($"✅ Found user in database: UserId = {userDto.UserId}");
-                    return userDto.UserId;
-                }
-
-                _logger.LogWarning($"❌ Could not parse user ID: {supabaseUserId}");
-                return null;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "❌ User ID extraction error");
-                return null;
-            }
-        }
+            => await _currentUserService.GetCurrentUserIdAsync();
     }
 }

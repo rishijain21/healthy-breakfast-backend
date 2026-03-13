@@ -1,10 +1,8 @@
 using System.Security.Claims;
 using HealthyBreakfastApp.Application.DTOs;
 using HealthyBreakfastApp.Application.Interfaces;
-using HealthyBreakfastApp.Infrastructure.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 
 namespace HealthyBreakfastApp.WebAPI.Controllers
 {
@@ -18,7 +16,6 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         private readonly IScheduledOrderService _scheduledOrderService;
         private readonly IScheduledOrderRepository _scheduledOrderRepository;
         private readonly ICurrentUserService _currentUserService;
-        private readonly AppDbContext _context;
         private readonly ILogger<SubscriptionsController> _logger;
 
         public SubscriptionsController(
@@ -27,7 +24,6 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             IScheduledOrderService scheduledOrderService,
             IScheduledOrderRepository scheduledOrderRepository,
             ICurrentUserService currentUserService,
-            AppDbContext context,
             ILogger<SubscriptionsController> logger)
         {
             _subscriptionService = subscriptionService;
@@ -35,7 +31,6 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             _scheduledOrderService = scheduledOrderService;
             _scheduledOrderRepository = scheduledOrderRepository;
             _currentUserService = currentUserService;
-            _context = context;
             _logger = logger;
         }
 
@@ -125,7 +120,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                 var internalDto = new CreateSubscriptionInternalDto
                 {
                     UserId = userId.Value,
-                    UserMealId = createSubscriptionDto.UserMealId,
+                    MealId = createSubscriptionDto.MealId,  // ✅ Changed from UserMealId
                     Frequency = createSubscriptionDto.Frequency,
                     StartDate = createSubscriptionDto.StartDate,
                     EndDate = createSubscriptionDto.EndDate,
@@ -161,11 +156,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                 _logger.LogError(ex, "❌ Invalid argument");
                 return BadRequest(new { message = ex.Message });
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "❌ Unexpected error creating subscription");
-                return StatusCode(500, new { message = "An error occurred while creating the subscription" });
-            }
+            // ✅ No generic catch — middleware handles unexpected exceptions
         }
 
         [HttpPut("{id}")]
@@ -203,18 +194,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
             if (userId == null)
                 return Unauthorized();
 
-            try
-            {
-                var existing = await _subscriptionService.GetSubscriptionByIdAsync(id);
-                if (existing == null)
-                    return NotFound();
-
-                if (existing.UserId != userId.Value)
-                    return Forbid();
-
-                _logger.LogInformation($"🗑️ Deleting subscription #{id}");
-
-                // ✅ Delete associated scheduled orders first
+                // ✅ Delete associated scheduled orders first (non-fatal if fails)
                 try
                 {
                     var orders = await _scheduledOrderRepository.GetBySubscriptionIdAsync(id);
@@ -227,6 +207,7 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
                 catch (Exception ex)
                 {
                     _logger.LogWarning(ex, $"⚠️ Failed to delete orders for subscription #{id}");
+                    // ✅ Non-fatal — continue with subscription deletion
                 }
 
                 // ✅ Delete the subscription
@@ -239,12 +220,6 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
 
                 _logger.LogInformation($"✅ Subscription #{id} deleted successfully");
                 return NoContent();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, $"❌ Error deleting subscription #{id}");
-                return StatusCode(500, new { message = "Failed to delete subscription" });
-            }
         }
 
         /// <summary>
@@ -325,25 +300,14 @@ namespace HealthyBreakfastApp.WebAPI.Controllers
         [Authorize(Roles = "Admin")]   // ← ADD: only admin should trigger batch operations
         public async Task<IActionResult> SyncSubscriptionDates()
         {
-            try
-            {
-                await _subscriptionService.UpdateNextScheduledDatesAsync();
-                
-                return Ok(new 
-                { 
-                    success = true,
-                    message = "Subscription dates synchronized successfully",
-                    timestamp = DateTime.UtcNow
-                });
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new 
-                { 
-                    success = false,
-                    message = "Failed to sync subscription dates" 
-                });
-            }
+            await _subscriptionService.UpdateNextScheduledDatesAsync();
+            
+            return Ok(new 
+            { 
+                success = true,
+                message = "Subscription dates synchronized successfully",
+                timestamp = DateTime.UtcNow
+            });
         }
     }
 }

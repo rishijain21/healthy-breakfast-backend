@@ -109,6 +109,12 @@ namespace HealthyBreakfastApp.Application.Services
             if (dto.Label != null)
                 address.Label = dto.Label;
 
+            // Handle IsPrimary flag - set this address as primary if IsPrimary is true
+            if (dto.IsPrimary.HasValue && dto.IsPrimary.Value)
+            {
+                await _addressRepository.SetPrimaryAddressAsync(userId, addressId);
+            }
+
             address.UpdatedAt = DateTime.UtcNow;
 
             var updated = await _addressRepository.UpdateAsync(address);

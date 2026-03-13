@@ -16,6 +16,13 @@ namespace HealthyBreakfastApp.Domain.Entities
         public Guid AuthId { get; set; } // Supabase auth ID for direct queries
 
         public string MealName { get; set; } = "Custom Overnight Oats";
+
+        // ✅ Soft reference — nullable so old orders and custom meals aren't broken
+        // Do NOT add a FK constraint. MealId is for traceability only.
+        public int? MealId { get; set; }
+
+        // ✅ Snapshot — copied at order time so display never depends on Meal record existing
+        public string? MealImageUrl { get; set; }
         
         [Column(TypeName = "date")]
         public DateTime ScheduledFor { get; set; } // Delivery date (date only)

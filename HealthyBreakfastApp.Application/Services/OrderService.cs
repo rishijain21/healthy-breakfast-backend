@@ -14,7 +14,8 @@ namespace HealthyBreakfastApp.Application.Services
         private readonly IWalletTransactionService _walletService;
         private readonly IUserMealService _userMealService;
         private readonly IUserMealIngredientService _userMealIngredientService;
-        private readonly IUserAddressRepository _userAddressRepository; // ✅ ADDED
+        private readonly IUserAddressRepository _userAddressRepository;
+        private readonly IUnitOfWork _unitOfWork;
 
         public OrderService(
             IOrderRepository orderRepository,
@@ -22,14 +23,16 @@ namespace HealthyBreakfastApp.Application.Services
             IWalletTransactionService walletService,
             IUserMealService userMealService,
             IUserMealIngredientService userMealIngredientService,
-            IUserAddressRepository userAddressRepository) // ✅ ADDED
+            IUserAddressRepository userAddressRepository,
+            IUnitOfWork unitOfWork) // ✅ ADDED
         {
             _orderRepository = orderRepository;
             _mealService = mealService;
             _walletService = walletService;
             _userMealService = userMealService;
             _userMealIngredientService = userMealIngredientService;
-            _userAddressRepository = userAddressRepository; // ✅ ADDED
+            _userAddressRepository = userAddressRepository;
+            _unitOfWork = unitOfWork;
         }
 
         // ✅ SECURE: Create order with userId from JWT token
@@ -210,84 +213,97 @@ namespace HealthyBreakfastApp.Application.Services
                 );
             }
 
-            // ✅ STEP 3: Create UserMeal record (UserId passed separately, not in DTO)
-            var userMealDto = new CreateUserMealDto
+            // ✅ All writes inside a single transaction
+            await _unitOfWork.BeginTransactionAsync();
+            try
             {
-                MealId = dto.MealId,
-                MealName = priceCalculation.MealName,
-                TotalPrice = priceCalculation.TotalPrice,
-                CreatedAt = DateTime.UtcNow
-            };
-
-            var createdUserMealId = await _userMealService.CreateUserMealAsync(userMealDto, userId);
-
-            // ✅ STEP 4: Create UserMealIngredient records for each selected ingredient
-            foreach (var selectedIngredient in dto.SelectedIngredients)
-            {
-                var ingredientDetail = priceCalculation.IngredientBreakdown
-                    .FirstOrDefault(i => i.IngredientId == selectedIngredient.IngredientId);
-                
-                if (ingredientDetail != null)
+                // ✅ STEP 3: Create UserMeal record (UserId passed separately, not in DTO)
+                var userMealDto = new CreateUserMealDto
                 {
-                    var userMealIngredient = new CreateUserMealIngredientDto
+                    MealId = dto.MealId,
+                    MealName = priceCalculation.MealName,
+                    TotalPrice = priceCalculation.TotalPrice,
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                var createdUserMealId = await _userMealService.CreateUserMealAsync(userMealDto, userId);
+
+                // ✅ STEP 4: Create UserMealIngredient records for each selected ingredient
+                foreach (var selectedIngredient in dto.SelectedIngredients)
+                {
+                    var ingredientDetail = priceCalculation.IngredientBreakdown
+                        .FirstOrDefault(i => i.IngredientId == selectedIngredient.IngredientId);
+                    
+                    if (ingredientDetail != null)
                     {
-                        UserMealId = createdUserMealId,
-                        IngredientId = selectedIngredient.IngredientId,
-                        Quantity = selectedIngredient.Quantity,
-                        UnitPrice = ingredientDetail.UnitPrice,
-                        TotalPrice = ingredientDetail.TotalPrice
-                    };
+                        var userMealIngredient = new CreateUserMealIngredientDto
+                        {
+                            UserMealId = createdUserMealId,
+                            IngredientId = selectedIngredient.IngredientId,
+                            Quantity = selectedIngredient.Quantity,
+                            UnitPrice = ingredientDetail.UnitPrice,
+                            TotalPrice = ingredientDetail.TotalPrice
+                        };
 
-                    await _userMealIngredientService.CreateUserMealIngredientAsync(userMealIngredient);
+                        await _userMealIngredientService.CreateUserMealIngredientAsync(userMealIngredient);
+                    }
                 }
+
+                // ✅ STEP 5: Create Order with UserMeal link AND DeliveryAddressId
+                var order = new Order
+                {
+                    UserId = userId,
+                    UserMealId = createdUserMealId,
+                    DeliveryAddressId = primaryAddress.Id,
+                    OrderStatus = OrderStatus.Pending,
+                    TotalPrice = priceCalculation.TotalPrice,
+                    OrderDate = DateTime.UtcNow,
+                    ScheduledFor = dto.ScheduledFor ?? DateTime.UtcNow.AddHours(2),
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+
+                await _orderRepository.AddAsync(order);
+                await _unitOfWork.SaveChangesAsync();
+
+                // ✅ STEP 6: Process payment via wallet
+                var walletTransaction = await _walletService.DebitWalletAsync(
+                    userId,
+                    priceCalculation.TotalPrice,
+                    $"Order #{order.OrderId} - {priceCalculation.MealName}"
+                );
+
+                // ✅ STEP 7: Confirm order after successful payment
+                order.OrderStatus = OrderStatus.Confirmed;
+                order.UpdatedAt = DateTime.UtcNow;
+                _orderRepository.Update(order);
+                await _unitOfWork.SaveChangesAsync();
+
+                await _unitOfWork.CommitAsync();   // ✅ All or nothing
+
+                var walletBalanceAfter = await _walletService.GetUserBalanceAsync(userId);
+
+                // ✅ STEP 8: Return comprehensive order creation response
+                return new OrderCreationResponseDto
+                {
+                    OrderId = order.OrderId,
+                    UserMealId = createdUserMealId,
+                    MealName = priceCalculation.MealName,
+                    TotalPrice = priceCalculation.TotalPrice,
+                    WalletBalanceBefore = walletBalanceBefore,
+                    WalletBalanceAfter = walletBalanceAfter,
+                    OrderStatus = order.OrderStatus.ToString(),
+                    TransactionId = walletTransaction.TransactionId,
+                    OrderDate = order.OrderDate,
+                    ScheduledFor = order.ScheduledFor,
+                    IngredientBreakdown = priceCalculation.IngredientBreakdown
+                };
             }
-
-            // ✅ STEP 5: Create Order with UserMeal link AND DeliveryAddressId
-            var order = new Order
+            catch
             {
-                UserId = userId,
-                UserMealId = createdUserMealId,
-                DeliveryAddressId = primaryAddress.Id, // ✅ ADDED: Auto-filled from primary address
-                OrderStatus = OrderStatus.Pending,
-                TotalPrice = priceCalculation.TotalPrice,
-                OrderDate = DateTime.UtcNow,
-                ScheduledFor = dto.ScheduledFor ?? DateTime.UtcNow.AddHours(2),
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
-            };
-
-            await _orderRepository.AddAsync(order);
-            await _orderRepository.SaveChangesAsync();
-
-            // ✅ STEP 6: Process payment via wallet
-            var walletTransaction = await _walletService.DebitWalletAsync(
-                userId,
-                priceCalculation.TotalPrice,
-                $"Order #{order.OrderId} - {priceCalculation.MealName}"
-            );
-
-            // ✅ STEP 7: Confirm order after successful payment
-            order.OrderStatus = OrderStatus.Confirmed;
-            order.UpdatedAt = DateTime.UtcNow;
-            await _orderRepository.UpdateAsync(order);
-
-            var walletBalanceAfter = await _walletService.GetUserBalanceAsync(userId);
-
-            // ✅ STEP 8: Return comprehensive order creation response
-            return new OrderCreationResponseDto
-            {
-                OrderId = order.OrderId,
-                UserMealId = createdUserMealId,
-                MealName = priceCalculation.MealName,
-                TotalPrice = priceCalculation.TotalPrice,
-                WalletBalanceBefore = walletBalanceBefore,
-                WalletBalanceAfter = walletBalanceAfter,
-                OrderStatus = order.OrderStatus.ToString(),
-                TransactionId = walletTransaction.TransactionId,
-                OrderDate = order.OrderDate,
-                ScheduledFor = order.ScheduledFor,
-                IngredientBreakdown = priceCalculation.IngredientBreakdown
-            };
+                await _unitOfWork.RollbackAsync();  // ✅ Undo everything on failure
+                throw;
+            }
         }
 
         // ✅ NEW: Overload with explicit DeliveryAddressId (for scheduled order confirmation)
@@ -357,84 +373,97 @@ namespace HealthyBreakfastApp.Application.Services
                 );
             }
 
-            // ✅ STEP 3: Create UserMeal record
-            var userMealDto = new CreateUserMealDto
+            // ✅ All writes inside a single transaction
+            await _unitOfWork.BeginTransactionAsync();
+            try
             {
-                MealId = dto.MealId,
-                MealName = priceCalculation.MealName,
-                TotalPrice = priceCalculation.TotalPrice,
-                CreatedAt = DateTime.UtcNow
-            };
-
-            var createdUserMealId = await _userMealService.CreateUserMealAsync(userMealDto, userId);
-
-            // ✅ STEP 4: Create UserMealIngredient records for each selected ingredient
-            foreach (var selectedIngredient in dto.SelectedIngredients)
-            {
-                var ingredientDetail = priceCalculation.IngredientBreakdown
-                    .FirstOrDefault(i => i.IngredientId == selectedIngredient.IngredientId);
-                
-                if (ingredientDetail != null)
+                // ✅ STEP 3: Create UserMeal record
+                var userMealDto = new CreateUserMealDto
                 {
-                    var userMealIngredient = new CreateUserMealIngredientDto
+                    MealId = dto.MealId,
+                    MealName = priceCalculation.MealName,
+                    TotalPrice = priceCalculation.TotalPrice,
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                var createdUserMealId = await _userMealService.CreateUserMealAsync(userMealDto, userId);
+
+                // ✅ STEP 4: Create UserMealIngredient records for each selected ingredient
+                foreach (var selectedIngredient in dto.SelectedIngredients)
+                {
+                    var ingredientDetail = priceCalculation.IngredientBreakdown
+                        .FirstOrDefault(i => i.IngredientId == selectedIngredient.IngredientId);
+                    
+                    if (ingredientDetail != null)
                     {
-                        UserMealId = createdUserMealId,
-                        IngredientId = selectedIngredient.IngredientId,
-                        Quantity = selectedIngredient.Quantity,
-                        UnitPrice = ingredientDetail.UnitPrice,
-                        TotalPrice = ingredientDetail.TotalPrice
-                    };
+                        var userMealIngredient = new CreateUserMealIngredientDto
+                        {
+                            UserMealId = createdUserMealId,
+                            IngredientId = selectedIngredient.IngredientId,
+                            Quantity = selectedIngredient.Quantity,
+                            UnitPrice = ingredientDetail.UnitPrice,
+                            TotalPrice = ingredientDetail.TotalPrice
+                        };
 
-                    await _userMealIngredientService.CreateUserMealIngredientAsync(userMealIngredient);
+                        await _userMealIngredientService.CreateUserMealIngredientAsync(userMealIngredient);
+                    }
                 }
+
+                // ✅ STEP 5: Create Order with explicit DeliveryAddressId
+                var order = new Order
+                {
+                    UserId = userId,
+                    UserMealId = createdUserMealId,
+                    DeliveryAddressId = addressIdToUse.Value,
+                    OrderStatus = OrderStatus.Pending,
+                    TotalPrice = priceCalculation.TotalPrice,
+                    OrderDate = DateTime.UtcNow,
+                    ScheduledFor = dto.ScheduledFor ?? DateTime.UtcNow.AddHours(2),
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+
+                await _orderRepository.AddAsync(order);
+                await _unitOfWork.SaveChangesAsync();
+
+                // ✅ STEP 6: Process payment via wallet
+                var walletTransaction = await _walletService.DebitWalletAsync(
+                    userId,
+                    priceCalculation.TotalPrice,
+                    $"Order #{order.OrderId} - {priceCalculation.MealName}"
+                );
+
+                // ✅ STEP 7: Confirm order after successful payment
+                order.OrderStatus = OrderStatus.Confirmed;
+                order.UpdatedAt = DateTime.UtcNow;
+                _orderRepository.Update(order);
+                await _unitOfWork.SaveChangesAsync();
+
+                await _unitOfWork.CommitAsync();   // ✅ All or nothing
+
+                var walletBalanceAfter = await _walletService.GetUserBalanceAsync(userId);
+
+                // ✅ STEP 8: Return comprehensive order creation response
+                return new OrderCreationResponseDto
+                {
+                    OrderId = order.OrderId,
+                    UserMealId = createdUserMealId,
+                    MealName = priceCalculation.MealName,
+                    TotalPrice = priceCalculation.TotalPrice,
+                    WalletBalanceBefore = walletBalanceBefore,
+                    WalletBalanceAfter = walletBalanceAfter,
+                    OrderStatus = order.OrderStatus.ToString(),
+                    TransactionId = walletTransaction.TransactionId,
+                    OrderDate = order.OrderDate,
+                    ScheduledFor = order.ScheduledFor,
+                    IngredientBreakdown = priceCalculation.IngredientBreakdown
+                };
             }
-
-            // ✅ STEP 5: Create Order with explicit DeliveryAddressId
-            var order = new Order
+            catch
             {
-                UserId = userId,
-                UserMealId = createdUserMealId,
-                DeliveryAddressId = addressIdToUse.Value,
-                OrderStatus = OrderStatus.Pending,
-                TotalPrice = priceCalculation.TotalPrice,
-                OrderDate = DateTime.UtcNow,
-                ScheduledFor = dto.ScheduledFor ?? DateTime.UtcNow.AddHours(2),
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
-            };
-
-            await _orderRepository.AddAsync(order);
-            await _orderRepository.SaveChangesAsync();
-
-            // ✅ STEP 6: Process payment via wallet
-            var walletTransaction = await _walletService.DebitWalletAsync(
-                userId,
-                priceCalculation.TotalPrice,
-                $"Order #{order.OrderId} - {priceCalculation.MealName}"
-            );
-
-            // ✅ STEP 7: Confirm order after successful payment
-            order.OrderStatus = OrderStatus.Confirmed;
-            order.UpdatedAt = DateTime.UtcNow;
-            await _orderRepository.UpdateAsync(order);
-
-            var walletBalanceAfter = await _walletService.GetUserBalanceAsync(userId);
-
-            // ✅ STEP 8: Return comprehensive order creation response
-            return new OrderCreationResponseDto
-            {
-                OrderId = order.OrderId,
-                UserMealId = createdUserMealId,
-                MealName = priceCalculation.MealName,
-                TotalPrice = priceCalculation.TotalPrice,
-                WalletBalanceBefore = walletBalanceBefore,
-                WalletBalanceAfter = walletBalanceAfter,
-                OrderStatus = order.OrderStatus.ToString(),
-                TransactionId = walletTransaction.TransactionId,
-                OrderDate = order.OrderDate,
-                ScheduledFor = order.ScheduledFor,
-                IngredientBreakdown = priceCalculation.IngredientBreakdown
-            };
+                await _unitOfWork.RollbackAsync();  // ✅ Undo everything on failure
+                throw;
+            }
         }
     }
 }

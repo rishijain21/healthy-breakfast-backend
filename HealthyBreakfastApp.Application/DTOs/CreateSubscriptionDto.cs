@@ -6,10 +6,11 @@ namespace HealthyBreakfastApp.Application.DTOs
 {
     public class CreateSubscriptionDto
     {
-        // ❌ REMOVED: public int UserId { get; set; }
+        // ✅ CHANGED: Use MealId instead of UserMealId
+        // The service will auto-find or create UserMeal based on MealId
         
         [Required]
-        public int UserMealId { get; set; }
+        public int MealId { get; set; }
 
         [Required]
         public SubscriptionFrequency Frequency { get; set; }
