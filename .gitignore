@@ -25,3 +25,9 @@ Thumbs.db
 
 # NuGet
 *.nupkg
+
+# Secrets - never commit these
+.env
+appsettings.Production.json
+appsettings.Development.json
+*.local.json
