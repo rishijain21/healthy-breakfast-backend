@@ -1,3 +1,0 @@
-﻿<Project>
-  <Import Project="../build/HealthyBreakfastApp.WebAPI.props" />
-</Project>
