@@ -1,4 +1,4 @@
-# Build outputs
+# Build outputs - never commit these
 bin/
 obj/
 
@@ -7,15 +7,18 @@ obj/
 .vscode/
 *.user
 *.suo
+*.swp
 
-# Logs
+# Logs - never commit these
 logs/
 *.log
 
 # Secrets - NEVER commit these
-appsettings.json
+appsettings.Development.json
+appsettings.Production.json
 appsettings.*.json
-!appsettings.Development.json
+.env
+*.local.json
 *.pfx
 *.key
 
@@ -25,9 +28,12 @@ Thumbs.db
 
 # NuGet
 *.nupkg
+packages/
 
-# Secrets - never commit these
-.env
-appsettings.Production.json
-appsettings.Development.json
-*.local.json
+# SQL data files - local only
+data.sql
+schema.sql
+seed_data.sql
+
+# Audit debug files - never commit these
+*.txt
