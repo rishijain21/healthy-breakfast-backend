@@ -344,17 +344,14 @@ app.UseSerilogRequestLogging();
 app.UseResponseCompression(); // ✅ ADD THIS LINE
 app.UseRateLimiter();
 
-// ═══════════════════════════════════════════
-// FIX 1: SWAGGER — only in development
-// ═══════════════════════════════════════════
-if (app.Environment.IsDevelopment())
+// Enable Swagger for MVP/testing
+app.UseSwagger();
+
+app.UseSwaggerUI(c =>
 {
-    app.UseSwagger();
-    app.UseSwaggerUI(c =>
-    {
-        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Sovva v1");
-    });
-}
+    c.SwaggerEndpoint("/swagger/v1/swagger.json", "Sovva API v1");
+    c.RoutePrefix = "swagger";
+});
 
 app.UseCors("AllowAngular");
 
@@ -378,6 +375,14 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
 });
 
 app.MapControllers();
+
+// Root Endpoint
+app.MapGet("/", () => new
+{
+    service = "Sovva API",
+    status = "Running",
+    environment = app.Environment.EnvironmentName
+});
 
 // 🏥 Health check endpoints for cloud deployment (Railway, Render, Azure)
 app.MapHealthChecks("/health", new HealthCheckOptions
