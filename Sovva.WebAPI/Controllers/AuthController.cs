@@ -22,7 +22,7 @@ namespace Sovva.WebAPI.Controllers
 
         /// <summary>
         /// Check if a user exists in the database by email
-        /// Returns a vague response to prevent user enumeration attacks
+        /// Returns the actual result so frontend can route correctly
         /// </summary>
         [HttpGet("check-user-exists")]
         [AllowAnonymous]
@@ -30,18 +30,12 @@ namespace Sovva.WebAPI.Controllers
         public async Task<ActionResult> CheckUserExists([FromQuery] string email)
         {
             if (string.IsNullOrWhiteSpace(email))
-            {
                 return BadRequest(ApiResponse<object>.Fail("Email is required"));
-            }
 
-            // ✅ FIX 5: Prevent user enumeration - don't reveal whether user exists
-            // Return same response regardless of outcome
             try
             {
-                await _userService.UserExistsAsync(email);
-                
-                // Always return the same response
-                return Ok(ApiResponse<object>.Ok(new { message = "If this email is registered, you will receive further instructions." }));
+                var exists = await _userService.UserExistsAsync(email);
+                return Ok(new { exists });
             }
             catch (Exception ex)
             {

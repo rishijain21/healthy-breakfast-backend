@@ -176,19 +176,16 @@ builder.Services.Configure<Microsoft.AspNetCore.ResponseCompression.BrotliCompre
 // ═══════════════════════════════════════════
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowAngular", policy =>
+    options.AddPolicy("AllowFrontend", policy =>
     {
-        var origins = new List<string> { "http://localhost:4200" };
-        
-        // Add production domain if configured
-        var productionUrl = builder.Configuration["AllowedOrigin"];
-        if (!string.IsNullOrEmpty(productionUrl))
-            origins.Add(productionUrl);
-            
-        policy.WithOrigins(origins.ToArray())
-              .AllowAnyHeader()
-              .AllowAnyMethod()
-              .AllowCredentials();
+        policy
+            .WithOrigins(
+                "http://localhost:4200",          // local dev
+                "https://sovva-web.onrender.com"  // Render frontend
+            )
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials();
     });
 });
 
@@ -225,13 +222,14 @@ builder.Services.AddRateLimiter(options =>
 });
 
 // ========================================
-// 🔑 SUPABASE HS256 JWT AUTHENTICATION
+// 🔑 SUPABASE JWT AUTHENTICATION (ES256 with JWKS)
 // ========================================
 var supabaseJwtSecret = builder.Configuration["Supabase:JwtSecret"];
 var supabaseUrl = builder.Configuration["Supabase:Url"] ?? "https://beeqamwptmbpowswawfx.supabase.co";
 
+// Log warning if secret not configured (JWKS will be used instead)
 if (string.IsNullOrEmpty(supabaseJwtSecret))
-    throw new InvalidOperationException("Supabase JWT Secret is required in appsettings.json");
+    Log.Warning("⚠️ Supabase JWT Secret not configured — using ES256 JWKS auto-discovery");
 
 builder.Services.AddAuthentication(options =>
 {
@@ -240,9 +238,11 @@ builder.Services.AddAuthentication(options =>
 })
 .AddJwtBearer(options =>
 {
-    options.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
+    options.Authority = $"{supabaseUrl}/auth/v1";
+    options.MetadataAddress = $"{supabaseUrl}/auth/v1/.well-known/openid-configuration";
+    options.RequireHttpsMetadata = true;
     options.SaveToken = true;
-    options.IncludeErrorDetails = !builder.Environment.IsProduction(); // Only show error details in non-production
+    options.IncludeErrorDetails = !builder.Environment.IsProduction();
 
     options.TokenValidationParameters = new TokenValidationParameters
     {
@@ -252,7 +252,7 @@ builder.Services.AddAuthentication(options =>
         ValidateIssuerSigningKey = true,
         ValidIssuer = $"{supabaseUrl}/auth/v1",
         ValidAudience = "authenticated",
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(supabaseJwtSecret)),
+        // ✅ NO IssuerSigningKey — fetched automatically from JWKS endpoint (ES256)
         ClockSkew = TimeSpan.FromMinutes(1),
         NameClaimType = "sub",
         RoleClaimType = System.Security.Claims.ClaimTypes.Role
@@ -262,23 +262,22 @@ builder.Services.AddAuthentication(options =>
     {
         OnAuthenticationFailed = context =>
         {
-            // ✅ FIX 7: Use Serilog instead of Console.WriteLine
-            Log.Warning("JWT authentication failed on {Path}: {ErrorType}", 
-                context.Request.Path, context.Exception.GetType().Name);
+            Log.Warning("JWT authentication failed on {Path}: {ErrorType} - {Message}",
+                context.Request.Path,
+                context.Exception.GetType().Name,
+                context.Exception.Message);
             return Task.CompletedTask;
         },
         OnTokenValidated = context =>
         {
             var path = context.Request.Path;
             var sub = context.Principal?.FindFirst("sub")?.Value;
-            // ✅ FIX 7: Use Serilog instead of Console.WriteLine
             Log.Information("JWT token validated for {Path}, user: {UserId}", path, sub);
             return Task.CompletedTask;
         },
         OnChallenge = context =>
         {
-            // ✅ FIX 7: Use Serilog instead of Console.WriteLine
-            Log.Warning("JWT challenge for {Path}: {Error}", 
+            Log.Warning("JWT challenge for {Path}: {Error}",
                 context.Request.Path, context.Error ?? "unauthorized");
             return Task.CompletedTask;
         }
@@ -353,8 +352,7 @@ app.UseSwaggerUI(c =>
     c.RoutePrefix = "swagger";
 });
 
-app.UseCors("AllowAngular");
-
+app.UseCors("AllowFrontend");   // ← BEFORE auth
 app.UseAuthentication();
 app.UseMiddleware<AuthMiddleware>();
 app.UseAuthorization();
