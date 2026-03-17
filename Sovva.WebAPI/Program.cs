@@ -181,7 +181,7 @@ builder.Services.AddCors(options =>
         policy
             .WithOrigins(
                 "http://localhost:4200",          // local dev
-                "https://sovva-web.onrender.com"  // Render frontend
+                "https://sovva-web.onrender.com" // Render frontend
             )
             .AllowAnyHeader()
             .AllowAnyMethod()
@@ -222,14 +222,11 @@ builder.Services.AddRateLimiter(options =>
 });
 
 // ========================================
-// 🔑 SUPABASE JWT AUTHENTICATION (ES256 with JWKS)
+// 🔑 SUPABASE JWT AUTHENTICATION
 // ========================================
-var supabaseJwtSecret = builder.Configuration["Supabase:JwtSecret"];
+var supabaseJwtSecret = builder.Configuration["Supabase:JwtSecret"]
+    ?? throw new InvalidOperationException("❌ Supabase__JwtSecret not set in environment variables");
 var supabaseUrl = builder.Configuration["Supabase:Url"] ?? "https://beeqamwptmbpowswawfx.supabase.co";
-
-// Log warning if secret not configured (JWKS will be used instead)
-if (string.IsNullOrEmpty(supabaseJwtSecret))
-    Log.Warning("⚠️ Supabase JWT Secret not configured — using ES256 JWKS auto-discovery");
 
 builder.Services.AddAuthentication(options =>
 {
@@ -238,9 +235,8 @@ builder.Services.AddAuthentication(options =>
 })
 .AddJwtBearer(options =>
 {
-    options.Authority = $"{supabaseUrl}/auth/v1";
-    options.MetadataAddress = $"{supabaseUrl}/auth/v1/.well-known/openid-configuration";
-    options.RequireHttpsMetadata = true;
+   options.RequireHttpsMetadata = false;
+
     options.SaveToken = true;
     options.IncludeErrorDetails = !builder.Environment.IsProduction();
 
@@ -252,7 +248,9 @@ builder.Services.AddAuthentication(options =>
         ValidateIssuerSigningKey = true,
         ValidIssuer = $"{supabaseUrl}/auth/v1",
         ValidAudience = "authenticated",
-        // ✅ NO IssuerSigningKey — fetched automatically from JWKS endpoint (ES256)
+        IssuerSigningKey = new SymmetricSecurityKey(
+            Encoding.UTF8.GetBytes(supabaseJwtSecret)
+        ),
         ClockSkew = TimeSpan.FromMinutes(1),
         NameClaimType = "sub",
         RoleClaimType = System.Security.Claims.ClaimTypes.Role
