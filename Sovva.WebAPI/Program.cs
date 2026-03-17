@@ -184,8 +184,8 @@ builder.Services.AddCors(options =>
                 "https://sovva-web.onrender.com" // Render frontend
             )
             .AllowAnyHeader()
-            .AllowAnyMethod()
-            .AllowCredentials();
+            .AllowAnyMethod();
+            // ← AllowCredentials() removed — not needed for Bearer tokens
     });
 });
 
