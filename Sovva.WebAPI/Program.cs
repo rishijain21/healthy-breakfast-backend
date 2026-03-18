@@ -222,11 +222,10 @@ builder.Services.AddRateLimiter(options =>
 });
 
 // ========================================
-// 🔑 SUPABASE JWT AUTHENTICATION
+// 🔑 SUPABASE JWT AUTHENTICATION (JWKS)
 // ========================================
-var supabaseJwtSecret = builder.Configuration["Supabase:JwtSecret"]
-    ?? throw new InvalidOperationException("❌ Supabase__JwtSecret not set in environment variables");
-var supabaseUrl = builder.Configuration["Supabase:Url"] ?? "https://beeqamwptmbpowswawfx.supabase.co";
+var supabaseUrl = (builder.Configuration["Supabase:Url"] 
+    ?? "https://beeqamwptmbpowswawfx.supabase.co").TrimEnd('/');
 
 builder.Services.AddAuthentication(options =>
 {
@@ -235,23 +234,28 @@ builder.Services.AddAuthentication(options =>
 })
 .AddJwtBearer(options =>
 {
-   options.RequireHttpsMetadata = false;
+    // ✅ JWKS: fetches Supabase public key automatically — no secret needed
+    options.Authority = $"{supabaseUrl}/auth/v1";
+    options.MetadataAddress = $"{supabaseUrl}/auth/v1/.well-known/openid-configuration";
 
+    options.RequireHttpsMetadata = true;
     options.SaveToken = true;
-    options.IncludeErrorDetails = !builder.Environment.IsProduction();
+    options.IncludeErrorDetails = true;
 
     options.TokenValidationParameters = new TokenValidationParameters
     {
         ValidateIssuer = true,
-        ValidateAudience = true,
-        ValidateLifetime = true,
-        ValidateIssuerSigningKey = true,
         ValidIssuer = $"{supabaseUrl}/auth/v1",
+
+        ValidateAudience = true,
         ValidAudience = "authenticated",
-        IssuerSigningKey = new SymmetricSecurityKey(
-            Encoding.UTF8.GetBytes(supabaseJwtSecret)
-        ),
+
+        ValidateLifetime = true,
         ClockSkew = TimeSpan.FromMinutes(1),
+
+        ValidateIssuerSigningKey = true,
+        // ✅ No IssuerSigningKey — JWKS handles it automatically
+
         NameClaimType = "sub",
         RoleClaimType = System.Security.Claims.ClaimTypes.Role
     };
@@ -268,15 +272,17 @@ builder.Services.AddAuthentication(options =>
         },
         OnTokenValidated = context =>
         {
-            var path = context.Request.Path;
             var sub = context.Principal?.FindFirst("sub")?.Value;
-            Log.Information("JWT token validated for {Path}, user: {UserId}", path, sub);
+            Log.Information("✅ JWT validated for {Path}, user: {UserId}",
+                context.Request.Path, sub);
             return Task.CompletedTask;
         },
         OnChallenge = context =>
         {
-            Log.Warning("JWT challenge for {Path}: {Error}",
-                context.Request.Path, context.Error ?? "unauthorized");
+            Log.Warning("JWT challenge for {Path}: {Error} - {ErrorDescription}",
+                context.Request.Path,
+                context.Error ?? "unauthorized",
+                context.ErrorDescription ?? "no description");
             return Task.CompletedTask;
         }
     };
