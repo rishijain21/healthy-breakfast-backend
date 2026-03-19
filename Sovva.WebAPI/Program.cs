@@ -63,10 +63,16 @@ builder.Services.AddHangfire(config => config
     .UsePostgreSqlStorage(options =>
         options.UseNpgsqlConnection(connectionString), new PostgreSqlStorageOptions
     {
-        QueuePollInterval = TimeSpan.FromSeconds(15)
+        QueuePollInterval = TimeSpan.FromSeconds(15),
+        InvisibilityTimeout = TimeSpan.FromMinutes(5),
+        DistributedLockTimeout = TimeSpan.FromSeconds(30)
     }));
 
-builder.Services.AddHangfireServer();
+builder.Services.AddHangfireServer(options =>
+{
+    options.WorkerCount = 2;
+    options.Queues = new[] { "default" };
+});
 
 // ========================================
 // 🧩 APPLICATION SERVICES & REPOSITORIES
