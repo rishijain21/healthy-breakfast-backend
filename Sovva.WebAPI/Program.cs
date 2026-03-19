@@ -408,6 +408,9 @@ app.MapHealthChecks("/health", new HealthCheckOptions
     }
 });
 
+// 👇 ADD THIS LINE
+app.MapGet("/ping", () => Results.Ok("pong"));
+
 // ========================================
 // ⏰ SCHEDULE RECURRING JOBS (MilkBasket Style)
 // ========================================

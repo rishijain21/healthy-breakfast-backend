@@ -133,11 +133,7 @@ namespace Sovva.Application.Services
             };
 
             // Generate signed URL for secure image access (expires in 1 hour)
-            if (!string.IsNullOrEmpty(meal.ImageUrl))
-            {
-                var filePath = ExtractStoragePath(meal.ImageUrl);
-                dto.ImageUrl = await _storageService.GetSignedUrlAsync(filePath);
-            }
+            dto.ImageUrl = await GetSafeSignedUrlAsync(meal.ImageUrl);
 
             return dto;
         }
@@ -652,6 +648,21 @@ namespace Sovva.Application.Services
             await _mealRepository.UpdateMealAsync(meal);
             _cache.Remove(ActiveMealsCacheKey);
             return existingUrl;
+        }
+
+        // ✅ Helper method to safely get signed URL without throwing
+        private async Task<string?> GetSafeSignedUrlAsync(string? storagePath)
+        {
+            if (string.IsNullOrEmpty(storagePath)) return null;
+            try
+            {
+                var filePath = ExtractStoragePath(storagePath);
+                return await _storageService.GetSignedUrlAsync(filePath);
+            }
+            catch
+            {
+                return null;
+            }
         }
     }
 }
