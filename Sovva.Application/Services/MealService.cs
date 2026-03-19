@@ -6,6 +6,7 @@ using Sovva.Application.DTOs;
 using Sovva.Application.Interfaces;
 using Sovva.Domain.Entities;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Logging;
 
 namespace Sovva.Application.Services
 {
@@ -18,6 +19,7 @@ namespace Sovva.Application.Services
         private readonly IMealOptionIngredientRepository _mealOptionIngredientRepository;
         private readonly ISupabaseStorageService _storageService;
         private readonly IMemoryCache _cache;
+        private readonly ILogger<MealService> _logger;
         private const string ActiveMealsCacheKey = "active_meals";
         private const string CategoriesWithIngredientsCacheKey = "meals:categories_with_ingredients";
 
@@ -28,7 +30,8 @@ namespace Sovva.Application.Services
             IIngredientCategoryRepository ingredientCategoryRepository,
             IMealOptionIngredientRepository mealOptionIngredientRepository,
             ISupabaseStorageService storageService,
-            IMemoryCache cache)
+            IMemoryCache cache,
+            ILogger<MealService> logger)
         {
             _mealRepository = mealRepository;
             _ingredientRepository = ingredientRepository;
@@ -37,6 +40,7 @@ namespace Sovva.Application.Services
             _mealOptionIngredientRepository = mealOptionIngredientRepository;
             _storageService = storageService;
             _cache = cache;
+            _logger = logger;
         }
 
         // ✅ Public method for meal builder - returns only complete meals for public browsing
@@ -359,9 +363,7 @@ namespace Sovva.Application.Services
                 ApproxFats = meal.ApproxFats,
                 
                 // Image URL (generate signed URL for secure access)
-                ImageUrl = !string.IsNullOrEmpty(meal.ImageUrl) 
-                    ? await _storageService.GetSignedUrlAsync(meal.ImageUrl) 
-                    : null,
+                ImageUrl = await GetSafeSignedUrlAsync(meal.ImageUrl),
                 
                 CreatedAt = meal.CreatedAt,
                 UpdatedAt = meal.UpdatedAt,
@@ -659,8 +661,9 @@ namespace Sovva.Application.Services
                 var filePath = ExtractStoragePath(storagePath);
                 return await _storageService.GetSignedUrlAsync(filePath);
             }
-            catch
+            catch (Exception ex)
             {
+                _logger.LogWarning("Signed URL failed for {Path}: {Error}", storagePath, ex.Message);
                 return null;
             }
         }
