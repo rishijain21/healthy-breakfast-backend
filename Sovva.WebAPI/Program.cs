@@ -347,6 +347,9 @@ HangfireBasicAuthFilter.SetHttpContextAccessor(app.Services.GetRequiredService<I
 // ✅ FIX 1: Global exception handler — MUST be first
 app.UseMiddleware<GlobalExceptionMiddleware>();
 
+// ✅ CORS - MUST be early to add headers to all responses
+app.UseCors("AllowFrontend");
+
 // ✅ FIX 4: Logs every HTTP request with method, path, status code, duration
 app.UseSerilogRequestLogging();
 
@@ -362,7 +365,6 @@ app.UseSwaggerUI(c =>
     c.RoutePrefix = "swagger";
 });
 
-app.UseCors("AllowFrontend");   // ← BEFORE auth
 app.UseAuthentication();
 app.UseMiddleware<AuthMiddleware>();
 app.UseAuthorization();
