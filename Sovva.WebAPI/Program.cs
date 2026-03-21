@@ -221,6 +221,12 @@ builder.Services.AddRateLimiter(options =>
     options.RejectionStatusCode = 429; // Too Many Requests
     options.OnRejected = async (context, token) =>
     {
+        // ✅ Manually add CORS header to rate limit rejections
+        var origin = context.HttpContext.Request.Headers["Origin"].ToString();
+        if (!string.IsNullOrEmpty(origin))
+        {
+            context.HttpContext.Response.Headers.Append("Access-Control-Allow-Origin", origin);
+        }
         context.HttpContext.Response.StatusCode = 429;
         await context.HttpContext.Response.WriteAsJsonAsync(
             new { success = false, message = "Too many requests. Please try again later." }, token);
