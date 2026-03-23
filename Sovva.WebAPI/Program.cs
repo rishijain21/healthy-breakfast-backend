@@ -178,20 +178,22 @@ builder.Services.Configure<Microsoft.AspNetCore.ResponseCompression.BrotliCompre
 });
 
 // ═══════════════════════════════════════════
-// FIX 3: CORS — add your production domain
 // ═══════════════════════════════════════════
+// CORS — Frontend on Vercel + local dev
+// ═══════════════════════════════════════════
+var allowedOrigins = builder.Configuration
+    .GetSection("AllowedOrigins")
+    .Get<string[]>()
+    ?? Array.Empty<string>();
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
     {
         policy
-            .WithOrigins(
-                "http://localhost:4200",          // local dev
-                "https://sovva-web.onrender.com" // Render frontend
-            )
+            .WithOrigins(allowedOrigins)
             .AllowAnyHeader()
             .AllowAnyMethod();
-            // ← AllowCredentials() removed — not needed for Bearer tokens
     });
 });
 
