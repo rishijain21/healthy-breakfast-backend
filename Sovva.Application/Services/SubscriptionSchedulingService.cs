@@ -155,7 +155,7 @@ namespace Sovva.Application.Services
                         SubscriptionId = subscription.SubscriptionId
                     };
 
-                    await _scheduledOrderService.CreateScheduledOrderAsync(user.AuthMapping.AuthId, scheduledOrderDto);
+                    await _scheduledOrderService.CreateScheduledOrderAsync(user.UserId, user.AuthMapping.AuthId, scheduledOrderDto);
 
                     // ✅ Update NextScheduledDate
                     subscription.NextScheduledDate = CalculateNextScheduledDate(subscription, tomorrow);
@@ -279,7 +279,7 @@ namespace Sovva.Application.Services
         /// ✅ NEW: Generate a single scheduled order for a specific subscription (real-time)
         /// Called when user subscribes or resumes subscription
         /// </summary>
-        public async Task GenerateOrderForSubscriptionAsync(int subscriptionId, Guid authId)
+        public async Task GenerateOrderForSubscriptionAsync(int subscriptionId, int userId, Guid authId)
         {
             var subscription = await _subscriptionRepo.GetByIdAsync(subscriptionId);
             
@@ -370,7 +370,7 @@ namespace Sovva.Application.Services
                         SubscriptionId = subscription.SubscriptionId
             };
 
-            await _scheduledOrderService.CreateScheduledOrderAsync(user.AuthMapping.AuthId, scheduledOrderDto);
+            await _scheduledOrderService.CreateScheduledOrderAsync(user.UserId, user.AuthMapping.AuthId, scheduledOrderDto);
 
             _logger.LogInformation(
                 $"✅ Generated order for subscription #{subscriptionId} " +
@@ -381,7 +381,7 @@ namespace Sovva.Application.Services
         /// ✅ NEW: Cancel tomorrow's scheduled order for a specific subscription
         /// Called when user pauses or deletes subscription
         /// </summary>
-        public async Task CancelOrderForSubscriptionAsync(int subscriptionId, Guid authId)
+        public async Task CancelOrderForSubscriptionAsync(int subscriptionId, int userId, Guid authId)
         {
             var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
             var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
@@ -391,6 +391,7 @@ namespace Sovva.Application.Services
 
             // Find all scheduled orders for tomorrow from this subscription
             var tomorrowOrders = await _scheduledOrderService.GetScheduledOrdersForDateAsync(
+                userId,
                 authId, 
                 DateTime.SpecifyKind(tomorrow, DateTimeKind.Utc)
             );
@@ -406,7 +407,7 @@ namespace Sovva.Application.Services
             {
                 try
                 {
-                    await _scheduledOrderService.CancelScheduledOrderAsync(authId, order.ScheduledOrderId);
+                    await _scheduledOrderService.CancelScheduledOrderAsync(userId, authId, order.ScheduledOrderId);
                     _logger.LogInformation($"✅ Cancelled order #{order.ScheduledOrderId}");
                 }
                 catch (Exception ex)

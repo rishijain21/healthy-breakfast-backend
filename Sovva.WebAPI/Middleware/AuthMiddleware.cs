@@ -19,14 +19,13 @@ namespace Sovva.WebAPI.Middleware
 
         public async Task InvokeAsync(HttpContext context)
         {
-            // ✅ SKIP: Public endpoints that don't need middleware processing
             var path = context.Request.Path.Value?.ToLower() ?? "";
             var publicEndpoints = new[]
             {
                 "/swagger",
                 "/api/auth/login",
                 "/api/auth/register",
-                "/api/auth/check-user-exists",  // ✅ ADDED: Skip this endpoint too
+                "/api/auth/check-user-exists",
                 "/api/scheduledorders/time-until-midnight"
             };
 
@@ -36,9 +35,6 @@ namespace Sovva.WebAPI.Middleware
                 return;
             }
 
-            // ✅ CHECK: If this is an API route that needs processing
-            // ✅ FIXED: Don't check endpoint metadata — routing hasn't happened yet
-            // UseAuthentication() already ran, so context.User is populated if token is valid
             if (context.Request.Path.StartsWithSegments("/api")
                 && context.User.Identity?.IsAuthenticated == true)
             {
@@ -53,58 +49,66 @@ namespace Sovva.WebAPI.Middleware
             try
             {
                 var authId = ExtractAuthIdFromToken(context);
-                _logger.LogInformation($"🔐 AuthMiddleware: Extracted authId: {authId}");
+                _logger.LogInformation("🔐 AuthMiddleware: Extracted authId: {AuthId}", authId);
 
                 if (!string.IsNullOrEmpty(authId) && Guid.TryParse(authId, out var authGuid))
                 {
                     using var scope = _serviceScopeFactory.CreateScope();
                     var userService = scope.ServiceProvider.GetRequiredService<IUserService>();
 
-                    // ✅ CRITICAL: Only FIND user, NEVER create
                     var userDto = await userService.GetUserByAuthIdAsync(authGuid);
 
                     if (userDto != null)
                     {
-                        // ✅ Existing user - set context
                         context.Items["UserId"] = userDto.UserId;
                         context.Items["User"] = userDto;
                         context.Items["auth_id"] = authId;
                         context.Items["AuthId"] = authGuid;
-                        
-                        // ✅ ADD: Inject role into the ClaimsPrincipal so [Authorize(Roles="Admin")] works
+
                         var identity = context.User.Identity as System.Security.Claims.ClaimsIdentity;
                         if (identity != null)
                         {
-                            // Remove any existing role claims from Supabase ("authenticated")
+                            // ✅ FIX 1: Remove ALL existing role claims (Supabase adds "authenticated")
                             var existingRoleClaims = identity.FindAll(identity.RoleClaimType).ToList();
                             foreach (var claim in existingRoleClaims)
                                 identity.RemoveClaim(claim);
 
-                            // Inject the role from your database into the standard ASP.NET role claim
+                            // ✅ FIX 2: Add role to "sovva_role" claim — matches RoleClaimType in Program.cs
                             identity.AddClaim(new System.Security.Claims.Claim(
-                                System.Security.Claims.ClaimTypes.Role,
+                                "sovva_role",
                                 userDto.Role ?? "User"
                             ));
+
+                            // ✅ FIX 3: Add sovva_user_id claim — used by User.GetSovvaUserId()
+                            // Only add if not already present in the JWT from Supabase hook
+                            var existingUserIdClaim = identity.FindFirst("sovva_user_id");
+                            if (existingUserIdClaim == null)
+                            {
+                                identity.AddClaim(new System.Security.Claims.Claim(
+                                    "sovva_user_id",
+                                    userDto.UserId.ToString()
+                                ));
+                            }
                         }
-                        
-                        _logger.LogInformation($"✅ AuthMiddleware: User {userDto.UserId} authenticated with role {userDto.Role}");
+
+                        _logger.LogInformation(
+                            "✅ AuthMiddleware: User {UserId} authenticated with role {Role}",
+                            userDto.UserId, userDto.Role);
                     }
                     else
                     {
-                        // ✅ New user - don't create yet, just mark as pending
-                        _logger.LogInformation($"🆕 AuthMiddleware: New user detected (authId: {authId}) - awaiting registration");
+                        _logger.LogInformation(
+                            "🆕 AuthMiddleware: New user detected (authId: {AuthId}) - awaiting registration",
+                            authId);
                         context.Items["auth_id"] = authId;
                         context.Items["AuthId"] = authGuid;
                         context.Items["IsNewUser"] = true;
-                        
-                        // ❌ DO NOT CREATE USER HERE!
-                        // User will be created when they submit the profile form at /api/Auth/register
                     }
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError($"❌ AuthMiddleware error: {ex.Message}");
+                _logger.LogError(ex, "❌ AuthMiddleware error");
             }
         }
 
@@ -116,25 +120,21 @@ namespace Sovva.WebAPI.Middleware
 
             try
             {
-                // ✅ FIX 3: Use already-validated ClaimsPrincipal instead of ReadJwtToken
-                // Since UseAuthentication() runs before this middleware, context.User is already validated
                 return context.User.FindFirst("sub")?.Value
                     ?? context.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
             }
             catch (Exception ex)
             {
-                _logger.LogError($"❌ Token extraction error: {ex.Message}");
+                _logger.LogError(ex, "❌ Token extraction error");
                 return null;
             }
         }
 
         private (string? Name, string? Email) ExtractUserInfoFromToken(HttpContext context)
         {
-            // ✅ FIX 3: Use already-validated ClaimsPrincipal instead of ReadJwtToken
-            var name = context.User.FindFirst("name")?.Value 
+            var name = context.User.FindFirst("name")?.Value
                 ?? context.User.FindFirst("full_name")?.Value;
             var email = context.User.FindFirst("email")?.Value;
-
             return (name, email);
         }
     }

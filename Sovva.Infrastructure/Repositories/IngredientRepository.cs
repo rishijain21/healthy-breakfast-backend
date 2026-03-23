@@ -44,6 +44,14 @@ namespace Sovva.Infrastructure.Repositories
                 .FirstOrDefaultAsync(i => i.IngredientId == id);
         }
 
+        public async Task<List<Ingredient>> GetByIdsAsync(List<int> ids)
+        {
+            return await _context.Ingredients
+                .AsNoTracking()
+                .Where(i => ids.Contains(i.IngredientId))
+                .ToListAsync();
+        }
+
         // ==================== CREATE OPERATIONS ====================
         
         public async Task AddIngredientAsync(Ingredient ingredient)

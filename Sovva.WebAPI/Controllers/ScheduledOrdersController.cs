@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using Sovva.Application.Interfaces;
 using Sovva.Application.DTOs;
 using Sovva.Domain.Entities;
+using Sovva.WebAPI.Extensions;
 
 namespace Sovva.WebAPI.Controllers
 {
@@ -41,14 +42,16 @@ namespace Sovva.WebAPI.Controllers
         {
             try
             {
+                // ✅ NEW: Get userId from JWT claim (zero DB hit)
+                var userId = User.GetSovvaUserId();
                 var authId = GetAuthId();
-                if (authId == null)
+                if (userId is null || authId is null)
                 {
                     var allClaims = User.Claims.Select(c => $"{c.Type}: {c.Value}").ToList();
                     return Unauthorized($"Missing authentication claims. Available: {string.Join(", ", allClaims)}");
                 }
 
-                var result = await _scheduledOrderService.CreateScheduledOrderAsync(authId.Value, dto);
+                var result = await _scheduledOrderService.CreateScheduledOrderAsync(userId.Value, authId.Value, dto);
                 return Ok(result);
             }
             catch (InvalidOperationException ex)
@@ -69,14 +72,16 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
 {
     try
     {
+        // ✅ NEW: Get userId from JWT claim (zero DB hit)
+        var userId = User.GetSovvaUserId();
         var authId = GetAuthId();
-        if (authId == null)
+        if (userId is null || authId is null)
         {
             var allClaims = User.Claims.Select(c => $"{c.Type}: {c.Value}").ToList();
             return Unauthorized($"Missing authentication claims. Available: {string.Join(", ", allClaims)}");
         }
 
-        var result = await _scheduledOrderService.DuplicateScheduledOrderAsync(authId.Value, id);
+        var result = await _scheduledOrderService.DuplicateScheduledOrderAsync(userId.Value, authId.Value, id);
         
         _logger.LogInformation($"✅ Successfully duplicated order #{id} → #{result.ScheduledOrderId}");
         
@@ -101,8 +106,10 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
         {
             try
             {
+                // ✅ NEW: Get userId from JWT claim (zero DB hit)
+                var userId = User.GetSovvaUserId();
                 var authId = GetAuthId();
-                if (authId == null)
+                if (userId is null || authId is null)
                 {
                     var allClaims = User.Claims.Select(c => $"{c.Type}: {c.Value}").ToList();
                     return Unauthorized($"Missing authentication claims. Available: {string.Join(", ", allClaims)}");
@@ -114,7 +121,7 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
 
                 _logger.LogInformation($"🗓️ Looking for cart orders scheduled for: {tomorrow:yyyy-MM-dd}");
 
-                var allOrders = await _scheduledOrderService.GetScheduledOrdersForDateAsync(authId.Value, tomorrow);
+                var allOrders = await _scheduledOrderService.GetScheduledOrdersForDateAsync(userId.Value, authId.Value, tomorrow);
 
                 var pendingOrders = allOrders
                     .Where(order => order.OrderStatus?.ToLower() == "scheduled")
@@ -136,14 +143,16 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
         {
             try
             {
+                // ✅ NEW: Get userId from JWT claim (zero DB hit)
+                var userId = User.GetSovvaUserId();
                 var authId = GetAuthId();
-                if (authId == null)
+                if (userId is null || authId is null)
                 {
                     var allClaims = User.Claims.Select(c => $"{c.Type}: {c.Value}").ToList();
                     return Unauthorized($"Missing authentication claims. Available: {string.Join(", ", allClaims)}");
                 }
 
-                await _scheduledOrderService.ModifyScheduledOrderAsync(authId.Value, id, dto);
+                await _scheduledOrderService.ModifyScheduledOrderAsync(userId.Value, authId.Value, id, dto);
                 return Ok(new { message = "Scheduled order modified successfully" });
             }
             catch (InvalidOperationException ex)
@@ -166,14 +175,16 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
         {
             try
             {
+                // ✅ NEW: Get userId from JWT claim (zero DB hit)
+                var userId = User.GetSovvaUserId();
                 var authId = GetAuthId();
-                if (authId == null)
+                if (userId is null || authId is null)
                 {
                     var allClaims = User.Claims.Select(c => $"{c.Type}: {c.Value}").ToList();
                     return Unauthorized($"Missing authentication claims. Available: {string.Join(", ", allClaims)}");
                 }
 
-                await _scheduledOrderService.CancelScheduledOrderAsync(authId.Value, id);
+                await _scheduledOrderService.CancelScheduledOrderAsync(userId.Value, authId.Value, id);
                 return Ok(new { message = "Scheduled order cancelled successfully" });
             }
             catch (InvalidOperationException ex)

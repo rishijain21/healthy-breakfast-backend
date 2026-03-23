@@ -14,6 +14,7 @@ namespace Sovva.Application.Interfaces
         // ✅ ADD THESE TWO NEW METHODS
         Task<User?> GetByAuthIdAsync(Guid authId);
         Task<User?> GetUserByAuthIdAsync(Guid authId);
+        Task<List<User>> GetByAuthIdsAsync(List<Guid> authIds);
         Task UpdateUserAsync(User user);
 
         Task<User> CreateUserWithAuthMappingAsync(User user, Guid authId);

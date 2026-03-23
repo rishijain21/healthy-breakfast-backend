@@ -215,12 +215,8 @@ namespace Sovva.Application.Services
             }
 
             // ✅ NEW: Create first scheduled order for immediate visibility
-            Console.WriteLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-            Console.WriteLine("🟢 BEFORE CreateFirstScheduledOrderAsync call");
-            Console.WriteLine($"🟢 Subscription: {createdSubscription.SubscriptionId}");
-            Console.WriteLine($"🟢 User: {user.UserId}");
-            Console.WriteLine($"🟢 UserMeal: {userMeal.UserMealId}");
-            Console.WriteLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            _logger.LogInformation("Creating first scheduled order - Subscription: {SubscriptionId}, User: {UserId}, UserMeal: {UserMealId}",
+                createdSubscription.SubscriptionId, user.UserId, userMeal.UserMealId);
 
             var firstOrderResult = await CreateFirstScheduledOrderAsync(
                 createdSubscription, 
@@ -229,9 +225,8 @@ namespace Sovva.Application.Services
                 primaryAddress     // ✅ Pass explicitly
             );
 
-            Console.WriteLine("🟢 AFTER CreateFirstScheduledOrderAsync call");
-            Console.WriteLine($"🟢 FirstOrderResult: Success={firstOrderResult.Success}, Error={firstOrderResult.Error ?? "null"}");
-            Console.WriteLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            _logger.LogInformation("First scheduled order created - Success: {Success}, Error: {Error}",
+                firstOrderResult.Success, firstOrderResult.Error ?? "null");
 
             // ✅ Log result but don't fail subscription creation
             if (!firstOrderResult.Success)
@@ -250,14 +245,9 @@ namespace Sovva.Application.Services
             UserMeal userMeal,
             UserAddress deliveryAddress)
         {
-            // 🔴 ADD AGGRESSIVE DEBUG LOGGING
-            Console.WriteLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-            Console.WriteLine("🔴 CreateFirstScheduledOrderAsync CALLED!");
-            Console.WriteLine($"🔴 SubscriptionId: {subscription.SubscriptionId}");
-            Console.WriteLine($"🔴 UserId: {user.UserId}");
-            Console.WriteLine($"🔴 UserMealId: {userMeal.UserMealId}");
-            Console.WriteLine($"🔴 UserMeal Name: {userMeal.MealName}");
-            Console.WriteLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            // ✅ FIX 10: Remove debug logging - use proper logging
+            _logger.LogInformation("CreateFirstScheduledOrderAsync called - SubscriptionId: {SubscriptionId}, UserId: {UserId}, UserMealId: {UserMealId}, MealName: {MealName}",
+                subscription.SubscriptionId, user.UserId, userMeal.UserMealId, userMeal.MealName);
             
             try
             {
@@ -266,13 +256,12 @@ namespace Sovva.Application.Services
                 // Load ingredients from UserMeal
                 var ingredients = await _userMealIngredientRepository.GetByUserMealIdAsync(userMeal.UserMealId);
                 
-                Console.WriteLine($"🔴 Loaded {ingredients.Count()} ingredients from UserMeal #{userMeal.UserMealId}");
+                _logger.LogInformation("Loaded {IngredientCount} ingredients from UserMeal #{UserMealId}", ingredients.Count(), userMeal.UserMealId);
                 
                 if (!ingredients.Any())
                 {
                     var error = $"No ingredients found for UserMeal #{userMeal.UserMealId}";
-                    _logger.LogWarning($"⚠️ {error}");
-                    Console.WriteLine($"🔴 ERROR: {error}");
+                    _logger.LogWarning("Error in CreateFirstScheduledOrderAsync for subscription {SubscriptionId}: {Error}", subscription.SubscriptionId, error);
                     return (false, error);
                 }
 
@@ -295,15 +284,12 @@ namespace Sovva.Application.Services
                 // Save to database
                 var created = await _scheduledOrderRepository.CreateAsync(scheduledOrder);
                 
-                Console.WriteLine($"🔴 SUCCESS: ScheduledOrder #{created.ScheduledOrderId} created for {firstDeliveryDate:yyyy-MM-dd}");
-                _logger.LogInformation($"✅ ScheduledOrder #{created.ScheduledOrderId} created successfully for {firstDeliveryDate:yyyy-MM-dd}");
+                _logger.LogInformation("ScheduledOrder #{ScheduledOrderId} created successfully for delivery date {DeliveryDate}", created.ScheduledOrderId, firstDeliveryDate);
                 return (true, null);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"❌ Failed to create first order for subscription #{subscription.SubscriptionId}");
-                Console.WriteLine($"🔴 ERROR: Failed to create first order - {ex.Message}");
-                Console.WriteLine($"🔴 StackTrace: {ex.StackTrace}");
+                _logger.LogError(ex, "Failed to create first order for subscription #{SubscriptionId}", subscription.SubscriptionId);
                 return (false, ex.Message);
             }
         }
@@ -355,10 +341,16 @@ namespace Sovva.Application.Services
             decimal totalPrice = 0;
             var scheduledOrderIngredients = new List<ScheduledOrderIngredient>();
 
-            foreach (var userMealIngredient in ingredients)
+            // ✅ OPTIMIZED: Batch load all ingredients in single query to kill N+1
+            var ingredientList = ingredients.ToList();
+            var ingredientIds = ingredientList.Select(i => i.IngredientId).ToList();
+            var allIngredients = await _ingredientRepository.GetByIdsAsync(ingredientIds);
+            var ingredientMap = allIngredients.ToDictionary(i => i.IngredientId);
+
+            foreach (var userMealIngredient in ingredientList)
             {
-                var ingredient = await _ingredientRepository.GetByIdAsync(userMealIngredient.IngredientId);
-                if (ingredient == null) continue;
+                if (!ingredientMap.TryGetValue(userMealIngredient.IngredientId, out var ingredient))
+                    continue;
 
                 var quantity = userMealIngredient.Quantity;
                 var unitPrice = ingredient.Price;
@@ -505,13 +497,8 @@ namespace Sovva.Application.Services
             
             var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, IstTimeZone);
             
-            Console.WriteLine($"[SYNC] ========================================");
-            Console.WriteLine($"[SYNC] Starting subscription date sync");
-            Console.WriteLine($"[SYNC] UTC Time: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}");
-            Console.WriteLine($"[SYNC] IST Time: {istNow:yyyy-MM-dd HH:mm:ss}");
-            Console.WriteLine($"[SYNC] Today (IST): {today:yyyy-MM-dd}");
-            Console.WriteLine($"[SYNC] Active subscriptions found: {activeSubscriptions.Count()}");
-            Console.WriteLine($"[SYNC] ========================================");
+            _logger.LogInformation("=== Subscription date sync started - UTC: {UtcTime}, IST: {IstTime}, Today: {Today}",
+                DateTime.UtcNow, istNow, today);
             
             int updatedCount = 0;
             int skippedCount = 0;
@@ -521,29 +508,24 @@ namespace Sovva.Application.Services
                 var oldNextDate = subscription.NextScheduledDate;
                 var newNextDate = CalculateNextDeliveryDate(subscription, today);
                 
-                Console.WriteLine($"[SYNC] Sub #{subscription.SubscriptionId}: " +
-                                 $"Freq={subscription.Frequency}, " +
-                                 $"Start={subscription.StartDate:yyyy-MM-dd}, " +
-                                 $"OldNext={oldNextDate?.ToString("yyyy-MM-dd") ?? "NULL"}, " +
-                                 $"NewNext={newNextDate:yyyy-MM-dd}");
-                
+                _logger.LogInformation("Subscription #{SubscriptionId} sync - Frequency: {Frequency}, StartDate: {StartDate}, OldNextDate: {OldNextDate}, NewNextDate: {NewNextDate}",
+                    subscription.SubscriptionId, subscription.Frequency, subscription.StartDate, oldNextDate, newNextDate);
+
                 if (subscription.NextScheduledDate != newNextDate)
                 {
                     subscription.NextScheduledDate = newNextDate;
                     await _subscriptionRepository.UpdateAsync(subscription);
+                    _logger.LogInformation("Subscription #{SubscriptionId} next delivery date updated to {NewDate}", subscription.SubscriptionId, newNextDate);
                     updatedCount++;
-                    Console.WriteLine($"[SYNC]   ✅ UPDATED to {newNextDate:yyyy-MM-dd}");
                 }
                 else
                 {
+                    _logger.LogInformation("Subscription #{SubscriptionId} next delivery date already correct ({Date})", subscription.SubscriptionId, subscription.NextScheduledDate);
                     skippedCount++;
-                    Console.WriteLine($"[SYNC]   ⏭️ SKIPPED (already correct)");
                 }
             }
             
-            Console.WriteLine($"[SYNC] ========================================");
-            Console.WriteLine($"[SYNC] Sync complete: {updatedCount} updated, {skippedCount} skipped");
-            Console.WriteLine($"[SYNC] ========================================");
+            _logger.LogInformation("=== Subscription sync complete - Updated: {UpdatedCount}, Skipped: {SkippedCount}", updatedCount, skippedCount);
         }
 
         /// <summary>

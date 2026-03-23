@@ -162,5 +162,14 @@ namespace Sovva.Infrastructure.Repositories
                             && x.Active 
                             && x.EndDate >= DateOnly.FromDateTime(DateTime.UtcNow));
         }
+
+        // ✅ NEW METHOD: Batch load addresses by IDs (used in midnight job)
+        public async Task<List<UserAddress>> GetByIdsAsync(List<int> ids)
+        {
+            return await _context.UserAddresses
+                .AsNoTracking()
+                .Where(a => ids.Contains(a.Id))
+                .ToListAsync();
+        }
     }
 }

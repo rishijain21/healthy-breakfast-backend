@@ -248,7 +248,7 @@ namespace Sovva.WebAPI.Controllers
             // ✅ NEW: Generate tomorrow's order immediately when resuming
             try
             {
-                await _subscriptionSchedulingService.GenerateOrderForSubscriptionAsync(id, authId.Value);
+                await _subscriptionSchedulingService.GenerateOrderForSubscriptionAsync(id, userId.Value, authId.Value);
                 _logger.LogInformation($"✅ Generated order for resumed subscription #{id}");
             }
             catch (Exception ex)
@@ -280,7 +280,7 @@ namespace Sovva.WebAPI.Controllers
             // ✅ NEW: Cancel tomorrow's order when pausing
             try
             {
-                await _subscriptionSchedulingService.CancelOrderForSubscriptionAsync(id, authId.Value);
+                await _subscriptionSchedulingService.CancelOrderForSubscriptionAsync(id, userId.Value, authId.Value);
                 _logger.LogInformation($"✅ Cancelled order for paused subscription #{id}");
             }
             catch (Exception ex)

@@ -9,6 +9,7 @@ namespace Sovva.Application.Interfaces
     {
         Task<ScheduledOrder> CreateAsync(ScheduledOrder scheduledOrder);
         Task<List<ScheduledOrder>> GetByAuthIdAndDateAsync(Guid authId, DateTime date);
+        Task<List<ScheduledOrder>> GetByUserIdAndDateAsync(int userId, DateTime date);
         Task<ScheduledOrder?> GetByIdAndAuthIdAsync(int scheduledOrderId, Guid authId);
         Task<ScheduledOrder> UpdateAsync(ScheduledOrder scheduledOrder);
         Task DeleteAsync(int scheduledOrderId);

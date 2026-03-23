@@ -70,23 +70,43 @@ namespace Sovva.Application.Services
         // Returns the currently logged-in user's UserId
         public async Task<int?> GetCurrentUserIdAsync()
         {
-            var authId = GetAuthId();
-            if (string.IsNullOrEmpty(authId))
+            try
+            {
+                var context = _httpContextAccessor.HttpContext;
+                if (context == null) return null;
+
+                // ✅ NEW: Try sovva_user_id claim first (zero DB hit)
+                var sovvaUserIdClaim = context.User.FindFirst("sovva_user_id")?.Value;
+                if (int.TryParse(sovvaUserIdClaim, out var sovvaUserId))
+                {
+                    _logger.LogInformation($"✅ CurrentUserService: UserId from sovva_user_id claim: {sovvaUserId}");
+                    return sovvaUserId;
+                }
+
+                // Fallback: Get authId and lookup user (for backwards compatibility)
+                var authId = GetAuthId();
+                if (string.IsNullOrEmpty(authId))
+                    return null;
+
+                if (!Guid.TryParse(authId, out var authGuid))
+                    return null;
+
+                // Cache authId → UserId mapping for 5 minutes
+                var cacheKey = $"userid_{authId}";
+                if (_cache.TryGetValue(cacheKey, out int cachedUserId))
+                    return cachedUserId;
+
+                var user = await _userRepository.GetUserByAuthIdAsync(authGuid);
+                if (user == null) return null;
+
+                _cache.Set(cacheKey, user.UserId, TimeSpan.FromMinutes(5));
+                return user.UserId;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"❌ CurrentUserService GetCurrentUserIdAsync error: {ex.Message}");
                 return null;
-
-            if (!Guid.TryParse(authId, out var authGuid))
-                return null;
-
-            // ✅ Cache authId → UserId mapping for 5 minutes
-            var cacheKey = $"userid_{authId}";
-            if (_cache.TryGetValue(cacheKey, out int cachedUserId))
-                return cachedUserId;
-
-            var user = await _userRepository.GetUserByAuthIdAsync(authGuid);
-            if (user == null) return null;
-
-            _cache.Set(cacheKey, user.UserId, TimeSpan.FromMinutes(5));
-            return user.UserId;
+            }
         }
 
         // Returns the currently logged-in user's details as UserDto

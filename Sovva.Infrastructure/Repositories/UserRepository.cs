@@ -65,6 +65,16 @@ namespace Sovva.Infrastructure.Repositories
                 .FirstOrDefaultAsync(u => u.AuthMapping != null && u.AuthMapping.AuthId == authId);
         }
 
+        // ✅ NEW METHOD: Batch load users by auth IDs (used in midnight job)
+        public async Task<List<User>> GetByAuthIdsAsync(List<Guid> authIds)
+        {
+            return await _context.Users
+                .AsNoTracking()
+                .Include(u => u.AuthMapping)
+                .Where(u => u.AuthMapping != null && authIds.Contains(u.AuthMapping.AuthId))
+                .ToListAsync();
+        }
+
         // ✅ NEW METHOD: Create user with auth mapping in transaction
         public async Task<User> CreateUserWithAuthMappingAsync(User user, Guid authId)
         {

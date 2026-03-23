@@ -9,8 +9,8 @@ namespace Sovva.Application.Interfaces
     {
         Task GenerateScheduledOrdersFromSubscriptionsAsync();
         
-        Task GenerateOrderForSubscriptionAsync(int subscriptionId, Guid authId);
+        Task GenerateOrderForSubscriptionAsync(int subscriptionId, int userId, Guid authId);
         
-        Task CancelOrderForSubscriptionAsync(int subscriptionId, Guid authId);
+        Task CancelOrderForSubscriptionAsync(int subscriptionId, int userId, Guid authId);
     }
 }

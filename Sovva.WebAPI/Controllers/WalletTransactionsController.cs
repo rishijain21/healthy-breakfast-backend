@@ -1,5 +1,6 @@
 using Sovva.Application.DTOs;
 using Sovva.Application.Interfaces;
+using Sovva.WebAPI.Extensions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
@@ -12,19 +13,13 @@ namespace Sovva.WebAPI.Controllers
     public class WalletTransactionsController : ControllerBase
     {
         private readonly IWalletTransactionService _walletTransactionService;
-        private readonly ICurrentUserService _currentUserService;
-        private readonly IUserService _userService;
         private readonly ILogger<WalletTransactionsController> _logger;
 
         public WalletTransactionsController(
             IWalletTransactionService walletTransactionService,
-            ICurrentUserService currentUserService,
-            IUserService userService,
             ILogger<WalletTransactionsController> logger)
         {
             _walletTransactionService = walletTransactionService;
-            _currentUserService = currentUserService;
-            _userService = userService;
             _logger = logger;
         }
 
@@ -38,29 +33,17 @@ namespace Sovva.WebAPI.Controllers
         {
             try
             {
-                var currentAuthId = GetCurrentAuthId();
-                _logger.LogInformation($"📋 WALLET: Retrieved authId: {currentAuthId}");
-                
-                if (string.IsNullOrEmpty(currentAuthId))
+                // ✅ NEW: Zero DB hit - read userId directly from JWT claim
+                var userId = User.GetSovvaUserId();
+                if (userId is null)
                 {
-                    return Unauthorized("User not authenticated - no valid auth ID found");
-                }
-                
-                if (!Guid.TryParse(currentAuthId, out var validatedAuthId))
-                {
-                    return Unauthorized($"Invalid user identifier format: {currentAuthId}");
+                    return Unauthorized("User not authenticated - no valid user ID in token");
                 }
 
-                var userDto = await _userService.GetUserByAuthIdAsync(validatedAuthId);
-                if (userDto == null)
-                {
-                    return Unauthorized(new { message = "User not found. Please complete registration first." });
-                }
-
-                var balance = await _walletTransactionService.GetWalletBalanceAsync(userDto.UserId);
+                var balance = await _walletTransactionService.GetWalletBalanceAsync(userId.Value);
                 
-                _logger.LogInformation($"✅ WALLET: Balance retrieved: {balance} for user {userDto.UserId}");
-                return Ok(new { balance, userId = userDto.UserId, authId = validatedAuthId });
+                _logger.LogInformation($"✅ WALLET: Balance retrieved: {balance} for user {userId}");
+                return Ok(new { balance, userId });
             }
             catch (Exception ex)
             {
@@ -77,19 +60,14 @@ namespace Sovva.WebAPI.Controllers
         {
             try
             {
-                var currentAuthId = GetCurrentAuthId();
-                if (string.IsNullOrEmpty(currentAuthId) || !Guid.TryParse(currentAuthId, out var authGuid))
+                // ✅ NEW: Zero DB hit - read userId directly from JWT claim
+                var userId = User.GetSovvaUserId();
+                if (userId is null)
                 {
                     return Unauthorized("User not authenticated");
                 }
 
-                var userDto = await _userService.GetUserByAuthIdAsync(authGuid);
-                if (userDto == null)
-                {
-                    return Unauthorized(new { message = "User not found. Please complete registration first." });
-                }
-
-                var transactions = await _walletTransactionService.GetUserTransactionsAsync(userDto.UserId);
+                var transactions = await _walletTransactionService.GetUserTransactionsAsync(userId.Value);
                 return Ok(transactions);
             }
             catch (Exception ex)
@@ -107,16 +85,11 @@ namespace Sovva.WebAPI.Controllers
         {
             try
             {
-                var currentAuthId = GetCurrentAuthId();
-                if (string.IsNullOrEmpty(currentAuthId) || !Guid.TryParse(currentAuthId, out var authGuid))
+                // ✅ NEW: Zero DB hit - read userId directly from JWT claim
+                var userId = User.GetSovvaUserId();
+                if (userId is null)
                 {
                     return Unauthorized("User not authenticated");
-                }
-
-                var userDto = await _userService.GetUserByAuthIdAsync(authGuid);
-                if (userDto == null)
-                {
-                    return Unauthorized(new { message = "User not found. Please complete registration first." });
                 }
 
                 if (topUpDto.Amount <= 0)
@@ -124,7 +97,7 @@ namespace Sovva.WebAPI.Controllers
                     return BadRequest(new { message = "Amount must be greater than 0" });
                 }
 
-                var transaction = await _walletTransactionService.TopUpWalletAsync(userDto.UserId, topUpDto);
+                var transaction = await _walletTransactionService.TopUpWalletAsync(userId.Value, topUpDto);
                 return Ok(transaction);
             }
             catch (Exception ex)
@@ -142,20 +115,16 @@ namespace Sovva.WebAPI.Controllers
         {
             try
             {
-                var currentAuthId = GetCurrentAuthId();
-                if (string.IsNullOrEmpty(currentAuthId) || !Guid.TryParse(currentAuthId, out var authGuid))
+                // ✅ NEW: Zero DB hit - read userId directly from JWT claim
+                var userId = User.GetSovvaUserId();
+                if (userId is null)
                 {
                     return Unauthorized("User not authenticated");
                 }
 
-                var userDto = await _userService.GetUserByAuthIdAsync(authGuid);
-                if (userDto == null)
-                {
-                    return Unauthorized(new { message = "User not found. Please complete registration first." });
-                }
-
-                var hasSufficientBalance = await _walletTransactionService.HasSufficientBalanceAsync(userDto.UserId, amount);
-                var currentBalance = await _walletTransactionService.GetUserBalanceAsync(userDto.UserId);
+                // ✅ FIX 9: Use single GetUserBalanceAsync call instead of double aggregate
+                var currentBalance = await _walletTransactionService.GetUserBalanceAsync(userId.Value);
+                var hasSufficientBalance = currentBalance >= amount;
 
                 return Ok(new
                 {
@@ -254,49 +223,6 @@ namespace Sovva.WebAPI.Controllers
             var transaction = await _walletTransactionService.GetTransactionByIdAsync(id);
             if (transaction == null) return NotFound();
             return Ok(transaction);
-        }
-
-        // ✅ HELPER: Unified method to get auth ID from multiple sources
-        private string? GetCurrentAuthId()
-        {
-            try
-            {
-                // ✅ METHOD 1: Try CurrentUserService (uses middleware)
-                var authIdFromService = _currentUserService.GetAuthId();
-                if (!string.IsNullOrEmpty(authIdFromService))
-                {
-                    _logger.LogInformation($"✅ WALLET: AuthId from CurrentUserService: {authIdFromService}");
-                    return authIdFromService;
-                }
-
-                // ✅ METHOD 2: Try JWT claims directly (fallback)
-                var authIdFromClaims = User.FindFirst("sub")?.Value 
-                                    ?? User.FindFirst("user_id")?.Value 
-                                    ?? User.FindFirst("id")?.Value
-                                    ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-
-                if (!string.IsNullOrEmpty(authIdFromClaims))
-                {
-                    _logger.LogInformation($"✅ WALLET: AuthId from JWT claims: {authIdFromClaims}");
-                    return authIdFromClaims;
-                }
-
-                // ✅ METHOD 3: Try HttpContext items directly
-                var authIdFromContext = HttpContext.Items["auth_id"]?.ToString();
-                if (!string.IsNullOrEmpty(authIdFromContext))
-                {
-                    _logger.LogInformation($"✅ WALLET: AuthId from HttpContext: {authIdFromContext}");
-                    return authIdFromContext;
-                }
-
-                _logger.LogWarning("⚠️ WALLET: No authId found from any source");
-                return null;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"❌ WALLET GetCurrentAuthId error: {ex.Message}");
-                return null;
-            }
         }
     }
 }

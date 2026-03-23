@@ -18,5 +18,6 @@ namespace Sovva.Application.Interfaces
         Task<bool> ExistsAsync(int id);
         Task<bool> IsUserAddressAsync(int addressId, int userId);
         Task<bool> HasActiveSubscriptionsAsync(int addressId);
+        Task<List<UserAddress>> GetByIdsAsync(List<int> ids);
     }
 }

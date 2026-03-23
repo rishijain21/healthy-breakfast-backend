@@ -43,6 +43,22 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Host.UseSerilog();
 
 // ══════════════════════════════════════════════════
+// RESPONSE COMPRESSION — Improves API performance
+// ══════════════════════════════════════════════════
+builder.Services.AddResponseCompression(options =>
+{
+    options.EnableForHttps = true;
+    options.MimeTypes = new[]
+    {
+        "application/json",
+        "application/xml",
+        "text/plain",
+        "text/css",
+        "application/javascript"
+    };
+});
+
+// ══════════════════════════════════════════════════
 // STRONGLY-TYPED CONFIGURATION
 // ══════════════════════════════════════════════════
 builder.Services.Configure<SupabaseOptions>(
@@ -168,6 +184,7 @@ builder.Services.AddScoped<IUserAddressService, UserAddressService>();
 builder.Services.AddScoped<IScheduledOrderRepository, ScheduledOrderRepository>();
 builder.Services.AddScoped<IScheduledOrderService, ScheduledOrderService>();
 builder.Services.AddScoped<ISubscriptionSchedulingService, SubscriptionSchedulingService>();
+builder.Services.AddScoped<IDashboardService, DashboardService>();
 builder.Services.AddHttpClient<ISupabaseStorageService, SupabaseStorageService>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
@@ -319,7 +336,7 @@ builder.Services.AddAuthentication(options =>
         ClockSkew = TimeSpan.FromMinutes(1),
         ValidateIssuerSigningKey = true,
         NameClaimType = "sub",
-        RoleClaimType = System.Security.Claims.ClaimTypes.Role
+        RoleClaimType = "sovva_role"
     };
 
     options.Events = new JwtBearerEvents
@@ -346,7 +363,15 @@ builder.Services.AddAuthentication(options =>
     };
 });
 
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+{
+    // ✅ Policy-based authorization using sovva_role claim from JWT
+    options.AddPolicy("AdminOnly", policy =>
+        policy.RequireClaim("sovva_role", "Admin"));
+
+    options.AddPolicy("UserOnly", policy =>
+        policy.RequireClaim("sovva_role", "User"));
+});
 
 // ══════════════════════════════════════════════════
 // SWAGGER

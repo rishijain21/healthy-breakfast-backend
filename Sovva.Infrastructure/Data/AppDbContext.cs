@@ -318,6 +318,15 @@ namespace Sovva.Infrastructure.Data
                 }
             );
 
+            // ✅ FIX 8: Add indexes for WalletTransaction
+            modelBuilder.Entity<WalletTransaction>(entity =>
+            {
+                entity.HasIndex(e => e.UserId)
+                    .HasDatabaseName("IX_WalletTransactions_UserId");
+                entity.HasIndex(e => new { e.UserId, e.CreatedAt })
+                    .HasDatabaseName("IX_WalletTransactions_UserId_CreatedAt");
+            });
+
             modelBuilder.Entity<WalletTransaction>().HasData(
                 new WalletTransaction
                 {

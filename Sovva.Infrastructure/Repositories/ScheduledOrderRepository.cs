@@ -57,6 +57,26 @@ namespace Sovva.Infrastructure.Repositories
                 .ToListAsync();
         }
 
+        /// <summary>
+        /// Get scheduled orders by userId (internal database ID) for a specific date
+        /// </summary>
+        public async Task<List<ScheduledOrder>> GetByUserIdAndDateAsync(int userId, DateTime date)
+        {
+            var targetDate = date.Date;
+            var targetDateEnd = targetDate.AddDays(1);
+
+            return await _context.ScheduledOrders
+                .AsNoTracking()
+                .Include(so => so.Ingredients)
+                    .ThenInclude(soi => soi.Ingredient)
+                        .ThenInclude(i => i.IngredientCategory)
+                .Where(so => so.UserId == userId
+                          && so.ScheduledFor >= targetDate
+                          && so.ScheduledFor < targetDateEnd)
+                .OrderBy(so => so.CreatedAt)
+                .ToListAsync();
+        }
+
         public async Task<ScheduledOrder?> GetByIdAndAuthIdAsync(int scheduledOrderId, Guid authId)
         {
             return await _context.ScheduledOrders

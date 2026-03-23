@@ -1,8 +1,10 @@
 using Sovva.Application.DTOs;
 using Sovva.Application.Interfaces;
+using Sovva.WebAPI.Extensions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
+using System.Threading;
 
 namespace Sovva.WebAPI.Controllers
 {
@@ -12,11 +14,13 @@ namespace Sovva.WebAPI.Controllers
     public class UsersController : ControllerBase
     {
         private readonly IUserService _userService;
+        private readonly IDashboardService _dashboardService;
         private readonly ILogger<UsersController> _logger;
 
-        public UsersController(IUserService userService, ILogger<UsersController> logger)
+        public UsersController(IUserService userService, IDashboardService dashboardService, ILogger<UsersController> logger)
         {
             _userService = userService;
+            _dashboardService = dashboardService;
             _logger = logger;
         }
 
@@ -81,6 +85,36 @@ namespace Sovva.WebAPI.Controllers
             }
         }
 
+        // ✅ NEW: Dashboard Summary - aggregates all user data for fast login bootstrap
+        /// <summary>
+        /// Get dashboard summary - runs 5 parallel queries for fast response
+        /// Returns: profile, wallet balance, recent transactions, active subscriptions, tomorrow's orders
+        /// </summary>
+        [HttpGet("dashboard-summary")]
+        [Authorize]
+        [ResponseCache(Duration = 60, VaryByHeader = "Authorization")]
+        public async Task<ActionResult<DashboardSummaryDto>> GetDashboardSummary(CancellationToken ct)
+        {
+            try
+            {
+                var userId = await GetCurrentUserIdAsync(ct);
+                if (userId == null)
+                    return Unauthorized(new { message = "User not authenticated" });
+
+                var summary = await _dashboardService.GetDashboardSummaryAsync(userId.Value, ct);
+                return Ok(summary);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return NotFound(new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error fetching dashboard summary");
+                return StatusCode(500, new { message = "An error occurred while fetching dashboard" });
+            }
+        }
+
         // ✅ NEW: Update current user's profile
         [HttpPut("profile")]
         [Authorize]
@@ -130,21 +164,32 @@ namespace Sovva.WebAPI.Controllers
                 return BadRequest(new { message = $"Invalid role. Must be one of: {string.Join(", ", validRoles)}" });
 
             // Prevent self-demotion
-            var currentUserIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value 
-                                 ?? User.FindFirst("sub")?.Value;
-            
-            if (!string.IsNullOrEmpty(currentUserIdClaim) && Guid.TryParse(currentUserIdClaim, out var currentAuthId))
-            {
-                var currentUser = await _userService.GetUserByAuthIdAsync(currentAuthId);
-                if (currentUser != null && currentUser.UserId == id && dto.Role != "Admin")
-                    return BadRequest(new { message = "You cannot remove your own admin role" });
-            }
+            // ✅ NEW: Zero DB hit - read userId directly from JWT claim
+            var currentUserId = User.GetSovvaUserId();
+            if (currentUserId.HasValue && currentUserId.Value == id && dto.Role != "Admin")
+                return BadRequest(new { message = "You cannot remove your own admin role" });
 
             var result = await _userService.UpdateUserRoleAsync(id, dto.Role);
             if (!result)
                 return NotFound(new { message = "User not found" });
 
             return Ok(new { message = $"User {id} role updated to {dto.Role}" });
+        }
+
+        // Helper to extract user ID from JWT claims (fast path + fallback for old tokens)
+        private async Task<int?> GetCurrentUserIdAsync(CancellationToken ct = default)
+        {
+            // ✅ Fast path — JWT claim, zero DB
+            var claim = User.FindFirst("sovva_user_id")?.Value;
+            if (int.TryParse(claim, out var userId))
+                return userId;
+
+            // Fallback for old tokens (remove after all users re-login once)
+            var authIdStr = User.FindFirst("sub")?.Value
+                         ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (!Guid.TryParse(authIdStr, out var authId)) return null;
+            var user = await _userService.GetUserByAuthIdAsync(authId);
+            return user?.UserId;
         }
     }
 }
