@@ -3,6 +3,7 @@ using Sovva.Application.DTOs;
 using Sovva.Application.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Sovva.WebAPI.Extensions;
 
 namespace Sovva.WebAPI.Controllers
 {
@@ -15,7 +16,6 @@ namespace Sovva.WebAPI.Controllers
         private readonly ISubscriptionSchedulingService _subscriptionSchedulingService;
         private readonly IScheduledOrderService _scheduledOrderService;
         private readonly IScheduledOrderRepository _scheduledOrderRepository;
-        private readonly ICurrentUserService _currentUserService;
         private readonly ILogger<SubscriptionsController> _logger;
 
         public SubscriptionsController(
@@ -23,35 +23,31 @@ namespace Sovva.WebAPI.Controllers
             ISubscriptionSchedulingService subscriptionSchedulingService,
             IScheduledOrderService scheduledOrderService,
             IScheduledOrderRepository scheduledOrderRepository,
-            ICurrentUserService currentUserService,
             ILogger<SubscriptionsController> logger)
         {
             _subscriptionService = subscriptionService;
             _subscriptionSchedulingService = subscriptionSchedulingService;
             _scheduledOrderService = scheduledOrderService;
             _scheduledOrderRepository = scheduledOrderRepository;
-            _currentUserService = currentUserService;
             _logger = logger;
         }
 
-        // Helper to get current userId from ICurrentUserService
-        private async Task<int?> GetCurrentUserIdAsync()
-        {
-            return await _currentUserService.GetCurrentUserIdAsync();
-        }
+        // ✅ NEW: Zero DB hit — reads sovva_user_id JWT claim
+        private int? GetCurrentUserId()
+            => User.GetSovvaUserId();
 
-        private Task<Guid?> GetCurrentAuthIdAsync()
+        // ✅ NEW: Zero DB hit — reads sub/nameidentifier claim
+        private Guid? GetCurrentAuthId()
         {
-            var authId = _currentUserService.GetAuthId();
-            if (string.IsNullOrEmpty(authId) || !Guid.TryParse(authId, out var guid))
-                return Task.FromResult<Guid?>(null);
-            return Task.FromResult<Guid?>(guid);
+            var claim = User.FindFirst("sub")?.Value
+                     ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            return Guid.TryParse(claim, out var guid) ? guid : null;
         }
 
         [HttpGet]
         public async Task<ActionResult<IEnumerable<SubscriptionDto>>> GetAllSubscriptions()
         {
-            var userId = await GetCurrentUserIdAsync();
+            var userId = GetCurrentUserId();
             if (userId == null)
                 return Unauthorized();
 
@@ -62,7 +58,7 @@ namespace Sovva.WebAPI.Controllers
         [HttpGet("{id}")]
         public async Task<ActionResult<SubscriptionDto>> GetSubscription(int id)
         {
-            var userId = await GetCurrentUserIdAsync();
+            var userId = GetCurrentUserId();
             if (userId == null)
                 return Unauthorized();
 
@@ -79,7 +75,7 @@ namespace Sovva.WebAPI.Controllers
         [HttpGet("user/me")]
         public async Task<ActionResult<IEnumerable<SubscriptionDto>>> GetMySubscriptions()
         {
-            var userId = await GetCurrentUserIdAsync();
+            var userId = GetCurrentUserId();
             if (userId == null)
                 return Unauthorized();
 
@@ -90,7 +86,7 @@ namespace Sovva.WebAPI.Controllers
         [HttpGet("active")]
         public async Task<ActionResult<IEnumerable<SubscriptionDto>>> GetActiveSubscriptions()
         {
-            var userId = await GetCurrentUserIdAsync();
+            var userId = GetCurrentUserId();
             if (userId == null)
                 return Unauthorized();
 
@@ -106,8 +102,8 @@ namespace Sovva.WebAPI.Controllers
         [HttpPost]
         public async Task<ActionResult<SubscriptionDto>> CreateSubscription(CreateSubscriptionDto createSubscriptionDto)
         {
-            var userId = await GetCurrentUserIdAsync();
-            var authId = await GetCurrentAuthIdAsync();
+            var userId = GetCurrentUserId();
+            var authId = GetCurrentAuthId();
             
             if (userId == null || authId == null)
                 return Unauthorized();
@@ -162,7 +158,7 @@ namespace Sovva.WebAPI.Controllers
         [HttpPut("{id}")]
         public async Task<ActionResult<SubscriptionDto>> UpdateSubscription(int id, UpdateSubscriptionDto updateSubscriptionDto)
         {
-            var userId = await GetCurrentUserIdAsync();
+            var userId = GetCurrentUserId();
             if (userId == null)
                 return Unauthorized();
 
@@ -190,7 +186,7 @@ namespace Sovva.WebAPI.Controllers
         [HttpDelete("{id}")]
         public async Task<IActionResult> DeleteSubscription(int id)
         {
-            var userId = await GetCurrentUserIdAsync();
+            var userId = GetCurrentUserId();
             if (userId == null)
                 return Unauthorized();
 
@@ -228,8 +224,8 @@ namespace Sovva.WebAPI.Controllers
         [HttpPatch("{id}/activate")]
         public async Task<IActionResult> ActivateSubscription(int id)
         {
-            var userId = await GetCurrentUserIdAsync();
-            var authId = await GetCurrentAuthIdAsync();
+            var userId = GetCurrentUserId();
+            var authId = GetCurrentAuthId();
             
             if (userId == null || authId == null)
                 return Unauthorized();
@@ -265,8 +261,8 @@ namespace Sovva.WebAPI.Controllers
         [HttpPatch("{id}/deactivate")]
         public async Task<IActionResult> DeactivateSubscription(int id)
         {
-            var userId = await GetCurrentUserIdAsync();
-            var authId = await GetCurrentAuthIdAsync();
+            var userId = GetCurrentUserId();
+            var authId = GetCurrentAuthId();
             
             if (userId == null || authId == null)
                 return Unauthorized();

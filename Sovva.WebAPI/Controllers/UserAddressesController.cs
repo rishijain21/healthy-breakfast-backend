@@ -1,5 +1,6 @@
 using Sovva.Application.DTOs;
 using Sovva.Application.Interfaces;
+using Sovva.WebAPI.Extensions;          // ✅ ADD
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -11,87 +12,65 @@ namespace Sovva.WebAPI.Controllers
     public class UserAddressesController : ControllerBase
     {
         private readonly IUserAddressService _addressService;
-        private readonly ICurrentUserService _currentUserService;
+        // ✅ REMOVED: ICurrentUserService
 
-        public UserAddressesController(
-            IUserAddressService addressService,
-            ICurrentUserService currentUserService)
+        public UserAddressesController(IUserAddressService addressService)
         {
             _addressService = addressService;
-            _currentUserService = currentUserService;
         }
 
-        /// <summary>
-        /// Get all addresses for current user
-        /// </summary>
         [HttpGet]
         public async Task<ActionResult<IEnumerable<UserAddressDetailDto>>> GetMyAddresses()
         {
-            var userIdResult = await _currentUserService.GetCurrentUserIdAsync();
-            if (!userIdResult.HasValue)
+            var userId = User.GetSovvaUserId();           // ✅ JWT claim
+            if (userId is null)
                 return Unauthorized(new { message = "User not authenticated" });
 
-            var userId = userIdResult.Value;
-            var addresses = await _addressService.GetActiveUserAddressesAsync(userId);
+            var addresses = await _addressService.GetActiveUserAddressesAsync(userId.Value);
             return Ok(addresses);
         }
 
-        /// <summary>
-        /// Get specific address by ID
-        /// </summary>
         [HttpGet("{id}")]
         public async Task<ActionResult<UserAddressDetailDto>> GetById(int id)
         {
-            var userIdResult = await _currentUserService.GetCurrentUserIdAsync();
-            if (!userIdResult.HasValue)
+            var userId = User.GetSovvaUserId();           // ✅ JWT claim
+            if (userId is null)
                 return Unauthorized(new { message = "User not authenticated" });
 
-            var userId = userIdResult.Value;
             var address = await _addressService.GetByIdAsync(id);
-            
             if (address == null)
                 return NotFound(new { message = "Address not found" });
 
-            if (address.UserId != userId)
+            if (address.UserId != userId.Value)
                 return Forbid();
 
             return Ok(address);
         }
 
-        /// <summary>
-        /// Get primary address for current user
-        /// </summary>
         [HttpGet("primary")]
         public async Task<ActionResult<UserAddressDetailDto>> GetPrimaryAddress()
         {
-            var userIdResult = await _currentUserService.GetCurrentUserIdAsync();
-            if (!userIdResult.HasValue)
+            var userId = User.GetSovvaUserId();           // ✅ JWT claim
+            if (userId is null)
                 return Unauthorized(new { message = "User not authenticated" });
 
-            var userId = userIdResult.Value;
-            var address = await _addressService.GetPrimaryAddressAsync(userId);
-            
+            var address = await _addressService.GetPrimaryAddressAsync(userId.Value);
             if (address == null)
                 return NotFound(new { message = "No primary address found. Please add an address." });
 
             return Ok(address);
         }
 
-        /// <summary>
-        /// Create new address
-        /// </summary>
         [HttpPost]
-        public async Task<ActionResult<UserAddressDetailDto>> Create(
-            [FromBody] CreateUserAddressDto dto)
+        public async Task<ActionResult<UserAddressDetailDto>> Create([FromBody] CreateUserAddressDto dto)
         {
             try
             {
-                var userIdResult = await _currentUserService.GetCurrentUserIdAsync();
-                if (!userIdResult.HasValue)
+                var userId = User.GetSovvaUserId();       // ✅ JWT claim
+                if (userId is null)
                     return Unauthorized(new { message = "User not authenticated" });
 
-                var userId = userIdResult.Value;
-                var created = await _addressService.CreateAsync(userId, dto);
+                var created = await _addressService.CreateAsync(userId.Value, dto);
                 return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
             }
             catch (InvalidOperationException ex)
@@ -100,22 +79,16 @@ namespace Sovva.WebAPI.Controllers
             }
         }
 
-        /// <summary>
-        /// Update existing address
-        /// </summary>
         [HttpPut("{id}")]
-        public async Task<ActionResult<UserAddressDetailDto>> Update(
-            int id, 
-            [FromBody] UpdateUserAddressDto dto)
+        public async Task<ActionResult<UserAddressDetailDto>> Update(int id, [FromBody] UpdateUserAddressDto dto)
         {
             try
             {
-                var userIdResult = await _currentUserService.GetCurrentUserIdAsync();
-                if (!userIdResult.HasValue)
+                var userId = User.GetSovvaUserId();       // ✅ JWT claim
+                if (userId is null)
                     return Unauthorized(new { message = "User not authenticated" });
 
-                var userId = userIdResult.Value;
-                var updated = await _addressService.UpdateAsync(userId, id, dto);
+                var updated = await _addressService.UpdateAsync(userId.Value, id, dto);
                 return Ok(updated);
             }
             catch (KeyNotFoundException ex)
@@ -128,25 +101,19 @@ namespace Sovva.WebAPI.Controllers
             }
         }
 
-        /// <summary>
-        /// Set address as primary
-        /// </summary>
         [HttpPut("{id}/set-primary")]
         public async Task<ActionResult<UserAddressDetailDto>> SetPrimary(int id)
         {
             try
             {
-                var userIdResult = await _currentUserService.GetCurrentUserIdAsync();
-                if (!userIdResult.HasValue)
+                var userId = User.GetSovvaUserId();       // ✅ JWT claim
+                if (userId is null)
                     return Unauthorized(new { message = "User not authenticated" });
 
-                var userId = userIdResult.Value;
-                var result = await _addressService.SetPrimaryAddressAsync(userId, id);
-                
+                var result = await _addressService.SetPrimaryAddressAsync(userId.Value, id);
                 if (!result)
                     return NotFound(new { message = "Address not found" });
 
-                // Return the full updated address so frontend can sync state
                 var updated = await _addressService.GetByIdAsync(id);
                 return Ok(updated);
             }
@@ -160,21 +127,16 @@ namespace Sovva.WebAPI.Controllers
             }
         }
 
-        /// <summary>
-        /// Delete address
-        /// </summary>
         [HttpDelete("{id}")]
         public async Task<ActionResult> Delete(int id)
         {
             try
             {
-                var userIdResult = await _currentUserService.GetCurrentUserIdAsync();
-                if (!userIdResult.HasValue)
+                var userId = User.GetSovvaUserId();       // ✅ JWT claim
+                if (userId is null)
                     return Unauthorized(new { message = "User not authenticated" });
 
-                var userId = userIdResult.Value;
-                var result = await _addressService.DeleteAsync(userId, id);
-                
+                var result = await _addressService.DeleteAsync(userId.Value, id);
                 if (!result)
                     return NotFound(new { message = "Address not found" });
 
@@ -190,18 +152,14 @@ namespace Sovva.WebAPI.Controllers
             }
         }
 
-        /// <summary>
-        /// Validate address for delivery
-        /// </summary>
         [HttpGet("{id}/validate")]
         public async Task<ActionResult<ValidateAddressDto>> ValidateAddress(int id)
         {
-            var userIdResult = await _currentUserService.GetCurrentUserIdAsync();
-            if (!userIdResult.HasValue)
+            var userId = User.GetSovvaUserId();           // ✅ JWT claim
+            if (userId is null)
                 return Unauthorized(new { message = "User not authenticated" });
 
-            var userId = userIdResult.Value;
-            var result = await _addressService.ValidateAddressChangeAsync(userId, id);
+            var result = await _addressService.ValidateAddressChangeAsync(userId.Value, id);
             return Ok(result);
         }
     }
