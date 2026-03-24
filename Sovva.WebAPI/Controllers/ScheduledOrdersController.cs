@@ -361,11 +361,13 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
                         continue;
                     }
 
-                    if (user.WalletBalance < scheduledOrder.TotalPrice)
+                    // ✅ FIX: Check wallet balance against FRESH database value to prevent race condition
+                    var freshUser = await _userRepository.GetByIdAsync(user.UserId);
+                    if (freshUser == null || freshUser.WalletBalance < scheduledOrder.TotalPrice)
                     {
                         _logger.LogWarning(
                             "❌ Insufficient balance for order #{Id}: need ₹{Need}, have ₹{Have}",
-                            scheduledOrder.ScheduledOrderId, scheduledOrder.TotalPrice, user.WalletBalance);
+                            scheduledOrder.ScheduledOrderId, scheduledOrder.TotalPrice, freshUser?.WalletBalance ?? 0);
                         scheduledOrder.OrderStatus = "cancelled";
                         scheduledOrder.CanModify   = false;
                         await _scheduledOrderRepository.UpdateAsync(scheduledOrder);

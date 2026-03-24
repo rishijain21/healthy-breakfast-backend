@@ -136,8 +136,8 @@ builder.Services.AddHangfire(config => config
         options.UseNpgsqlConnection(hangfireConnectionString),
         new PostgreSqlStorageOptions
         {
-            QueuePollInterval = TimeSpan.FromSeconds(15),
-            InvisibilityTimeout = TimeSpan.FromMinutes(5),
+            QueuePollInterval = TimeSpan.FromSeconds(5),
+            InvisibilityTimeout = TimeSpan.FromMinutes(30),
             DistributedLockTimeout = TimeSpan.FromSeconds(30),
             PrepareSchemaIfNecessary = true
         }));
@@ -422,9 +422,6 @@ builder.Services.AddHealthChecks()
 // ══════════════════════════════════════════════════
 var app = builder.Build();
 
-HangfireBasicAuthFilter.SetHttpContextAccessor(
-    app.Services.GetRequiredService<IHttpContextAccessor>());
-
 // Middleware order matters — do not rearrange
 app.UseMiddleware<GlobalExceptionMiddleware>(); // 1. catch all errors
 app.UseCors("AllowFrontend");                  // 2. CORS headers on every response
@@ -563,7 +560,6 @@ public class HangfireBasicAuthFilter : Hangfire.Dashboard.IDashboardAuthorizatio
 {
     private readonly string _username;
     private readonly string _password;
-    private static IHttpContextAccessor? _httpContextAccessor;
 
     public HangfireBasicAuthFilter(string username, string password)
     {
@@ -573,26 +569,34 @@ public class HangfireBasicAuthFilter : Hangfire.Dashboard.IDashboardAuthorizatio
 
     public bool Authorize(Hangfire.Dashboard.DashboardContext context)
     {
-        var httpContext = _httpContextAccessor?.HttpContext;
-        if (httpContext == null) return false;
-
-        var authHeader = httpContext.Request.Headers["Authorization"].ToString();
-        if (string.IsNullOrEmpty(authHeader) ||
-            !authHeader.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
+        // ✅ Cast to AspNetCoreDashboardContext to get HttpContext - works on Render
+        if (context is not Hangfire.Dashboard.AspNetCoreDashboardContext aspNetContext)
+        {
             return false;
+        }
+        
+        var httpContext = aspNetContext.HttpContext;
+        
+        var authHeader = httpContext.Request.Headers["Authorization"].ToString();
+        
+        if (string.IsNullOrEmpty(authHeader) || 
+            !authHeader.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
+        {
+            // ✅ Add WWW-Authenticate header so browser prompts for credentials
+            httpContext.Response.Headers["WWW-Authenticate"] = "Basic realm=\"Hangfire Dashboard\"";
+            httpContext.Response.StatusCode = 401;
+            return false;
+        }
 
         try
         {
             var credentials = Encoding.UTF8.GetString(
                 Convert.FromBase64String(authHeader[6..]));
             var parts = credentials.Split(':', 2);
-            return parts.Length == 2 &&
-                   parts[0] == _username &&
+            return parts.Length == 2 && 
+                   parts[0] == _username && 
                    parts[1] == _password;
         }
         catch { return false; }
     }
-
-    public static void SetHttpContextAccessor(IHttpContextAccessor accessor)
-        => _httpContextAccessor = accessor;
 }

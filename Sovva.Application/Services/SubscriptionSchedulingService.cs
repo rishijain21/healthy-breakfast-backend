@@ -14,6 +14,7 @@ namespace Sovva.Application.Services
     {
         private readonly ISubscriptionRepository _subscriptionRepo;
         private readonly IScheduledOrderService _scheduledOrderService;
+        private readonly IScheduledOrderRepository _scheduledOrderRepo; // ✅ NEW: For duplicate check
         private readonly IUserMealRepository _userMealRepo;
         private readonly IUserRepository _userRepo;
         private readonly IUserMealIngredientRepository _userMealIngredientRepo;
@@ -23,6 +24,7 @@ namespace Sovva.Application.Services
         public SubscriptionSchedulingService(
             ISubscriptionRepository subscriptionRepo,
             IScheduledOrderService scheduledOrderService,
+            IScheduledOrderRepository scheduledOrderRepo, // ✅ NEW
             IUserMealRepository userMealRepo,
             IUserRepository userRepo,
             IUserMealIngredientRepository userMealIngredientRepo,
@@ -31,6 +33,7 @@ namespace Sovva.Application.Services
         {
             _subscriptionRepo = subscriptionRepo;
             _scheduledOrderService = scheduledOrderService;
+            _scheduledOrderRepo = scheduledOrderRepo;
             _userMealRepo = userMealRepo;
             _userRepo = userRepo;
             _userMealIngredientRepo = userMealIngredientRepo;
@@ -89,6 +92,18 @@ namespace Sovva.Application.Services
                     _logger.LogInformation(
                         $"🔄 Processing subscription #{subscription.SubscriptionId} " +
                         $"(Frequency: {subscription.Frequency}, Quantity: {quantity})");
+
+                    // ✅ NEW: Check if order already exists for this subscription on tomorrow (prevent duplicates on retry)
+                    var existingOrder = await _scheduledOrderRepo.GetBySubscriptionIdAndDateAsync(
+                        subscription.SubscriptionId, tomorrow);
+                    if (existingOrder != null)
+                    {
+                        _logger.LogInformation(
+                            "⏭️ Order already exists for subscription #{SubscriptionId} on {Date}, skipping (prevented duplicate)",
+                            subscription.SubscriptionId, tomorrow);
+                        skippedCount++;
+                        continue;
+                    }
 
                     // Get UserMeal details
                     var userMeal = await _userMealRepo.GetByIdAsync(subscription.UserMealId);

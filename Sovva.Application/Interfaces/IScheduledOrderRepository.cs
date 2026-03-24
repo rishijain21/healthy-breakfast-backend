@@ -24,5 +24,11 @@ namespace Sovva.Application.Interfaces
         
         Task<bool> HasScheduledOrdersForDateAsync(Guid authId, DateTime date);
         Task<List<ScheduledOrder>> GetBySubscriptionIdAsync(int subscriptionId);
+        
+        /// <summary>
+        /// ✅ NEW: Check if a scheduled order already exists for a subscription on a specific date
+        /// Used to prevent duplicate order generation on job retry
+        /// </summary>
+        Task<ScheduledOrder?> GetBySubscriptionIdAndDateAsync(int subscriptionId, DateOnly date);
     }
 }

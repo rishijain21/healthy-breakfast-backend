@@ -171,6 +171,24 @@ namespace Sovva.Infrastructure.Repositories
                 .ToListAsync();
         }
 
+        /// <summary>
+        /// ✅ NEW: Check if a scheduled order already exists for a subscription on a specific date
+        /// Used to prevent duplicate order generation on job retry
+        /// </summary>
+        public async Task<ScheduledOrder?> GetBySubscriptionIdAndDateAsync(int subscriptionId, DateOnly date)
+        {
+            // Convert DateOnly to DateTime for comparison with ScheduledFor column
+            var targetDate = date.ToDateTime(TimeOnly.MinValue);
+            var targetDateEnd = targetDate.AddDays(1);
+
+            return await _context.ScheduledOrders
+                .AsNoTracking()
+                .FirstOrDefaultAsync(so => 
+                    so.SubscriptionId == subscriptionId &&
+                    so.ScheduledFor >= targetDate &&
+                    so.ScheduledFor < targetDateEnd);
+        }
+
         // ─────────────────────────────────────────────────────────────────────
         // UPDATE
         //

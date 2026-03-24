@@ -83,6 +83,22 @@ namespace Sovva.Infrastructure.Repositories
             return subscription;
         }
 
+        /// <summary>
+        /// ✅ NEW: Batch update multiple subscriptions in a single transaction
+        /// </summary>
+        public async Task UpdateBatchAsync(IEnumerable<Subscription> subscriptions)
+        {
+            var now = DateTime.UtcNow;
+            foreach (var subscription in subscriptions)
+            {
+                subscription.UpdatedAt = now;
+                _context.Subscriptions.Update(subscription);
+            }
+            
+            // Single SaveChanges for all updates - much more efficient
+            await _context.SaveChangesAsync();
+        }
+
         public async Task<bool> DeleteAsync(int subscriptionId)
         {
             var subscription = await _context.Subscriptions

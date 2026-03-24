@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Sovva.Infrastructure.Data;
@@ -11,9 +12,11 @@ using Sovva.Infrastructure.Data;
 namespace Sovva.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260324183022_AddScheduledOrderUniqueIndex")]
+    partial class AddScheduledOrderUniqueIndex
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -465,6 +468,8 @@ namespace Sovva.Infrastructure.Migrations
                     b.HasIndex("ScheduledFor")
                         .HasDatabaseName("IX_ScheduledOrders_ScheduledFor");
 
+                    b.HasIndex("SubscriptionId");
+
                     b.HasIndex("UserId");
 
                     b.HasIndex("AuthId", "ScheduledFor")
@@ -472,11 +477,6 @@ namespace Sovva.Infrastructure.Migrations
 
                     b.HasIndex("ScheduledFor", "OrderStatus")
                         .HasDatabaseName("IX_ScheduledOrders_ScheduledFor_OrderStatus");
-
-                    b.HasIndex("SubscriptionId", "ScheduledFor")
-                        .IsUnique()
-                        .HasDatabaseName("IX_ScheduledOrders_SubscriptionId_ScheduledFor_Unique")
-                        .HasFilter("\"SubscriptionId\" IS NOT NULL");
 
                     b.ToTable("ScheduledOrders");
                 });

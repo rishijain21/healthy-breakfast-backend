@@ -462,6 +462,19 @@ namespace Sovva.Application.Services
 
         public async Task<bool> DeleteSubscriptionAsync(int subscriptionId)
         {
+            // ✅ FIX: Only delete non-processed ScheduledOrders to prevent FK break
+            // Processed orders have IsProcessedToOrder = true and are linked to actual Orders
+            var scheduledOrders = await _scheduledOrderRepository.GetBySubscriptionIdAsync(subscriptionId);
+            
+            var pendingOrders = scheduledOrders.Where(so => !so.IsProcessedToOrder).ToList();
+            _logger.LogInformation("Deleting {PendingCount} pending ScheduledOrders (keeping {ProcessedCount} processed)",
+                pendingOrders.Count, scheduledOrders.Count - pendingOrders.Count);
+            
+            foreach (var order in pendingOrders)
+            {
+                await _scheduledOrderRepository.DeleteAsync(order.ScheduledOrderId);
+            }
+            
             return await _subscriptionRepository.DeleteAsync(subscriptionId);
         }
 
@@ -470,6 +483,13 @@ namespace Sovva.Application.Services
             var subscription = await _subscriptionRepository.GetByIdAsync(subscriptionId);
             if (subscription == null)
                 return false;
+
+            // ✅ FIX: Idempotency guard - prevent double activation
+            if (subscription.Active)
+            {
+                _logger.LogInformation("Subscription #{SubscriptionId} is already active - no action needed", subscriptionId);
+                return true;
+            }
 
             subscription.Active = true;
             await _subscriptionRepository.UpdateAsync(subscription);
@@ -500,6 +520,8 @@ namespace Sovva.Application.Services
             _logger.LogInformation("=== Subscription date sync started - UTC: {UtcTime}, IST: {IstTime}, Today: {Today}",
                 DateTime.UtcNow, istNow, today);
             
+            // ✅ NEW: Collect updates in memory, then batch update
+            var subscriptionsToUpdate = new List<Subscription>();
             int updatedCount = 0;
             int skippedCount = 0;
             
@@ -514,7 +536,7 @@ namespace Sovva.Application.Services
                 if (subscription.NextScheduledDate != newNextDate)
                 {
                     subscription.NextScheduledDate = newNextDate;
-                    await _subscriptionRepository.UpdateAsync(subscription);
+                    subscriptionsToUpdate.Add(subscription);
                     _logger.LogInformation("Subscription #{SubscriptionId} next delivery date updated to {NewDate}", subscription.SubscriptionId, newNextDate);
                     updatedCount++;
                 }
@@ -523,6 +545,13 @@ namespace Sovva.Application.Services
                     _logger.LogInformation("Subscription #{SubscriptionId} next delivery date already correct ({Date})", subscription.SubscriptionId, subscription.NextScheduledDate);
                     skippedCount++;
                 }
+            }
+            
+            // ✅ NEW: Batch update all changed subscriptions in one DB call
+            if (subscriptionsToUpdate.Count > 0)
+            {
+                await _subscriptionRepository.UpdateBatchAsync(subscriptionsToUpdate);
+                _logger.LogInformation("Batch updated {Count} subscriptions in single DB call", subscriptionsToUpdate.Count);
             }
             
             _logger.LogInformation("=== Subscription sync complete - Updated: {UpdatedCount}, Skipped: {SkippedCount}", updatedCount, skippedCount);

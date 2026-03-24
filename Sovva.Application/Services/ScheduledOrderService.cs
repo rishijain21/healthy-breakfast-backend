@@ -568,12 +568,14 @@ namespace Sovva.Application.Services
                         continue;
                     }
 
-                    // ✅ Check wallet balance
-                    if (user.WalletBalance < scheduledOrder.TotalPrice)
+                    // ✅ FIX: Check wallet balance against FRESH database value to prevent race condition
+                    // If we use the pre-loaded user dict, all 7 orders could pass with ₹100 wallet (14.29 each)
+                    var freshUser = await _userRepository.GetByIdAsync(user.UserId);
+                    if (freshUser == null || freshUser.WalletBalance < scheduledOrder.TotalPrice)
                     {
                         _logger.LogWarning(
                             $"❌ Insufficient balance for order #{scheduledOrder.ScheduledOrderId}. " +
-                            $"Required: ₹{scheduledOrder.TotalPrice}, Available: ₹{user.WalletBalance}");
+                            $"Required: ₹{scheduledOrder.TotalPrice}, Available: ₹{freshUser?.WalletBalance ?? 0}");
                         
                         scheduledOrder.OrderStatus = "cancelled";
                         scheduledOrder.CanModify = false;

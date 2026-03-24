@@ -136,6 +136,13 @@ namespace Sovva.Infrastructure.Data
                 entity.HasIndex(e => new { e.ScheduledFor, e.OrderStatus })
                     .HasDatabaseName("IX_ScheduledOrders_ScheduledFor_OrderStatus");
                 
+                // ✅ PREVENT DUPLICATES: Unique index on (SubscriptionId, ScheduledFor) 
+                // Only for orders linked to subscriptions - allows null SubscriptionId for regular orders
+                entity.HasIndex(e => new { e.SubscriptionId, e.ScheduledFor })
+                    .HasDatabaseName("IX_ScheduledOrders_SubscriptionId_ScheduledFor_Unique")
+                    .IsUnique()
+                    .HasFilter("\"SubscriptionId\" IS NOT NULL");
+                
                 entity.HasOne(e => e.User)
                     .WithMany()
                     .HasForeignKey(e => e.UserId)
