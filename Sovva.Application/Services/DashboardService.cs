@@ -51,36 +51,24 @@ namespace Sovva.Application.Services
             var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, IstZone);
             var tomorrowIst = istNow.Date.AddDays(1);
 
-            // Run all 5 queries in parallel for maximum performance
-            var profileTask = GetProfileAsync(userId, ct);
-            var walletBalanceTask = _walletTransactionRepository.GetUserBalanceAsync(userId);
-            var transactionsTask = _walletTransactionRepository.GetByUserIdAsync(userId);
-            var subscriptionsTask = GetActiveSubscriptionsAsync(userId, ct);
-            var tomorrowOrdersTask = GetTomorrowOrdersAsync(userId, tomorrowIst, ct);
-
-            await Task.WhenAll(
-                profileTask,
-                walletBalanceTask,
-                transactionsTask,
-                subscriptionsTask,
-                tomorrowOrdersTask
-            );
-
-            var profile = await profileTask;
+            // ✅ FIX: Sequential awaits — EF Core DbContext is NOT thread-safe.
+            // Task.WhenAll with shared DbContext causes "second operation started" error.
+            var profile = await GetProfileAsync(userId, ct);
             if (profile == null)
             {
                 throw new InvalidOperationException("User not found");
             }
 
-            var transactions = await transactionsTask;
-            var subscriptions = await subscriptionsTask;
-            var tomorrowOrders = await tomorrowOrdersTask;
+            var walletBalance = await _walletTransactionRepository.GetUserBalanceAsync(userId);
+            var transactions = await _walletTransactionRepository.GetByUserIdAsync(userId);
+            var subscriptions = await GetActiveSubscriptionsAsync(userId, ct);
+            var tomorrowOrders = await GetTomorrowOrdersAsync(userId, tomorrowIst, ct);
 
             _logger.LogInformation(
                 "✅ Dashboard ready: profile={ProfileFound}, balance={Balance}, " +
                 "transactions={TxCount}, subscriptions={SubCount}, tomorrowOrders={OrderCount}",
                 profile != null,
-                await walletBalanceTask,
+                walletBalance,
                 transactions.Count(),
                 subscriptions.Count(),
                 tomorrowOrders.Count
@@ -89,7 +77,7 @@ namespace Sovva.Application.Services
             return new DashboardSummaryDto
             {
                 Profile = profile,
-                WalletBalance = await walletBalanceTask,
+                WalletBalance = walletBalance,
                 RecentTransactions = transactions
                     .OrderByDescending(t => t.CreatedAt)
                     .Take(20)
