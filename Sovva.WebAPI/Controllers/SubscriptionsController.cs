@@ -190,32 +190,17 @@ namespace Sovva.WebAPI.Controllers
             if (userId == null)
                 return Unauthorized();
 
-                // ✅ Delete associated scheduled orders first (non-fatal if fails)
-                try
-                {
-                    var orders = await _scheduledOrderRepository.GetBySubscriptionIdAsync(id);
-                    foreach (var order in orders)
-                    {
-                        await _scheduledOrderRepository.DeleteAsync(order.ScheduledOrderId);
-                        _logger.LogInformation($"✅ Deleted order #{order.ScheduledOrderId}");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, $"⚠️ Failed to delete orders for subscription #{id}");
-                    // ✅ Non-fatal — continue with subscription deletion
-                }
+            // ✅ Delegate to service - it handles scheduled orders properly
+            // (keeps processed orders, deletes pending ones)
+            var result = await _subscriptionService.DeleteSubscriptionAsync(id);
+            if (!result)
+            {
+                _logger.LogWarning($"⚠️ Subscription #{id} not found during delete");
+                return NotFound();
+            }
 
-                // ✅ Delete the subscription
-                var result = await _subscriptionService.DeleteSubscriptionAsync(id);
-                if (!result)
-                {
-                    _logger.LogWarning($"⚠️ Subscription #{id} not found during delete");
-                    return NotFound();
-                }
-
-                _logger.LogInformation($"✅ Subscription #{id} deleted successfully");
-                return NoContent();
+            _logger.LogInformation($"✅ Subscription #{id} deleted successfully");
+            return NoContent();
         }
 
         /// <summary>

@@ -503,21 +503,30 @@ try
         s => s.GenerateScheduledOrdersFromSubscriptionsAsync(),
         "1 0 * * *",
         new RecurringJobOptions
-            { TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata") });
+        {
+            TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata"),
+            MisfireHandling = MisfireHandlingMode.Ignorable
+        });
 
     jobs.AddOrUpdate<IScheduledOrderService>(
         "midnight-order-confirmation",
         s => s.ConfirmAllScheduledOrdersAsync(),
         "59 23 * * *",
         new RecurringJobOptions
-            { TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata") });
+        {
+            TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata"),
+            MisfireHandling = MisfireHandlingMode.Ignorable
+        });
 
     jobs.AddOrUpdate<ISubscriptionService>(
         "sync-subscription-dates",
         s => s.UpdateNextScheduledDatesAsync(),
         "55 23 * * *",
         new RecurringJobOptions
-            { TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata") });
+        {
+            TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata"),
+            MisfireHandling = MisfireHandlingMode.Ignorable
+        });
 
     logger.LogInformation("✅ Hangfire jobs scheduled successfully");
 }

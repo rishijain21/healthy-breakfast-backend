@@ -13,6 +13,13 @@ public class GlobalExceptionMiddleware
 
     public async Task InvokeAsync(HttpContext context)
     {
+        // ✅ Bypass for Hangfire — it manages its own auth/response pipeline
+        if (context.Request.Path.StartsWithSegments("/hangfire"))
+        {
+            await _next(context);
+            return;
+        }
+
         try
         {
             await _next(context);

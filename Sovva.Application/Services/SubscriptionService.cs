@@ -502,6 +502,13 @@ namespace Sovva.Application.Services
             if (subscription == null)
                 return false;
 
+            // ✅ FIX: Idempotency guard - prevent double deactivation
+            if (!subscription.Active)
+            {
+                _logger.LogInformation("Subscription #{SubscriptionId} is already inactive - no action needed", subscriptionId);
+                return true;
+            }
+
             subscription.Active = false;
             await _subscriptionRepository.UpdateAsync(subscription);
             return true;
