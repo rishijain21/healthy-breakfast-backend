@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Sovva.Application.Interfaces;
 using Sovva.Application.DTOs;
+using Sovva.Application.Helpers;
 using Sovva.Domain.Enums;
 
 namespace Sovva.Application.Services
@@ -48,9 +49,8 @@ namespace Sovva.Application.Services
         /// </summary>
         public async Task GenerateScheduledOrdersFromSubscriptionsAsync()
         {
-            var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
-            var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
-            var today = DateOnly.FromDateTime(istNow);
+            var istNow = TimeZoneHelper.NowIST();
+            var today = TimeZoneHelper.TodayIST();
             var tomorrow = today.AddDays(1);
             
             _logger.LogInformation($"🥛 [MILKBASKET SUBSCRIPTION JOB] Starting at {istNow:yyyy-MM-dd HH:mm:ss} IST");
@@ -59,6 +59,24 @@ namespace Sovva.Application.Services
             var allSubscriptions = await _subscriptionRepo.GetActiveSubscriptionsAsync();
             
             _logger.LogInformation($"📋 Found {allSubscriptions.Count()} total active subscriptions");
+
+            // ── BATCH LOAD — 5 queries total regardless of subscription count ──
+            var userMealIds = allSubscriptions.Select(s => s.UserMealId).Distinct().ToList();
+            var userIds     = allSubscriptions.Select(s => s.UserId).Distinct().ToList();
+
+            var userMealsMap   = (await _userMealRepo.GetByIdsAsync(userMealIds))
+                                 .ToDictionary(m => m.UserMealId);
+
+            var ingredientsMap = (await _userMealIngredientRepo.GetByUserMealIdsAsync(userMealIds))
+                                 .GroupBy(i => i.UserMealId)
+                                 .ToDictionary(g => g.Key, g => g.ToList());
+
+            var usersMap       = (await _userRepo.GetByIdsWithAuthMappingAsync(userIds))
+                                 .ToDictionary(u => u.UserId);
+
+            var addressesMap   = (await _userAddressRepo.GetPrimaryAddressesByUserIdsAsync(userIds))
+                                 .ToDictionary(a => a.UserId);
+            // ─────────────────────────────────────────────────────────────────────
 
             int generatedCount = 0;
             int skippedCount = 0;
@@ -105,27 +123,26 @@ namespace Sovva.Application.Services
                         continue;
                     }
 
-                    // Get UserMeal details
-                    var userMeal = await _userMealRepo.GetByIdAsync(subscription.UserMealId);
-                    if (userMeal == null)
+                    // Get UserMeal details (from batch-loaded map)
+                    if (!userMealsMap.TryGetValue(subscription.UserMealId, out var userMeal))
                     {
                         _logger.LogWarning($"❌ UserMeal {subscription.UserMealId} not found for subscription {subscription.SubscriptionId}");
                         failedCount++;
                         continue;
                     }
 
-                    // Get UserMealIngredients
-                    var userMealIngredients = await _userMealIngredientRepo.GetByUserMealIdAsync(subscription.UserMealId);
-                    if (userMealIngredients == null || !userMealIngredients.Any())
+                    // Get UserMealIngredients (from batch-loaded map)
+                    if (!ingredientsMap.TryGetValue(subscription.UserMealId, out var userMealIngredients)
+                        || !userMealIngredients.Any())
                     {
                         _logger.LogWarning($"❌ UserMeal {subscription.UserMealId} has no ingredients");
                         failedCount++;
                         continue;
                     }
 
-                    // Get user with auth mapping
-                    var user = await _userRepo.GetByIdAsync(subscription.UserId);
-                    if (user?.AuthMapping?.AuthId == null)
+                    // Get user with auth mapping (from batch-loaded map)
+                    if (!usersMap.TryGetValue(subscription.UserId, out var user)
+                        || user?.AuthMapping?.AuthId == null)
                     {
                         _logger.LogWarning($"❌ User {subscription.UserId} has no AuthId mapping");
                         failedCount++;
@@ -135,11 +152,10 @@ namespace Sovva.Application.Services
                     // ✅ Get delivery address for this subscription
                     int? deliveryAddressId = subscription.DeliveryAddressId;
                     
-                    // If subscription doesn't have address, use primary address
+                    // If subscription doesn't have address, use primary address (from batch-loaded map)
                     if (deliveryAddressId == null)
                     {
-                        var primaryAddress = await _userAddressRepo.GetPrimaryAddressAsync(subscription.UserId);
-                        if (primaryAddress == null)
+                        if (!addressesMap.TryGetValue(subscription.UserId, out var primaryAddress))
                         {
                             _logger.LogWarning($"❌ User {subscription.UserId} has no primary address. Skipping subscription {subscription.SubscriptionId}");
                             failedCount++;
@@ -170,7 +186,7 @@ namespace Sovva.Application.Services
                         SubscriptionId = subscription.SubscriptionId
                     };
 
-                    await _scheduledOrderService.CreateScheduledOrderAsync(user.UserId, user.AuthMapping.AuthId, scheduledOrderDto);
+                    await _scheduledOrderService.CreateScheduledOrderAsync(user.UserId, user.AuthMapping.AuthId, scheduledOrderDto, skipWalletCheck: true);
 
                     // ✅ Update NextScheduledDate
                     subscription.NextScheduledDate = CalculateNextScheduledDate(subscription, tomorrow);
@@ -310,9 +326,8 @@ namespace Sovva.Application.Services
                 return;
             }
 
-            var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
-            var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
-            var today = DateOnly.FromDateTime(istNow);
+            var istNow = TimeZoneHelper.NowIST();
+            var today = TimeZoneHelper.TodayIST();
             var tomorrow = today.AddDays(1);
 
             _logger.LogInformation($"📦 Generating immediate order for subscription #{subscriptionId} (Tomorrow: {tomorrow:yyyy-MM-dd})");
@@ -385,7 +400,7 @@ namespace Sovva.Application.Services
                         SubscriptionId = subscription.SubscriptionId
             };
 
-            await _scheduledOrderService.CreateScheduledOrderAsync(user.UserId, user.AuthMapping.AuthId, scheduledOrderDto);
+            await _scheduledOrderService.CreateScheduledOrderAsync(user.UserId, user.AuthMapping.AuthId, scheduledOrderDto, skipWalletCheck: true);
 
             _logger.LogInformation(
                 $"✅ Generated order for subscription #{subscriptionId} " +
@@ -398,9 +413,7 @@ namespace Sovva.Application.Services
         /// </summary>
         public async Task CancelOrderForSubscriptionAsync(int subscriptionId, int userId, Guid authId)
         {
-            var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
-            var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
-            var tomorrow = istNow.Date.AddDays(1);
+            var tomorrow = TimeZoneHelper.TodayIST().AddDays(1);
 
             _logger.LogInformation($"🗑️ Looking for scheduled orders for subscription #{subscriptionId} on {tomorrow:yyyy-MM-dd}");
 
@@ -408,7 +421,7 @@ namespace Sovva.Application.Services
             var tomorrowOrders = await _scheduledOrderService.GetScheduledOrdersForDateAsync(
                 userId,
                 authId, 
-                DateTime.SpecifyKind(tomorrow, DateTimeKind.Utc)
+                DateTime.SpecifyKind(tomorrow.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc)
             );
 
             // ✅ RELIABLE — use direct SubscriptionId FK link instead of fragile string match
