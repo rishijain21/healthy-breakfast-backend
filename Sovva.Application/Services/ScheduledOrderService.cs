@@ -235,10 +235,10 @@ namespace Sovva.Application.Services
                     throw new InvalidOperationException("Please add a delivery address before duplicating order");
                 }
 
-                if (!primaryAddress.ServiceableLocation.IsActive)
+                if (primaryAddress.ServiceableLocation == null || !primaryAddress.ServiceableLocation.IsActive)
                 {
                     _logger.LogWarning($"❌ Location inactive");
-                    throw new InvalidOperationException($"We don't deliver to {primaryAddress.ServiceableLocation.Area} currently");
+                    throw new InvalidOperationException($"We don't deliver to {primaryAddress.ServiceableLocation?.Area ?? "your location"} currently");
                 }
 
                 // 5. Validate all ingredients still exist

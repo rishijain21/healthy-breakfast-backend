@@ -1,3 +1,6 @@
+using Sovva.Application.Constants;
+using Sovva.Application.DTOs;
+
 namespace Sovva.WebAPI.Middleware;
 
 public class GlobalExceptionMiddleware
@@ -34,23 +37,51 @@ public class GlobalExceptionMiddleware
 
     private static Task HandleExceptionAsync(HttpContext context, Exception ex)
     {
-        var (statusCode, message) = ex switch
+        var (statusCode, code, message) = ex switch
         {
-            KeyNotFoundException     => (StatusCodes.Status404NotFound, ex.Message),
-            InvalidOperationException => (StatusCodes.Status400BadRequest, ex.Message),
-            UnauthorizedAccessException => (StatusCodes.Status403Forbidden, "Forbidden"),
-            ArgumentException        => (StatusCodes.Status400BadRequest, ex.Message),
-            _                        => (StatusCodes.Status500InternalServerError, "An unexpected error occurred")
+            // Not Found errors
+            KeyNotFoundException => 
+                (StatusCodes.Status404NotFound, ErrorCodes.NotFound, ex.Message),
+
+            // Invalid Operation errors - categorize by message content
+            InvalidOperationException operationEx when operationEx.Message.Contains("wallet", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status400BadRequest, ErrorCodes.InsufficientBalance, operationEx.Message),
+
+            InvalidOperationException operationEx when operationEx.Message.Contains("address", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status400BadRequest, ErrorCodes.NoDeliveryAddress, operationEx.Message),
+
+            InvalidOperationException operationEx when operationEx.Message.Contains("subscription", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status400BadRequest, ErrorCodes.SubscriptionNotFound, operationEx.Message),
+
+            InvalidOperationException operationEx when operationEx.Message.Contains("order", StringComparison.OrdinalIgnoreCase) =>
+                (StatusCodes.Status400BadRequest, ErrorCodes.InvalidOperation, operationEx.Message),
+
+            InvalidOperationException => 
+                (StatusCodes.Status400BadRequest, ErrorCodes.InvalidOperation, ex.Message),
+
+            // Unauthorized - access denied
+            UnauthorizedAccessException => 
+                (StatusCodes.Status403Forbidden, ErrorCodes.Forbidden, "Forbidden"),
+
+            // Argument errors
+            ArgumentException => 
+                (StatusCodes.Status400BadRequest, ErrorCodes.InvalidArgument, ex.Message),
+
+            // Default - internal server error
+            _ => (StatusCodes.Status500InternalServerError, ErrorCodes.InternalError, "An unexpected error occurred")
         };
 
         context.Response.ContentType = "application/json";
         context.Response.StatusCode = statusCode;
 
-        var response = new
+        var response = new ApiErrorDto
         {
-            success = false,
-            statusCode,
-            message
+            Success = false,
+            Code = code,
+            Message = message,
+#if DEBUG
+            Detail = ex.Message // Only show details in debug mode
+#endif
         };
 
         return context.Response.WriteAsJsonAsync(response);

@@ -34,7 +34,7 @@ Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Override("Hangfire", Serilog.Events.LogEventLevel.Warning)
     .Enrich.FromLogContext()
     .WriteTo.Console(outputTemplate:
-        "[{Timestamp:HH:mm:ss} {Level:u3}] {SourceContext}: {Message:lj}{NewLine}{Exception}")
+        "[{Timestamp:HH:mm:ss} {Level:u3}] [{CorrelationId}] {SourceContext}: {Message:lj}{NewLine}{Exception}")
     // ✅ REMOVED: .WriteTo.File() - Render filesystem is ephemeral
     .CreateLogger();
 
@@ -407,6 +407,7 @@ var app = builder.Build();
 
 // Middleware order matters — do not rearrange
 app.UseMiddleware<GlobalExceptionMiddleware>(); // 1. catch all errors
+app.UseMiddleware<CorrelationIdMiddleware>();     // 2. add correlation ID for tracing
 app.UseCors("AllowFrontend");                  // 2. CORS headers on every response
 app.UseSerilogRequestLogging();                // 3. request logs
 app.UseResponseCompression();                  // 4. compress
