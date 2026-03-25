@@ -37,3 +37,5 @@ seed_data.sql
 
 # Audit debug files - never commit these
 *.txt
+Sovva.WebAPI/logs/
+Sovva.WebAPI/logs/
