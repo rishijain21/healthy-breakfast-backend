@@ -389,9 +389,9 @@ builder.Services.AddSwaggerGen(c =>
 // ══════════════════════════════════════════════════
 // HEALTH CHECKS — liveness vs readiness separation
 // ══════════════════════════════════════════════════
-// Use DATABASE_SESSION_URL for health checks (persistent connection, no PgBouncer)
+// Health check — URI format (required by NpgSql health check library)
 var healthCheckConnectionString =
-    Environment.GetEnvironmentVariable("DATABASE_SESSION_URL")
+    Environment.GetEnvironmentVariable("DATABASE_SESSION_URL_URI")
     ?? connectionString;
 
 builder.Services.AddHealthChecks()
