@@ -389,9 +389,14 @@ builder.Services.AddSwaggerGen(c =>
 // ══════════════════════════════════════════════════
 // HEALTH CHECKS — liveness vs readiness separation
 // ══════════════════════════════════════════════════
+// Use DATABASE_SESSION_URL for health checks (persistent connection, no PgBouncer)
+var healthCheckConnectionString =
+    Environment.GetEnvironmentVariable("DATABASE_SESSION_URL")
+    ?? connectionString;
+
 builder.Services.AddHealthChecks()
     .AddNpgSql(
-        connectionString,
+        healthCheckConnectionString,
         name: "postgres",
         failureStatus: HealthStatus.Degraded, // degraded ≠ dead — won't kill Render instance
         tags: new[] { "db", "ready" },
