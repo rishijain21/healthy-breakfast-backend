@@ -44,6 +44,12 @@ namespace Sovva.Infrastructure.Repositories
                 .ToListAsync();
         }
 
+        public async Task<List<UserMeal>> GetByIdsAsync(List<int> userMealIds) =>
+            await _context.UserMeals
+                .AsNoTracking()
+                .Where(m => userMealIds.Contains(m.UserMealId))
+                .ToListAsync();
+
         // ✅ NEW: Get UserMeal by UserId and MealId (for auto-find-or-create logic)
         public async Task<UserMeal?> GetByUserIdAndMealIdAsync(int userId, int mealId)
         {

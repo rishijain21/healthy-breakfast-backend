@@ -7,6 +7,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 using System.Linq;
 using System.Threading.Tasks;
 using Sovva.Application.DTOs;
+using Sovva.Application.Helpers;
 using Sovva.Application.Interfaces;
 using Sovva.Domain.Entities;
 using Sovva.Domain.Enums;
@@ -26,9 +27,6 @@ namespace Sovva.Application.Services
         private readonly IUserMealIngredientRepository _userMealIngredientRepository;
         private readonly ILogger<SubscriptionService> _logger;
         private readonly IUserLoader _userLoader;
-
-        // ✅ FIX: Use IST timezone for consistent date calculations
-        private static readonly TimeZoneInfo IstTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
 
         public SubscriptionService(
             ISubscriptionRepository subscriptionRepository,
@@ -297,8 +295,7 @@ namespace Sovva.Application.Services
         // ✅ Helper method to calculate first delivery date
         private DateOnly CalculateFirstDeliveryDate(Subscription subscription)
         {
-            var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, IstTimeZone);
-            var today = DateOnly.FromDateTime(istNow);
+            var today = TimeZoneHelper.TodayIST();
             
             // If subscription starts in the future, use start date
             if (subscription.StartDate > today)
@@ -451,7 +448,7 @@ namespace Sovva.Application.Services
                 }
             }
 
-            var today = GetTodayInIST();
+            var today = TimeZoneHelper.TodayIST();
             subscription.NextScheduledDate = CalculateNextDeliveryDate(subscription, today);
 
             var updatedSubscription = await _subscriptionRepository.UpdateAsync(subscription);
@@ -520,9 +517,9 @@ namespace Sovva.Application.Services
         public async Task UpdateNextScheduledDatesAsync()
         {
             var activeSubscriptions = await _subscriptionRepository.GetActiveSubscriptionsAsync();
-            var today = GetTodayInIST();
+            var today = TimeZoneHelper.TodayIST();
             
-            var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, IstTimeZone);
+            var istNow = TimeZoneHelper.NowIST();
             
             _logger.LogInformation("=== Subscription date sync started - UTC: {UtcTime}, IST: {IstTime}, Today: {Today}",
                 DateTime.UtcNow, istNow, today);
@@ -564,21 +561,14 @@ namespace Sovva.Application.Services
             _logger.LogInformation("=== Subscription sync complete - Updated: {UpdatedCount}, Skipped: {SkippedCount}", updatedCount, skippedCount);
         }
 
-        /// <summary>
-        /// ✅ NEW: Get today's date in IST timezone
-        /// </summary>
-        private static DateOnly GetTodayInIST()
-        {
-            var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, IstTimeZone);
-            return DateOnly.FromDateTime(istNow);
-        }
+
 
         private static DateOnly CalculateInitialNextDeliveryDate(
             DateOnly startDate, 
             SubscriptionFrequency frequency,
             List<WeeklyScheduleDto>? weeklySchedule)
         {
-            var today = GetTodayInIST();
+            var today = TimeZoneHelper.TodayIST();
             
             if (startDate > today)
                 return startDate;
@@ -691,6 +681,44 @@ namespace Sovva.Application.Services
                     .OrderBy(s => s.DayOfWeek)
                     .ToList()
             };
+        }
+
+        /// <summary>
+        /// Runs nightly at 11:50 PM IST via Hangfire.
+        /// Deactivates any subscription whose EndDate has passed.
+        /// Must run before sync-subscription-dates (11:55 PM) and
+        /// midnight-order-confirmation (11:59 PM).
+        /// </summary>
+        public async Task ExpireSubscriptionsAsync()
+        {
+            var today = TimeZoneHelper.TodayIST();
+            var activeSubscriptions = await _subscriptionRepository.GetActiveSubscriptionsAsync();
+
+            var expired = activeSubscriptions
+                .Where(s => s.EndDate < today)
+                .ToList();
+
+            if (!expired.Any())
+            {
+                _logger.LogInformation("Expiry job: 0 subscriptions to expire on {Date}", today);
+                return;
+            }
+
+            foreach (var sub in expired)
+            {
+                sub.Active = false;
+                sub.UpdatedAt = DateTime.UtcNow;
+                _logger.LogInformation(
+                    "Subscription #{Id} (User {UserId}) expired on {EndDate} — deactivating",
+                    sub.SubscriptionId, sub.UserId, sub.EndDate);
+            }
+
+            // Uses the existing UpdateBatchAsync — already wired up
+            await _subscriptionRepository.UpdateBatchAsync(expired);
+
+            _logger.LogInformation(
+                "Expiry job complete — {Count} subscriptions deactivated on {Date}",
+                expired.Count, today);
         }
     }
 }

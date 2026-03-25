@@ -18,5 +18,8 @@ namespace Sovva.Application.Interfaces
         Task UpdateUserAsync(User user);
 
         Task<User> CreateUserWithAuthMappingAsync(User user, Guid authId);
+
+        // ✅ NEW: Batch get users with AuthMapping by user IDs (for generation job optimization)
+        Task<List<User>> GetByIdsWithAuthMappingAsync(List<int> userIds);
     }
 }

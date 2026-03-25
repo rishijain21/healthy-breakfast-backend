@@ -18,5 +18,8 @@ namespace Sovva.Application.Interfaces
         
         // ✅ NEW: Update NextScheduledDate for all active subscriptions
         Task UpdateNextScheduledDatesAsync();
+        
+        // ✅ NEW: Expire subscriptions whose EndDate has passed
+        Task ExpireSubscriptionsAsync();
     }
 }

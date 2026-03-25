@@ -105,5 +105,13 @@ namespace Sovva.Infrastructure.Repositories
                 throw;
             }
         }
+
+        // ✅ NEW: Batch get users with AuthMapping by user IDs (for generation job optimization)
+        public async Task<List<User>> GetByIdsWithAuthMappingAsync(List<int> userIds) =>
+            await _context.Users
+                .AsNoTracking()
+                .Include(u => u.AuthMapping)
+                .Where(u => userIds.Contains(u.UserId))
+                .ToListAsync();
     }
 }

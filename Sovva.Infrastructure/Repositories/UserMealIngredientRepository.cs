@@ -43,5 +43,12 @@ namespace Sovva.Infrastructure.Repositories
                 .Where(umi => umi.UserMealId == userMealId)
                 .ToListAsync();
         }
+
+        // ✅ NEW: Batch get ingredients for multiple UserMeals
+        public async Task<List<UserMealIngredient>> GetByUserMealIdsAsync(List<int> userMealIds) =>
+            await _context.UserMealIngredients
+                .AsNoTracking()
+                .Where(i => userMealIds.Contains(i.UserMealId))
+                .ToListAsync();
     }
 }

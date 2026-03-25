@@ -1,6 +1,7 @@
 // Sovva.WebAPI/Program.cs
 
 using Serilog;
+using Sovva.Application.Helpers;
 using Sovva.Application.Interfaces;
 using Sovva.Application.Services;
 using Sovva.Infrastructure.Data;
@@ -34,29 +35,11 @@ Log.Logger = new LoggerConfiguration()
     .Enrich.FromLogContext()
     .WriteTo.Console(outputTemplate:
         "[{Timestamp:HH:mm:ss} {Level:u3}] {SourceContext}: {Message:lj}{NewLine}{Exception}")
-    .WriteTo.File("logs/app-.log",
-        rollingInterval: RollingInterval.Day,
-        retainedFileCountLimit: 7)
+    // ✅ REMOVED: .WriteTo.File() - Render filesystem is ephemeral
     .CreateLogger();
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Host.UseSerilog();
-
-// ══════════════════════════════════════════════════
-// RESPONSE COMPRESSION — Improves API performance
-// ══════════════════════════════════════════════════
-builder.Services.AddResponseCompression(options =>
-{
-    options.EnableForHttps = true;
-    options.MimeTypes = new[]
-    {
-        "application/json",
-        "application/xml",
-        "text/plain",
-        "text/css",
-        "application/javascript"
-    };
-});
 
 // ══════════════════════════════════════════════════
 // STRONGLY-TYPED CONFIGURATION
@@ -497,6 +480,7 @@ var logger = app.Services.GetRequiredService<ILogger<Program>>();
 try
 {
     var jobs = app.Services.GetRequiredService<IRecurringJobManager>();
+    var istZone = TimeZoneHelper.IST;
 
     jobs.AddOrUpdate<ISubscriptionSchedulingService>(
         "subscription-order-generation",
@@ -504,7 +488,7 @@ try
         "1 0 * * *",
         new RecurringJobOptions
         {
-            TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata"),
+            TimeZone = istZone,
             MisfireHandling = MisfireHandlingMode.Ignorable
         });
 
@@ -514,7 +498,7 @@ try
         "59 23 * * *",
         new RecurringJobOptions
         {
-            TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata"),
+            TimeZone = istZone,
             MisfireHandling = MisfireHandlingMode.Ignorable
         });
 
@@ -524,7 +508,17 @@ try
         "55 23 * * *",
         new RecurringJobOptions
         {
-            TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata"),
+            TimeZone = istZone,
+            MisfireHandling = MisfireHandlingMode.Ignorable
+        });
+
+    jobs.AddOrUpdate<ISubscriptionService>(
+        "expire-subscriptions",
+        s => s.ExpireSubscriptionsAsync(),
+        "50 23 * * *",
+        new RecurringJobOptions
+        {
+            TimeZone = istZone,
             MisfireHandling = MisfireHandlingMode.Ignorable
         });
 

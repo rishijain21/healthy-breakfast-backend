@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Sovva.Application.Interfaces;
+using Sovva.Application.Helpers;
 using Sovva.Application.DTOs;
 
 namespace Sovva.Application.Services
@@ -23,9 +24,8 @@ namespace Sovva.Application.Services
 
         public async Task<List<KitchenOrderDto>> GetOrdersForPreparationAsync()
         {
-            var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
             var utcNow = DateTime.UtcNow;
-            var istNow = TimeZoneInfo.ConvertTimeFromUtc(utcNow, istZone);
+            var istNow = TimeZoneHelper.NowIST();
             
             // ✅ FIXED: Show orders for TODAY (not tomorrow)
             var today = istNow.Date;
@@ -47,8 +47,7 @@ namespace Sovva.Application.Services
 
         public async Task<List<KitchenOrderDto>> GetOrdersForTomorrowAsync()
         {
-            var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
-            var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
+            var istNow = TimeZoneHelper.NowIST();
             
             var tomorrowDate = DateTime.SpecifyKind(istNow.Date.AddDays(1), DateTimeKind.Utc);
 
@@ -92,8 +91,7 @@ namespace Sovva.Application.Services
 
         public async Task<KitchenStatsDto> GetTodayStatsAsync()
         {
-            var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
-            var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
+            var istNow = TimeZoneHelper.NowIST();
             
             var deliveryDate = DateTime.SpecifyKind(istNow.Date, DateTimeKind.Utc);
 
@@ -116,8 +114,7 @@ namespace Sovva.Application.Services
 
         public async Task<KitchenStatsDto> GetTomorrowStatsAsync()
         {
-            var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
-            var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
+            var istNow = TimeZoneHelper.NowIST();
             
             var tomorrowDate = DateTime.SpecifyKind(istNow.Date.AddDays(1), DateTimeKind.Utc);
 

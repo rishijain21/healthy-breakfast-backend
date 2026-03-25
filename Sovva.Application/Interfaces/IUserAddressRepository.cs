@@ -19,5 +19,8 @@ namespace Sovva.Application.Interfaces
         Task<bool> IsUserAddressAsync(int addressId, int userId);
         Task<bool> HasActiveSubscriptionsAsync(int addressId);
         Task<List<UserAddress>> GetByIdsAsync(List<int> ids);
+
+        // ✅ NEW: Batch get primary addresses by user IDs (for generation job optimization)
+        Task<List<UserAddress>> GetPrimaryAddressesByUserIdsAsync(List<int> userIds);
     }
 }

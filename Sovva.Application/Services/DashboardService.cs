@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Sovva.Application.DTOs;
+using Sovva.Application.Helpers;
 using Sovva.Application.Interfaces;
 
 namespace Sovva.Application.Services
@@ -25,7 +26,6 @@ namespace Sovva.Application.Services
         private readonly ILogger<DashboardService> _logger;
         
         private const string ProfileCacheKey = "dashboard:profile";
-        private static readonly TimeZoneInfo IstZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
 
         public DashboardService(
             IUserRepository userRepository,
@@ -48,7 +48,7 @@ namespace Sovva.Application.Services
             _logger.LogInformation("📊 Building dashboard summary for user {UserId}", userId);
 
             // Calculate tomorrow's date in IST
-            var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, IstZone);
+            var istNow = TimeZoneHelper.NowIST();
             var tomorrowIst = istNow.Date.AddDays(1);
 
             // ✅ FIX: Sequential awaits — EF Core DbContext is NOT thread-safe.

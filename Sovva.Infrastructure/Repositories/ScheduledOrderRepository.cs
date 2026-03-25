@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Sovva.Application.Helpers;
 using Sovva.Application.Interfaces;
 using Sovva.Domain.Entities;
 using Sovva.Infrastructure.Data;
@@ -14,8 +15,6 @@ namespace Sovva.Infrastructure.Repositories
     {
         private readonly AppDbContext _context;
         private readonly ILogger<ScheduledOrderRepository> _logger;
-        private static readonly TimeZoneInfo IstZone =
-            TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
 
         public ScheduledOrderRepository(AppDbContext context, ILogger<ScheduledOrderRepository> logger)
         {
@@ -99,8 +98,7 @@ namespace Sovva.Infrastructure.Repositories
             DateTime startUtc, DateTime endUtc)
         {
             // Convert UTC lower-bound to IST to get the delivery calendar date
-            var istDate = TimeZoneInfo.ConvertTimeFromUtc(
-                DateTime.SpecifyKind(startUtc, DateTimeKind.Utc), IstZone).Date;
+            var istDate = TimeZoneHelper.ToIST(startUtc).Date;
             
             // Convert to DateTime range for comparison (ScheduledFor is DateTime with 00:00:00)
             var targetDateStart = istDate;

@@ -171,5 +171,12 @@ namespace Sovva.Infrastructure.Repositories
                 .Where(a => ids.Contains(a.Id))
                 .ToListAsync();
         }
+
+        // ✅ NEW: Batch get primary addresses by user IDs (for generation job optimization)
+        public async Task<List<UserAddress>> GetPrimaryAddressesByUserIdsAsync(List<int> userIds) =>
+            await _context.UserAddresses
+                .AsNoTracking()
+                .Where(a => userIds.Contains(a.UserId) && a.IsPrimary)
+                .ToListAsync();
     }
 }

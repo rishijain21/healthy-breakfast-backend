@@ -14,5 +14,8 @@ namespace Sovva.Application.Interfaces
         
         // ✅ NEW: Get all ingredients for a specific UserMeal
         Task<IEnumerable<UserMealIngredient>> GetByUserMealIdAsync(int userMealId);
+        
+        // ✅ NEW: Batch get ingredients for multiple UserMeals
+        Task<List<UserMealIngredient>> GetByUserMealIdsAsync(List<int> userMealIds);
     }
 }

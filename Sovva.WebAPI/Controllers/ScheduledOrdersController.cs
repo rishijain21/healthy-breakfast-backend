@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Sovva.Application.Interfaces;
+using Sovva.Application.Helpers;
 using Sovva.Application.DTOs;
 using Sovva.Domain.Entities;
 using Sovva.WebAPI.Extensions;
@@ -115,8 +116,7 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
                     return Unauthorized($"Missing authentication claims. Available: {string.Join(", ", allClaims)}");
                 }
 
-                var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
-                var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
+                var istNow = TimeZoneHelper.NowIST();
                 var tomorrow = istNow.Date.AddDays(1);
 
                 _logger.LogInformation($"🗓️ Looking for cart orders scheduled for: {tomorrow:yyyy-MM-dd}");
@@ -299,12 +299,10 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
         // ============================================================================
         private async Task<ProcessOrdersResponseDto> ProcessOrdersForDate(DateTime utcDate, string label)
         {
-            var istZone    = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
-            var istNow     = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
+            var istNow     = TimeZoneHelper.NowIST();
 
             // ✅ FIX: Convert the target UTC date to IST to get the correct calendar date
-            var targetIst  = TimeZoneInfo.ConvertTimeFromUtc(
-                DateTime.SpecifyKind(utcDate, DateTimeKind.Utc), istZone).Date;
+            var targetIst  = TimeZoneHelper.ToIST(utcDate).Date;
 
             _logger.LogInformation(
                 "🧪 [{Label}] Manual processing at {Now:yyyy-MM-dd HH:mm:ss} IST, target date: {Target:yyyy-MM-dd}",

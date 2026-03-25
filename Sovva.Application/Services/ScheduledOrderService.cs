@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Sovva.Application.Interfaces;
+using Sovva.Application.Helpers;
 using Sovva.Application.DTOs;
 using Sovva.Domain.Entities;
 
@@ -45,7 +46,7 @@ namespace Sovva.Application.Services
         // ✅ CREATE SCHEDULED ORDER (MILKBASKET LOGIC: Order today → Delivery tomorrow)
         // ✅ UPDATED: Now accepts userId directly (from JWT claim) - zero DB hit for user lookup
         // ----------------------------------------------------------------------------------------
-        public async Task<ScheduledOrderResponseDto> CreateScheduledOrderAsync(int userId, Guid authId, CreateScheduledOrderDto dto)
+        public async Task<ScheduledOrderResponseDto> CreateScheduledOrderAsync(int userId, Guid authId, CreateScheduledOrderDto dto, bool skipWalletCheck = false)
         {
             // AuthId still needed for logging/audit, but userId is already known from JWT
             var user = await _userRepository.GetByIdAsync(userId);
@@ -90,6 +91,7 @@ namespace Sovva.Application.Services
 
             // ✅ FIXED: Handle ScheduledFor as DateTime (not string)
             DateTime deliveryDate;
+            var istNow = TimeZoneHelper.NowIST();
             
             if (dto.ScheduledFor != default(DateTime))
             {
@@ -101,18 +103,13 @@ namespace Sovva.Application.Services
             else
             {
                 // Fallback: use tomorrow if not provided
-                var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
-                var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
                 var tomorrowIst = istNow.Date.AddDays(1);
                 deliveryDate = DateTime.SpecifyKind(tomorrowIst, DateTimeKind.Utc);
                 
                 _logger.LogInformation($"📅 No date provided, using tomorrow: {deliveryDate:yyyy-MM-dd}");
             }
             
-            var istZone2 = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
-            var istNow2 = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone2);
-            
-            _logger.LogInformation($"📦 Order placed at: {istNow2:yyyy-MM-dd HH:mm:ss} IST");
+            _logger.LogInformation($"📦 Order placed at: {istNow:yyyy-MM-dd HH:mm:ss} IST");
             _logger.LogInformation($"🚚 Delivery scheduled for: {deliveryDate:yyyy-MM-dd}");
 
             // ✅ Price calculation logic
@@ -148,7 +145,8 @@ namespace Sovva.Application.Services
             }
 
             // Check wallet balance (now uses userId - PK lookup)
-            if (!await CheckWalletBalanceAsync(userId, totalPrice))
+            // skipWalletCheck: bypass for subscription generation (wallet enforced at 11:59 PM confirmation)
+            if (!skipWalletCheck && !await CheckWalletBalanceAsync(userId, totalPrice))
                 throw new InvalidOperationException("Insufficient wallet balance");
 
             // Create ScheduledOrder
@@ -440,8 +438,7 @@ namespace Sovva.Application.Services
         // ----------------------------------------------------------------------------------------
         public async Task ConfirmAllScheduledOrdersAsync()
         {
-            var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
-            var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
+            var istNow = TimeZoneHelper.NowIST();
             
             // ✅ Process orders for TODAY (not tomorrow)
             var todayIst = istNow.Date;
@@ -453,10 +450,8 @@ namespace Sovva.Application.Services
             _logger.LogInformation($"📅 Target Date: {todayIst:yyyy-MM-dd}");
             
             // ✅ Convert IST date boundaries back to UTC for DB query
-            var startUtc = TimeZoneInfo.ConvertTimeToUtc(
-                DateTime.SpecifyKind(todayIst, DateTimeKind.Unspecified), istZone);
-            var endUtc = TimeZoneInfo.ConvertTimeToUtc(
-                DateTime.SpecifyKind(todayIst.AddDays(1), DateTimeKind.Unspecified), istZone);
+            var startUtc = TimeZoneHelper.ToUtc(todayIst);
+            var endUtc = TimeZoneHelper.ToUtc(todayIst.AddDays(1));
 
             _logger.LogInformation($"🔍 Querying UTC range: {startUtc:yyyy-MM-dd HH:mm:ss} → {endUtc:yyyy-MM-dd HH:mm:ss}");
 
@@ -641,8 +636,7 @@ namespace Sovva.Application.Services
         // ----------------------------------------------------------------------------------------
         public static TimeSpan GetTimeTillMidnightIST()
         {
-            var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
-            var istNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, istZone);
+            var istNow = TimeZoneHelper.NowIST();
             var midnight = istNow.Date.AddDays(1);
             return midnight - istNow;
         }
