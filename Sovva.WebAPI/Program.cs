@@ -119,10 +119,11 @@ builder.Services.AddHangfire(config => config
         options.UseNpgsqlConnection(hangfireConnectionString),
         new PostgreSqlStorageOptions
         {
-            QueuePollInterval = TimeSpan.FromSeconds(5),
+            QueuePollInterval = TimeSpan.FromSeconds(15),
             InvisibilityTimeout = TimeSpan.FromMinutes(30),
             DistributedLockTimeout = TimeSpan.FromSeconds(30),
-            PrepareSchemaIfNecessary = true
+            PrepareSchemaIfNecessary = true,
+            EnableTransactionScopeEnlistment = false
         }));
 
 builder.Services.AddHangfireServer(options =>
