@@ -123,7 +123,7 @@ builder.Services.AddHangfire(config => config
             InvisibilityTimeout = TimeSpan.FromMinutes(30),
             DistributedLockTimeout = TimeSpan.FromSeconds(30),
             PrepareSchemaIfNecessary = true,
-            EnableTransactionScopeEnlistment = false
+            EnableTransactionScopeEnlistment = true
         }));
 
 builder.Services.AddHangfireServer(options =>
