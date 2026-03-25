@@ -586,9 +586,6 @@ public class HangfireBasicAuthFilter : Hangfire.Dashboard.IDashboardAuthorizatio
         if (string.IsNullOrEmpty(authHeader) || 
             !authHeader.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
         {
-            // ✅ Add WWW-Authenticate header so browser prompts for credentials
-            httpContext.Response.Headers["WWW-Authenticate"] = "Basic realm=\"Hangfire Dashboard\"";
-            httpContext.Response.StatusCode = 401;
             return false;
         }
 
