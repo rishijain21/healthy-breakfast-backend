@@ -579,31 +579,33 @@ public class HangfireBasicAuthFilter : Hangfire.Dashboard.IDashboardAuthorizatio
 
     public bool Authorize(Hangfire.Dashboard.DashboardContext context)
     {
-        // ✅ Cast to AspNetCoreDashboardContext to get HttpContext - works on Render
         if (context is not Hangfire.Dashboard.AspNetCoreDashboardContext aspNetContext)
-        {
             return false;
-        }
-        
+
         var httpContext = aspNetContext.HttpContext;
-        
         var authHeader = httpContext.Request.Headers["Authorization"].ToString();
-        
-        if (string.IsNullOrEmpty(authHeader) || 
-            !authHeader.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
+
+        if (!string.IsNullOrEmpty(authHeader) &&
+            authHeader.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
         {
-            return false;
+            try
+            {
+                var credentials = Encoding.UTF8.GetString(
+                    Convert.FromBase64String(authHeader[6..]));
+                var parts = credentials.Split(':', 2);
+                if (parts.Length == 2 &&
+                    parts[0] == _username &&
+                    parts[1] == _password)
+                {
+                    return true; // ✅ Credentials valid — show dashboard
+                }
+            }
+            catch { }
         }
 
-        try
-        {
-            var credentials = Encoding.UTF8.GetString(
-                Convert.FromBase64String(authHeader[6..]));
-            var parts = credentials.Split(':', 2);
-            return parts.Length == 2 && 
-                   parts[0] == _username && 
-                   parts[1] == _password;
-        }
-        catch { return false; }
+        // ✅ KEY FIX: Challenge the browser to show the login prompt
+        httpContext.Response.StatusCode = 401;
+        httpContext.Response.Headers["WWW-Authenticate"] = "Basic realm=\"Sovva Hangfire\"";
+        return false;
     }
 }
