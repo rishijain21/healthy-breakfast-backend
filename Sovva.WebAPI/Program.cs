@@ -389,9 +389,9 @@ builder.Services.AddSwaggerGen(c =>
 // ══════════════════════════════════════════════════
 // HEALTH CHECKS — liveness vs readiness separation
 // ══════════════════════════════════════════════════
-// Health check — URI format (required by NpgSql health check library)
+// Health check — use DATABASE_SESSION_URL (ADO.NET format, same as Hangfire)
 var healthCheckConnectionString =
-    Environment.GetEnvironmentVariable("DATABASE_SESSION_URL_URI")
+    Environment.GetEnvironmentVariable("DATABASE_SESSION_URL")
     ?? connectionString;
 
 builder.Services.AddHealthChecks()
