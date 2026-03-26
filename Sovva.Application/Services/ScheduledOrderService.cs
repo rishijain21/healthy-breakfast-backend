@@ -19,6 +19,7 @@ namespace Sovva.Application.Services
         private readonly IIngredientRepository _ingredientRepository;
         private readonly IWalletTransactionService _walletService;
         private readonly IOrderService _orderService;
+        private readonly IAppTimeProvider _time;
         private readonly ILogger<ScheduledOrderService> _logger;
         private readonly IUserAddressRepository _userAddressRepository;
 
@@ -29,6 +30,7 @@ namespace Sovva.Application.Services
             IIngredientRepository ingredientRepository,
             IWalletTransactionService walletService,
             IOrderService orderService,
+            IAppTimeProvider time,
             ILogger<ScheduledOrderService> logger,
             IUserAddressRepository userAddressRepository)
         {
@@ -37,6 +39,7 @@ namespace Sovva.Application.Services
             _ingredientRepository = ingredientRepository;
             _walletService = walletService;
             _orderService = orderService;
+            _time = time;
             _logger = logger;
             _userAddressRepository = userAddressRepository;
         }
@@ -91,13 +94,13 @@ namespace Sovva.Application.Services
 
             // ✅ FIXED: Handle ScheduledFor as DateOnly (IST calendar date)
             DateOnly deliveryDate;
-            var istNow = TimeZoneHelper.NowIST();
+            var istNow = _time.ToIst(_time.UtcNow);
             
             if (dto.ScheduledFor != default(DateTime))
             {
                 // Caller passed a DateTime — convert to IST to get the calendar date
                 var asIst = dto.ScheduledFor.Kind == DateTimeKind.Utc
-                    ? TimeZoneHelper.ToIST(dto.ScheduledFor)
+                    ? _time.ToIst(dto.ScheduledFor)
                     : dto.ScheduledFor;  // treat as IST if Unspecified
                 deliveryDate = DateOnly.FromDateTime(asIst);
                 
@@ -106,7 +109,7 @@ namespace Sovva.Application.Services
             else
             {
                 // Fallback: use tomorrow if not provided
-                deliveryDate = TimeZoneHelper.TodayIST().AddDays(1);
+                deliveryDate = _time.TodayIst.AddDays(1);
                 
                 _logger.LogInformation("[ScheduledOrder] No date provided, using tomorrow: {Date}", deliveryDate);
             }
@@ -168,9 +171,8 @@ namespace Sovva.Application.Services
                 OrderStatus = "scheduled",
                 CanModify = true,
                 // ExpiresAt is timestamptz — use UTC midnight of next day
-                ExpiresAt = TimeZoneHelper.ToUtc(deliveryDate.AddDays(1).ToDateTime(TimeOnly.MinValue)),
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow,
+                ExpiresAt = _time.ToUtc(deliveryDate.AddDays(1).ToDateTime(TimeOnly.MinValue)),
+                // CreatedAt/UpdatedAt handled by TimestampInterceptor
                 DeliveryAddressId = deliveryAddressId,
                 // ✅ ADD: Link to subscription if provided
                 SubscriptionId = dto.SubscriptionId
@@ -278,9 +280,8 @@ namespace Sovva.Application.Services
                     NutritionalSummary = originalOrder.NutritionalSummary,
                     OrderStatus = "scheduled",
                     CanModify = true,
-                    ExpiresAt = DateTime.SpecifyKind(originalOrder.ExpiresAt, DateTimeKind.Utc),
-                    CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow,
+                    // ExpiresAt already UTC
+                    // CreatedAt/UpdatedAt handled by TimestampInterceptor
                     DeliveryAddressId = originalOrder.DeliveryAddressId
                 };
 
@@ -292,8 +293,8 @@ namespace Sovva.Application.Services
                         IngredientId = originalIngredient.IngredientId,
                         Quantity = originalIngredient.Quantity,
                         UnitPrice = originalIngredient.UnitPrice,
-                        TotalPrice = originalIngredient.TotalPrice,
-                        CreatedAt = DateTime.UtcNow
+                        TotalPrice = originalIngredient.TotalPrice
+                        // CreatedAt handled by TimestampInterceptor
                     });
                 }
 
@@ -395,7 +396,7 @@ namespace Sovva.Application.Services
             scheduledOrder.NutritionalSummary = dto.NutritionalSummary != null
                 ? JsonSerializer.Serialize(dto.NutritionalSummary)
                 : scheduledOrder.NutritionalSummary;
-            scheduledOrder.UpdatedAt = DateTime.UtcNow;
+            // UpdatedAt handled by TimestampInterceptor
 
             await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
             
@@ -441,25 +442,18 @@ namespace Sovva.Application.Services
         // ----------------------------------------------------------------------------------------
         public async Task ConfirmAllScheduledOrdersAsync()
         {
-            var istNow = TimeZoneHelper.NowIST();
+            var istNow = _time.ToIst(_time.UtcNow);
             
-            // ✅ Process orders for TODAY's delivery (orders are stored with tomorrow's date when placed the day before)
-            var deliveryDate = TimeZoneHelper.TodayIST().AddDays(1);
+            // ✅ Job runs at 12:00 AM IST — TodayIst IS the delivery day
+            // No AddDays(1) needed — today = the day users receive their breakfast
+            var deliveryDate = _time.TodayIst;
             
             _logger.LogInformation($"🌙 [MIDNIGHT JOB] Started at {istNow:yyyy-MM-dd HH:mm:ss} IST");
-            _logger.LogInformation($"🚚 Processing orders for TODAY's delivery: {deliveryDate:yyyy-MM-dd}");
-            _logger.LogInformation($"⏰ Current UTC: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}");
-            _logger.LogInformation($"⏰ Current IST: {istNow:yyyy-MM-dd HH:mm:ss}");
-            _logger.LogInformation($"📅 Target Date: {deliveryDate:yyyy-MM-dd}");
+            _logger.LogInformation($"🚚 Confirming orders for delivery on: {deliveryDate:yyyy-MM-dd}");
+            _logger.LogInformation($"⏰ UTC: {_time.UtcNow:yyyy-MM-dd HH:mm:ss} | IST: {istNow:yyyy-MM-dd HH:mm:ss}");
             
-            // ✅ Convert IST date boundaries back to UTC for DB query
-            var startUtc = TimeZoneHelper.ToUtc(deliveryDate.ToDateTime(TimeOnly.MinValue));
-            var endUtc = TimeZoneHelper.ToUtc(deliveryDate.AddDays(1).ToDateTime(TimeOnly.MinValue));
-
-            _logger.LogInformation($"🔍 Querying UTC range: {startUtc:yyyy-MM-dd HH:mm:ss} → {endUtc:yyyy-MM-dd HH:mm:ss}");
-
-            // Process orders for TODAY using UTC range
-            var scheduledOrders = await _scheduledOrderRepository.GetScheduledOrdersForUtcRangeAsync(startUtc, endUtc);
+            // ✅ Pass DateOnly directly — no UTC range conversion needed
+            var scheduledOrders = await _scheduledOrderRepository.GetScheduledOrdersForDateAsync(deliveryDate);
 
             _logger.LogInformation($"📦 Found {scheduledOrders.Count} total orders for {deliveryDate:yyyy-MM-dd}");
 
@@ -578,7 +572,7 @@ namespace Sovva.Application.Services
                     // ✅ FIX: Populate audit trail fields
                     scheduledOrder.OrderStatus = "processed";
                     scheduledOrder.CanModify = false;
-                    scheduledOrder.ConfirmedAt = DateTime.UtcNow;
+                    scheduledOrder.ConfirmedAt = _time.UtcNow;
                     scheduledOrder.IsProcessedToOrder = true;    // ✅ Audit: mark as processed
                     scheduledOrder.ConfirmedOrderId = orderId; // ✅ Audit: link to confirmed order
                     await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
@@ -616,9 +610,10 @@ namespace Sovva.Application.Services
         // ----------------------------------------------------------------------------------------
         // TIME TILL MIDNIGHT (IST)
         // ----------------------------------------------------------------------------------------
-        public static TimeSpan GetTimeTillMidnightIST()
+        public TimeSpan GetTimeTillMidnightIST()
         {
-            var istNow = TimeZoneHelper.NowIST();
+            // Note: Cannot be static since it needs _time instance
+            var istNow = _time.ToIst(_time.UtcNow);
             var midnight = istNow.Date.AddDays(1);
             return midnight - istNow;
         }

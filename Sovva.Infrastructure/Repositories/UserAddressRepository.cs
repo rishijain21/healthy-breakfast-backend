@@ -1,4 +1,5 @@
 using Sovva.Application.Interfaces;
+using Sovva.Application.Helpers;
 using Sovva.Domain.Entities;
 using Sovva.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -9,10 +10,12 @@ namespace Sovva.Infrastructure.Repositories
     public class UserAddressRepository : IUserAddressRepository
     {
         private readonly AppDbContext _context;
+        private readonly IAppTimeProvider _time;
 
-        public UserAddressRepository(AppDbContext context)
+        public UserAddressRepository(AppDbContext context, IAppTimeProvider time)
         {
             _context = context;
+            _time = time;
         }
 
         public async Task<UserAddress?> GetByIdAsync(int id)
@@ -102,7 +105,7 @@ namespace Sovva.Infrastructure.Repositories
                 return false;
 
             address.IsActive = false;
-            address.UpdatedAt = DateTime.UtcNow;
+            // UpdatedAt handled by TimestampInterceptor
             await UpdateAsync(address);
             return true;
         }
@@ -120,7 +123,7 @@ namespace Sovva.Infrastructure.Repositories
                                WHERE ""UserId"" = @userId AND ""IsPrimary"" = true";
                 
                 await _context.Database.ExecuteSqlRawAsync(clearSql, 
-                    new Npgsql.NpgsqlParameter("@now", DateTime.UtcNow),
+                    new Npgsql.NpgsqlParameter("@now", _time.UtcNow),
                     new Npgsql.NpgsqlParameter("@userId", userId));
 
                 // Then set the target address as primary
@@ -129,7 +132,7 @@ namespace Sovva.Infrastructure.Repositories
                               WHERE ""Id"" = @addressId AND ""UserId"" = @userId";
                 
                 var rowsAffected = await _context.Database.ExecuteSqlRawAsync(setSql,
-                    new Npgsql.NpgsqlParameter("@now", DateTime.UtcNow),
+                    new Npgsql.NpgsqlParameter("@now", _time.UtcNow),
                     new Npgsql.NpgsqlParameter("@addressId", addressId),
                     new Npgsql.NpgsqlParameter("@userId", userId));
 
@@ -160,7 +163,7 @@ namespace Sovva.Infrastructure.Repositories
             return await _context.Subscriptions
                 .AnyAsync(x => x.DeliveryAddressId == addressId 
                             && x.Active 
-                            && x.EndDate >= DateOnly.FromDateTime(DateTime.UtcNow));
+                            && x.EndDate >= _time.TodayIst);
         }
 
         // ✅ NEW METHOD: Batch load addresses by IDs (used in midnight job)

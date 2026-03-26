@@ -1,4 +1,5 @@
 using Sovva.Application.Interfaces;
+using Sovva.Application.Helpers;
 using Sovva.Domain.Entities;
 using Sovva.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -8,8 +9,13 @@ namespace Sovva.Infrastructure.Repositories
     public class WalletTransactionRepository : IWalletTransactionRepository
     {
         private readonly AppDbContext _context;
+        private readonly IAppTimeProvider _time;
 
-        public WalletTransactionRepository(AppDbContext context) => _context = context;
+        public WalletTransactionRepository(AppDbContext context, IAppTimeProvider time) 
+        { 
+            _context = context; 
+            _time = time;
+        }
 
         // ✅ OPTIMIZED: Removed .Include(wt => wt.User) for faster queries
         public async Task<IEnumerable<WalletTransaction>> GetAllAsync()
@@ -43,7 +49,7 @@ namespace Sovva.Infrastructure.Repositories
         {
             try
             {
-                transaction.CreatedAt = DateTime.UtcNow;
+                // CreatedAt handled by TimestampInterceptor
                 _context.WalletTransactions.Add(transaction);
                 await _context.SaveChangesAsync();
                 await UpdateUserWalletBalance(transaction.UserId);
@@ -99,7 +105,7 @@ namespace Sovva.Infrastructure.Repositories
             if (user != null)
             {
                 user.WalletBalance = balance;
-                user.UpdatedAt = DateTime.UtcNow;
+                // UpdatedAt handled by TimestampInterceptor
                 await _context.SaveChangesAsync();
             }
         }

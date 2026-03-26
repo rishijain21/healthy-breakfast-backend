@@ -16,6 +16,12 @@ namespace Sovva.Application.Interfaces
         Task<List<ScheduledOrder>> GetScheduledOrdersForDateAsync(DateTime date);
         
         /// <summary>
+        /// ✅ NEW: Fetches scheduled orders directly by DateOnly for the midnight job.
+        /// Queries ScheduledFor (DATE column) by equality - no UTC conversion needed.
+        /// </summary>
+        Task<List<ScheduledOrder>> GetScheduledOrdersForDateAsync(DateOnly date);
+        
+        /// <summary>
         /// Fetches scheduled orders whose IST delivery date falls within the given UTC range.
         /// The implementation converts startUtc to IST to determine the calendar date,
         /// then queries ScheduledFor (a DATE column) by equality.

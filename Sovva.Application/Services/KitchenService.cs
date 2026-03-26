@@ -12,24 +12,27 @@ namespace Sovva.Application.Services
     public class KitchenService : IKitchenService
     {
         private readonly IKitchenRepository _kitchenRepository;
+        private readonly IAppTimeProvider _time;
         private readonly ILogger<KitchenService> _logger;
 
         public KitchenService(
             IKitchenRepository kitchenRepository,
+            IAppTimeProvider time,
             ILogger<KitchenService> logger)
         {
             _kitchenRepository = kitchenRepository;
+            _time = time;
             _logger = logger;
         }
 
         public async Task<List<KitchenOrderDto>> GetOrdersForPreparationAsync()
         {
-            var istNow = TimeZoneHelper.NowIST();
+            var istNow = _time.ToIst(_time.UtcNow);
             var todayIst = istNow.Date; // 2026-03-26
 
             _logger.LogInformation(
                 "[Kitchen] UTC={Utc:u}  IST={Ist:u}  Querying for IST date={Date:yyyy-MM-dd}",
-                DateTime.UtcNow, istNow, todayIst);
+                _time.UtcNow, istNow, todayIst);
 
             // Pass the IST calendar date as Unspecified — repository owns the UTC conversion
             var orders = await _kitchenRepository.GetOrdersForPreparationAsync(todayIst);
@@ -42,7 +45,7 @@ namespace Sovva.Application.Services
 
         public async Task<List<KitchenOrderDto>> GetOrdersForTomorrowAsync()
         {
-            var istNow = TimeZoneHelper.NowIST();
+            var istNow = _time.ToIst(_time.UtcNow);
             
             var tomorrowIst = istNow.Date.AddDays(1);
 
@@ -76,7 +79,7 @@ namespace Sovva.Application.Services
                 throw new InvalidOperationException("Order already marked as prepared");
 
             order.IsPrepared = true;
-            order.UpdatedAt = DateTime.UtcNow;
+            // UpdatedAt handled by TimestampInterceptor
 
             await _kitchenRepository.UpdateOrderAsync(order);
 
@@ -85,7 +88,7 @@ namespace Sovva.Application.Services
 
         public async Task<KitchenStatsDto> GetTodayStatsAsync()
         {
-            var istNow = TimeZoneHelper.NowIST();
+            var istNow = _time.ToIst(_time.UtcNow);
             var todayIst = istNow.Date;
 
             var todayOrders = await _kitchenRepository.GetOrdersForPreparationAsync(todayIst);
@@ -107,7 +110,7 @@ namespace Sovva.Application.Services
 
         public async Task<KitchenStatsDto> GetTomorrowStatsAsync()
         {
-            var istNow = TimeZoneHelper.NowIST();
+            var istNow = _time.ToIst(_time.UtcNow);
             var tomorrowIst = istNow.Date.AddDays(1);
 
             var tomorrowOrders = await _kitchenRepository.GetOrdersForPreparationAsync(tomorrowIst);

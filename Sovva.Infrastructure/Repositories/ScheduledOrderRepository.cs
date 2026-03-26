@@ -14,11 +14,13 @@ namespace Sovva.Infrastructure.Repositories
     public class ScheduledOrderRepository : IScheduledOrderRepository
     {
         private readonly AppDbContext _context;
+        private readonly IAppTimeProvider _time;
         private readonly ILogger<ScheduledOrderRepository> _logger;
 
-        public ScheduledOrderRepository(AppDbContext context, ILogger<ScheduledOrderRepository> logger)
+        public ScheduledOrderRepository(AppDbContext context, IAppTimeProvider time, ILogger<ScheduledOrderRepository> logger)
         {
             _context = context;
+            _time = time;
             _logger = logger;
         }
 
@@ -42,7 +44,7 @@ namespace Sovva.Infrastructure.Repositories
             // Convert to DateOnly for direct comparison with DATE column
             var istDateOnly = DateOnly.FromDateTime(
                 date.Kind == DateTimeKind.Utc 
-                    ? TimeZoneHelper.ToIST(date) 
+                    ? _time.ToIst(date) 
                     : date);
 
             return await _context.ScheduledOrders
@@ -64,7 +66,7 @@ namespace Sovva.Infrastructure.Repositories
             // Convert to DateOnly for direct comparison with DATE column
             var istDateOnly = DateOnly.FromDateTime(
                 date.Kind == DateTimeKind.Utc 
-                    ? TimeZoneHelper.ToIST(date) 
+                    ? _time.ToIst(date) 
                     : date);
 
             return await _context.ScheduledOrders
@@ -100,7 +102,7 @@ namespace Sovva.Infrastructure.Repositories
             DateTime startUtc, DateTime endUtc)
         {
             // Convert UTC to IST DateOnly (the delivery calendar date)
-            var istDate = DateOnly.FromDateTime(TimeZoneHelper.ToIST(startUtc));
+            var istDate = DateOnly.FromDateTime(_time.ToIst(startUtc));
             
             _logger.LogInformation(
                 "[Repo] Querying ScheduledFor = {Date} (IST). UTC range was {Start:u}→{End:u}",
@@ -141,6 +143,19 @@ namespace Sovva.Infrastructure.Repositories
                 .Include(o => o.DeliveryAddress)
                     .ThenInclude(a => a!.ServiceableLocation)
                 .OrderBy(o => o.CreatedAt)
+                .ToListAsync();
+        }
+
+        // ✅ NEW: Clean DateOnly query for midnight job - queries unprocessed orders directly
+        public async Task<List<ScheduledOrder>> GetScheduledOrdersForDateAsync(DateOnly date)
+        {
+            _logger.LogInformation("🔍 Querying scheduled orders for {Date:yyyy-MM-dd}", date);
+
+            return await _context.ScheduledOrders
+                .Include(so => so.Ingredients)
+                    .ThenInclude(soi => soi.Ingredient)
+                .Where(so => so.ScheduledFor == date  // DateOnly == DateOnly ✅ clean
+                          && !so.IsProcessedToOrder)
                 .ToListAsync();
         }
 
@@ -200,7 +215,7 @@ namespace Sovva.Infrastructure.Repositories
             existing.TotalPrice         = scheduledOrder.TotalPrice;
             existing.DeliveryTimeSlot   = scheduledOrder.DeliveryTimeSlot;
             existing.NutritionalSummary = scheduledOrder.NutritionalSummary;
-            existing.UpdatedAt          = DateTime.UtcNow;
+            // UpdatedAt handled by TimestampInterceptor
 
             // ✅ FIX: Populate audit fields when order is confirmed
             if (scheduledOrder.IsProcessedToOrder)

@@ -22,6 +22,7 @@ namespace Sovva.WebAPI.Controllers
         private readonly IScheduledOrderRepository _scheduledOrderRepository;
         private readonly IUserRepository _userRepository;
         private readonly IOrderService _orderService;
+        private readonly IAppTimeProvider _time;
         private readonly ILogger<ScheduledOrdersController> _logger;
 
         public ScheduledOrdersController(
@@ -29,12 +30,14 @@ namespace Sovva.WebAPI.Controllers
             IScheduledOrderRepository scheduledOrderRepository,
             IUserRepository userRepository,
             IOrderService orderService,
+            IAppTimeProvider time,
             ILogger<ScheduledOrdersController> logger)
         {
             _scheduledOrderService = scheduledOrderService;
             _scheduledOrderRepository = scheduledOrderRepository;
             _userRepository = userRepository;
             _orderService = orderService;
+            _time = time;
             _logger = logger;
         }
 
@@ -116,7 +119,7 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
                     return Unauthorized($"Missing authentication claims. Available: {string.Join(", ", allClaims)}");
                 }
 
-                var istNow = TimeZoneHelper.NowIST();
+                var istNow = _time.ToIst(_time.UtcNow);
                 var tomorrow = istNow.Date.AddDays(1);
 
                 _logger.LogInformation($"🗓️ Looking for cart orders scheduled for: {tomorrow:yyyy-MM-dd}");
@@ -299,10 +302,10 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
         // ============================================================================
         private async Task<ProcessOrdersResponseDto> ProcessOrdersForDate(DateTime utcDate, string label)
         {
-            var istNow     = TimeZoneHelper.NowIST();
+            var istNow     = _time.ToIst(_time.UtcNow);
 
             // ✅ FIX: Convert the target UTC date to IST to get the correct calendar date
-            var targetIst  = TimeZoneHelper.ToIST(utcDate).Date;
+            var targetIst  = _time.ToIst(utcDate).Date;
 
             _logger.LogInformation(
                 "🧪 [{Label}] Manual processing at {Now:yyyy-MM-dd HH:mm:ss} IST, target date: {Target:yyyy-MM-dd}",

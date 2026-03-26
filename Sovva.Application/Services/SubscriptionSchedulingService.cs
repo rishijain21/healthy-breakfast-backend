@@ -20,6 +20,7 @@ namespace Sovva.Application.Services
         private readonly IUserRepository _userRepo;
         private readonly IUserMealIngredientRepository _userMealIngredientRepo;
         private readonly IUserAddressRepository _userAddressRepo; // ✅ ADD: Delivery address repository
+        private readonly IAppTimeProvider _time;
         private readonly ILogger<SubscriptionSchedulingService> _logger;
 
         public SubscriptionSchedulingService(
@@ -30,6 +31,7 @@ namespace Sovva.Application.Services
             IUserRepository userRepo,
             IUserMealIngredientRepository userMealIngredientRepo,
             IUserAddressRepository userAddressRepo, // ✅ ADD: Delivery address repository
+            IAppTimeProvider time,
             ILogger<SubscriptionSchedulingService> logger)
         {
             _subscriptionRepo = subscriptionRepo;
@@ -49,8 +51,8 @@ namespace Sovva.Application.Services
         /// </summary>
         public async Task GenerateScheduledOrdersFromSubscriptionsAsync()
         {
-            var istNow = TimeZoneHelper.NowIST();
-            var today = TimeZoneHelper.TodayIST();
+            var istNow = _time.ToIst(_time.UtcNow);
+            var today = _time.TodayIst;
             var tomorrow = today.AddDays(1);
             
             _logger.LogInformation($"🥛 [MILKBASKET SUBSCRIPTION JOB] Starting at {istNow:yyyy-MM-dd HH:mm:ss} IST");
@@ -178,7 +180,7 @@ namespace Sovva.Application.Services
                             IngredientId = i.IngredientId,
                             Quantity = i.Quantity * quantity  // ✅ Multiply by quantity
                         }).ToList(),
-                        ScheduledFor = TimeZoneHelper.ToUtc(tomorrowIst), // properly converts IST → UTC
+                        ScheduledFor = _time.ToUtc(tomorrowIst), // properly converts IST → UTC
                         DeliveryTimeSlot = "7:00 AM",
                         DeliveryAddressId = deliveryAddressId, // ✅ ADD: Link to delivery address
                         NutritionalSummary = null,
@@ -229,6 +231,10 @@ namespace Sovva.Application.Services
                     // Monthly subscriptions run once per month on the same day
                     return subscription.NextScheduledDate == date;
 
+                case SubscriptionFrequency.Alternate:
+                    // Alternate subscriptions run every other day
+                    return subscription.NextScheduledDate == date;
+
                 default:
                     return false;
             }
@@ -266,6 +272,9 @@ namespace Sovva.Application.Services
 
                 case SubscriptionFrequency.Monthly:
                     return currentDate.AddMonths(1);
+
+                case SubscriptionFrequency.Alternate:
+                    return currentDate.AddDays(2);
 
                 default:
                     return currentDate.AddDays(1);
@@ -326,8 +335,8 @@ namespace Sovva.Application.Services
                 return;
             }
 
-            var istNow = TimeZoneHelper.NowIST();
-            var today = TimeZoneHelper.TodayIST();
+            var istNow = _time.ToIst(_time.UtcNow);
+            var today = _time.TodayIst;
             var tomorrow = today.AddDays(1);
 
             _logger.LogInformation($"📦 Generating immediate order for subscription #{subscriptionId} (Tomorrow: {tomorrow:yyyy-MM-dd})");
@@ -392,7 +401,7 @@ namespace Sovva.Application.Services
                     IngredientId = i.IngredientId,
                     Quantity = i.Quantity * quantity
                 }).ToList(),
-                ScheduledFor = TimeZoneHelper.ToUtc(tomorrowIst), // properly converts IST → UTC
+                ScheduledFor = _time.ToUtc(tomorrowIst), // properly converts IST → UTC
                 DeliveryTimeSlot = "7:00 AM",
                 DeliveryAddressId = deliveryAddressId,
                 NutritionalSummary = null,
@@ -413,7 +422,7 @@ namespace Sovva.Application.Services
         /// </summary>
         public async Task CancelOrderForSubscriptionAsync(int subscriptionId, int userId, Guid authId)
         {
-            var tomorrow = TimeZoneHelper.TodayIST().AddDays(1);
+            var tomorrow = _time.TodayIst.AddDays(1);
 
             _logger.LogInformation($"🗑️ Looking for scheduled orders for subscription #{subscriptionId} on {tomorrow:yyyy-MM-dd}");
 

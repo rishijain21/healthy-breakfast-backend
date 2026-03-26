@@ -14,11 +14,13 @@ namespace Sovva.Infrastructure.Repositories
     public class KitchenRepository : IKitchenRepository
     {
         private readonly AppDbContext _context;
+        private readonly IAppTimeProvider _time;
         private readonly ILogger<KitchenRepository> _logger;
 
-        public KitchenRepository(AppDbContext context, ILogger<KitchenRepository> logger)
+        public KitchenRepository(AppDbContext context, IAppTimeProvider time, ILogger<KitchenRepository> logger)
         {
             _context = context;
+            _time = time;
             _logger = logger;
         }
 
@@ -26,8 +28,8 @@ namespace Sovva.Infrastructure.Repositories
         {
             // istDate is an IST calendar date (Kind=Unspecified, e.g. 2026-03-26 00:00:00)
             // Convert IST midnight → UTC to get the inclusive window PostgreSQL understands
-            var windowStart = TimeZoneHelper.ToUtc(istDate);              // 2026-03-25 18:30:00 UTC
-            var windowEnd   = TimeZoneHelper.ToUtc(istDate.AddDays(1));   // 2026-03-26 18:30:00 UTC
+            var windowStart = _time.ToUtc(istDate);              // 2026-03-25 18:30:00 UTC
+            var windowEnd   = _time.ToUtc(istDate.AddDays(1));   // 2026-03-26 18:30:00 UTC
 
             _logger.LogInformation(
                 "[KitchenRepo] IST date={IstDate:yyyy-MM-dd}  UTC window=[{Start:u}, {End:u})",

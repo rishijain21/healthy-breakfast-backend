@@ -85,7 +85,7 @@ dataSourceBuilder.ConnectionStringBuilder.CommandTimeout = dbOptions.CommandTime
 
 var dataSource = dataSourceBuilder.Build();
 
-builder.Services.AddDbContext<AppDbContext>(options =>
+builder.Services.AddDbContext<AppDbContext>((sp, options) =>
     options
         .UseNpgsql(dataSource, npgsql =>
         {
@@ -99,6 +99,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
             npgsql.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
         })
         .EnableServiceProviderCaching()
+        .AddInterceptors(sp.GetRequiredService<TimestampInterceptor>())
 );
 
 // ══════════════════════════════════════════════════
@@ -166,6 +167,10 @@ builder.Services.AddScoped<IUserAddressService, UserAddressService>();
 builder.Services.AddScoped<IScheduledOrderRepository, ScheduledOrderRepository>();
 builder.Services.AddScoped<IScheduledOrderService, ScheduledOrderService>();
 builder.Services.AddScoped<ISubscriptionSchedulingService, SubscriptionSchedulingService>();
+
+// ✅ Time provider for consistent timezone handling and testability
+builder.Services.AddSingleton<IAppTimeProvider, AppTimeProvider>();
+builder.Services.AddSingleton<TimestampInterceptor>();
 builder.Services.AddScoped<IDashboardService, DashboardService>();
 builder.Services.AddHttpClient<ISupabaseStorageService, SupabaseStorageService>();
 builder.Services.AddHttpContextAccessor();
@@ -481,38 +486,9 @@ var logger = app.Services.GetRequiredService<ILogger<Program>>();
 try
 {
     var jobs = app.Services.GetRequiredService<IRecurringJobManager>();
-    var istZone = TimeZoneHelper.IST;
+    var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
 
-    jobs.AddOrUpdate<ISubscriptionSchedulingService>(
-        "subscription-order-generation",
-        s => s.GenerateScheduledOrdersFromSubscriptionsAsync(),
-        "1 0 * * *",
-        new RecurringJobOptions
-        {
-            TimeZone = istZone,
-            MisfireHandling = MisfireHandlingMode.Ignorable
-        });
-
-    jobs.AddOrUpdate<IScheduledOrderService>(
-        "midnight-order-confirmation",
-        s => s.ConfirmAllScheduledOrdersAsync(),
-        "59 23 * * *",
-        new RecurringJobOptions
-        {
-            TimeZone = istZone,
-            MisfireHandling = MisfireHandlingMode.Ignorable
-        });
-
-    jobs.AddOrUpdate<ISubscriptionService>(
-        "sync-subscription-dates",
-        s => s.UpdateNextScheduledDatesAsync(),
-        "55 23 * * *",
-        new RecurringJobOptions
-        {
-            TimeZone = istZone,
-            MisfireHandling = MisfireHandlingMode.Ignorable
-        });
-
+    // 1. Expire old subscriptions — runs first, clean slate
     jobs.AddOrUpdate<ISubscriptionService>(
         "expire-subscriptions",
         s => s.ExpireSubscriptionsAsync(),
@@ -520,7 +496,40 @@ try
         new RecurringJobOptions
         {
             TimeZone = istZone,
-            MisfireHandling = MisfireHandlingMode.Ignorable
+            MisfireHandling = MisfireHandlingMode.Relaxed
+        });
+
+    // 2. Sync subscription dates — safety net
+    jobs.AddOrUpdate<ISubscriptionService>(
+        "sync-subscription-dates",
+        s => s.UpdateNextScheduledDatesAsync(),
+        "55 23 * * *",
+        new RecurringJobOptions
+        {
+            TimeZone = istZone,
+            MisfireHandling = MisfireHandlingMode.Relaxed
+        });
+
+    // 3. Confirm today's orders AT midnight — wallet deducted, Orders row created
+    jobs.AddOrUpdate<IScheduledOrderService>(
+        "midnight-order-confirmation",
+        s => s.ConfirmAllScheduledOrdersAsync(),
+        "0 0 * * *",
+        new RecurringJobOptions
+        {
+            TimeZone = istZone,
+            MisfireHandling = MisfireHandlingMode.Relaxed
+        });
+
+    // 4. Generate tomorrow's subscription orders — always AFTER confirmation
+    jobs.AddOrUpdate<ISubscriptionSchedulingService>(
+        "subscription-order-generation",
+        s => s.GenerateScheduledOrdersFromSubscriptionsAsync(),
+        "1 0 * * *",
+        new RecurringJobOptions
+        {
+            TimeZone = istZone,
+            MisfireHandling = MisfireHandlingMode.Relaxed
         });
 
     logger.LogInformation("✅ Hangfire jobs scheduled successfully");

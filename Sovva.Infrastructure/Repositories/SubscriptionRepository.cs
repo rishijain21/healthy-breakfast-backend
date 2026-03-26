@@ -1,5 +1,6 @@
 // Sovva.Infrastructure/Repositories/SubscriptionRepository.cs
 
+using Sovva.Application.Helpers;
 using Sovva.Application.Interfaces;
 using Sovva.Domain.Entities;
 using Sovva.Infrastructure.Data;
@@ -10,10 +11,12 @@ namespace Sovva.Infrastructure.Repositories
     public class SubscriptionRepository : ISubscriptionRepository
     {
         private readonly AppDbContext _context;
+        private readonly IAppTimeProvider _time;
 
-        public SubscriptionRepository(AppDbContext context)
+        public SubscriptionRepository(AppDbContext context, IAppTimeProvider time)
         {
             _context = context;
+            _time = time;
         }
 
         public async Task<IEnumerable<Subscription>> GetAllAsync()
@@ -52,7 +55,7 @@ namespace Sovva.Infrastructure.Repositories
 
         public async Task<IEnumerable<Subscription>> GetActiveSubscriptionsAsync()
         {
-            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            var today = _time.TodayIst;  // ✅ Use IST instead of UTC
             return await _context.Subscriptions
                 .AsNoTracking()
                 .Include(s => s.User)
@@ -66,8 +69,7 @@ namespace Sovva.Infrastructure.Repositories
 
         public async Task<Subscription> CreateAsync(Subscription subscription)
         {
-            subscription.CreatedAt = DateTime.UtcNow;
-            subscription.UpdatedAt = DateTime.UtcNow;
+            // CreatedAt/UpdatedAt handled by TimestampInterceptor
 
             _context.Subscriptions.Add(subscription);
             await _context.SaveChangesAsync();
@@ -76,9 +78,11 @@ namespace Sovva.Infrastructure.Repositories
 
         public async Task<Subscription> UpdateAsync(Subscription subscription)
         {
-            subscription.UpdatedAt = DateTime.UtcNow;
+            // UpdatedAt handled by TimestampInterceptor
             
-            _context.Subscriptions.Update(subscription);
+            // ✅ Use Attach + State.Modified instead of Update to avoid tracking conflicts
+            _context.Subscriptions.Attach(subscription);
+            _context.Entry(subscription).State = EntityState.Modified;
             await _context.SaveChangesAsync();
             return subscription;
         }
@@ -88,10 +92,9 @@ namespace Sovva.Infrastructure.Repositories
         /// </summary>
         public async Task UpdateBatchAsync(IEnumerable<Subscription> subscriptions)
         {
-            var now = DateTime.UtcNow;
+            // UpdatedAt handled by TimestampInterceptor
             foreach (var subscription in subscriptions)
             {
-                subscription.UpdatedAt = now;
                 _context.Subscriptions.Update(subscription);
             }
             
@@ -128,8 +131,7 @@ namespace Sovva.Infrastructure.Repositories
             foreach (var schedule in schedules)
             {
                 schedule.SubscriptionId = subscriptionId;
-                schedule.CreatedAt = DateTime.UtcNow;
-                schedule.UpdatedAt = DateTime.UtcNow;
+                // CreatedAt/UpdatedAt handled by TimestampInterceptor
             }
             
             await _context.Set<SubscriptionSchedule>().AddRangeAsync(schedules);
@@ -150,7 +152,7 @@ namespace Sovva.Infrastructure.Repositories
         // ✅ NEW: Prevent duplicate subscriptions (checks active + date range)
         public async Task<Subscription?> GetActiveSubscriptionByUserMealIdAsync(int userId, int userMealId)
         {
-            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            var today = _time.TodayIst;
             return await _context.Subscriptions
                 .AsNoTracking()
                 .Include(s => s.WeeklySchedule)

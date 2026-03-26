@@ -22,6 +22,7 @@ namespace Sovva.Application.Services
         private readonly IWalletTransactionRepository _walletTransactionRepository;
         private readonly ISubscriptionRepository _subscriptionRepository;
         private readonly IScheduledOrderRepository _scheduledOrderRepository;
+        private readonly IAppTimeProvider _time;
         private readonly IMemoryCache _cache;
         private readonly ILogger<DashboardService> _logger;
         
@@ -32,6 +33,7 @@ namespace Sovva.Application.Services
             IWalletTransactionRepository walletTransactionRepository,
             ISubscriptionRepository subscriptionRepository,
             IScheduledOrderRepository scheduledOrderRepository,
+            IAppTimeProvider time,
             IMemoryCache cache,
             ILogger<DashboardService> logger)
         {
@@ -39,6 +41,7 @@ namespace Sovva.Application.Services
             _walletTransactionRepository = walletTransactionRepository;
             _subscriptionRepository = subscriptionRepository;
             _scheduledOrderRepository = scheduledOrderRepository;
+            _time = time;
             _cache = cache;
             _logger = logger;
         }
@@ -48,7 +51,7 @@ namespace Sovva.Application.Services
             _logger.LogInformation("📊 Building dashboard summary for user {UserId}", userId);
 
             // Calculate tomorrow's date in IST
-            var istNow = TimeZoneHelper.NowIST();
+            var istNow = _time.ToIst(_time.UtcNow);
             var tomorrowIst = istNow.Date.AddDays(1);
 
             // ✅ FIX: Sequential awaits — EF Core DbContext is NOT thread-safe.
@@ -142,7 +145,7 @@ namespace Sovva.Application.Services
         private async Task<List<SubscriptionDto>> GetActiveSubscriptionsAsync(int userId, CancellationToken ct)
         {
             var subscriptions = await _subscriptionRepository.GetByUserIdAsync(userId);
-            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            var today = _time.TodayIst;
             
             return subscriptions
                 .Where(s => s.Active && s.StartDate <= today && s.EndDate >= today)

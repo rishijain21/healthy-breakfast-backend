@@ -1,4 +1,5 @@
 using Sovva.Application.Interfaces;
+using Sovva.Application.Helpers;
 using Sovva.Domain.Entities;
 using Sovva.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -8,10 +9,12 @@ namespace Sovva.Infrastructure.Repositories
     public class ServiceableLocationRepository : IServiceableLocationRepository
     {
         private readonly AppDbContext _context;
+        private readonly IAppTimeProvider _time;
 
-        public ServiceableLocationRepository(AppDbContext context)
+        public ServiceableLocationRepository(AppDbContext context, IAppTimeProvider time)
         {
             _context = context;
+            _time = time;
         }
 
         public async Task<ServiceableLocation?> GetByIdAsync(int id)
@@ -108,7 +111,7 @@ namespace Sovva.Infrastructure.Repositories
             if (addressCount > 0)
             {
                 location.IsActive = false;
-                location.UpdatedAt = DateTime.UtcNow;
+                // UpdatedAt handled by TimestampInterceptor
                 await UpdateAsync(location);
                 return true;
             }

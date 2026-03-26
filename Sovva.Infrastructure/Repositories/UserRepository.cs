@@ -1,4 +1,5 @@
 using Sovva.Application.Interfaces;
+using Sovva.Application.Helpers;
 using Sovva.Domain.Entities;
 using Sovva.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -8,10 +9,12 @@ namespace Sovva.Infrastructure.Repositories
     public class UserRepository : IUserRepository
     {
         private readonly AppDbContext _context;
+        private readonly IAppTimeProvider _time;
 
-        public UserRepository(AppDbContext context)
+        public UserRepository(AppDbContext context, IAppTimeProvider time)
         {
             _context = context;
+            _time = time;
         }
 
         // ✅ FIXED: Now includes AuthMapping
@@ -89,8 +92,8 @@ namespace Sovva.Infrastructure.Repositories
                 var authMapping = new UserAuthMapping
                 {
                     AuthId = authId,
-                    UserId = user.UserId,
-                    CreatedAt = DateTime.UtcNow
+                    UserId = user.UserId
+                    // CreatedAt handled by TimestampInterceptor
                 };
 
                 _context.UserAuthMappings.Add(authMapping);
@@ -124,7 +127,7 @@ namespace Sovva.Infrastructure.Repositories
                 @"UPDATE users 
                   SET wallet_balance = wallet_balance - {0}, updated_at = {1}
                   WHERE user_id = {2} AND wallet_balance >= {0}",
-                amount, DateTime.UtcNow, userId);
+                amount, _time.UtcNow, userId);
 
             return rowsAffected == 1;
         }

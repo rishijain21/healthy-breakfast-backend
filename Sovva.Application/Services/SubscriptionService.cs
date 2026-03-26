@@ -25,6 +25,7 @@ namespace Sovva.Application.Services
         private readonly IScheduledOrderRepository _scheduledOrderRepository;
         private readonly IIngredientRepository _ingredientRepository;
         private readonly IUserMealIngredientRepository _userMealIngredientRepository;
+        private readonly IAppTimeProvider _time;
         private readonly ILogger<SubscriptionService> _logger;
         private readonly IUserLoader _userLoader;
 
@@ -37,6 +38,7 @@ namespace Sovva.Application.Services
             IScheduledOrderRepository scheduledOrderRepository,
             IIngredientRepository ingredientRepository,
             IUserMealIngredientRepository userMealIngredientRepository,
+            IAppTimeProvider time,
             ILogger<SubscriptionService> logger,
             IUserLoader userLoader)
         {
@@ -48,6 +50,7 @@ namespace Sovva.Application.Services
             _scheduledOrderRepository = scheduledOrderRepository;
             _ingredientRepository = ingredientRepository;
             _userMealIngredientRepository = userMealIngredientRepository;
+            _time = time;
             _logger = logger;
             _userLoader = userLoader;
         }
@@ -295,7 +298,7 @@ namespace Sovva.Application.Services
         // ✅ Helper method to calculate first delivery date
         private DateOnly CalculateFirstDeliveryDate(Subscription subscription)
         {
-            var today = TimeZoneHelper.TodayIST();
+            var today = _time.TodayIst;
             
             // If subscription starts in the future, use start date
             if (subscription.StartDate > today)
@@ -448,7 +451,7 @@ namespace Sovva.Application.Services
                 }
             }
 
-            var today = TimeZoneHelper.TodayIST();
+            var today = _time.TodayIst;
             subscription.NextScheduledDate = CalculateNextDeliveryDate(subscription, today);
 
             var updatedSubscription = await _subscriptionRepository.UpdateAsync(subscription);
@@ -517,9 +520,9 @@ namespace Sovva.Application.Services
         public async Task UpdateNextScheduledDatesAsync()
         {
             var activeSubscriptions = await _subscriptionRepository.GetActiveSubscriptionsAsync();
-            var today = TimeZoneHelper.TodayIST();
+            var today = _time.TodayIst;
             
-            var istNow = TimeZoneHelper.NowIST();
+            var istNow = _time.ToIst(_time.UtcNow);
             
             _logger.LogInformation("=== Subscription date sync started - UTC: {UtcTime}, IST: {IstTime}, Today: {Today}",
                 DateTime.UtcNow, istNow, today);
@@ -563,12 +566,12 @@ namespace Sovva.Application.Services
 
 
 
-        private static DateOnly CalculateInitialNextDeliveryDate(
+        private DateOnly CalculateInitialNextDeliveryDate(
             DateOnly startDate, 
             SubscriptionFrequency frequency,
             List<WeeklyScheduleDto>? weeklySchedule)
         {
-            var today = TimeZoneHelper.TodayIST();
+            var today = _time.TodayIst;
             
             if (startDate > today)
                 return startDate;
@@ -691,7 +694,7 @@ namespace Sovva.Application.Services
         /// </summary>
         public async Task ExpireSubscriptionsAsync()
         {
-            var today = TimeZoneHelper.TodayIST();
+            var today = _time.TodayIst;
             var activeSubscriptions = await _subscriptionRepository.GetActiveSubscriptionsAsync();
 
             var expired = activeSubscriptions
