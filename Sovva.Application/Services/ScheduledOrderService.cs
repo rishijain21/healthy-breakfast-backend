@@ -443,25 +443,25 @@ namespace Sovva.Application.Services
         {
             var istNow = TimeZoneHelper.NowIST();
             
-            // ✅ Process orders for TODAY (not tomorrow)
-            var todayIst = istNow.Date;
+            // ✅ Process orders for TODAY's delivery (orders are stored with tomorrow's date when placed the day before)
+            var deliveryDate = TimeZoneHelper.TodayIST().AddDays(1);
             
             _logger.LogInformation($"🌙 [MIDNIGHT JOB] Started at {istNow:yyyy-MM-dd HH:mm:ss} IST");
-            _logger.LogInformation($"🚚 Processing orders for TODAY's delivery: {todayIst:yyyy-MM-dd}");
+            _logger.LogInformation($"🚚 Processing orders for TODAY's delivery: {deliveryDate:yyyy-MM-dd}");
             _logger.LogInformation($"⏰ Current UTC: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}");
             _logger.LogInformation($"⏰ Current IST: {istNow:yyyy-MM-dd HH:mm:ss}");
-            _logger.LogInformation($"📅 Target Date: {todayIst:yyyy-MM-dd}");
+            _logger.LogInformation($"📅 Target Date: {deliveryDate:yyyy-MM-dd}");
             
             // ✅ Convert IST date boundaries back to UTC for DB query
-            var startUtc = TimeZoneHelper.ToUtc(todayIst);
-            var endUtc = TimeZoneHelper.ToUtc(todayIst.AddDays(1));
+            var startUtc = TimeZoneHelper.ToUtc(deliveryDate.ToDateTime(TimeOnly.MinValue));
+            var endUtc = TimeZoneHelper.ToUtc(deliveryDate.AddDays(1).ToDateTime(TimeOnly.MinValue));
 
             _logger.LogInformation($"🔍 Querying UTC range: {startUtc:yyyy-MM-dd HH:mm:ss} → {endUtc:yyyy-MM-dd HH:mm:ss}");
 
             // Process orders for TODAY using UTC range
             var scheduledOrders = await _scheduledOrderRepository.GetScheduledOrdersForUtcRangeAsync(startUtc, endUtc);
 
-            _logger.LogInformation($"📦 Found {scheduledOrders.Count} total orders for {todayIst:yyyy-MM-dd}");
+            _logger.LogInformation($"📦 Found {scheduledOrders.Count} total orders for {deliveryDate:yyyy-MM-dd}");
 
             // ✅ IDEMPOTENCY: Skip orders already "scheduled" or "processing" to prevent double-run on retry
             var pendingOrders = scheduledOrders
@@ -607,7 +607,7 @@ namespace Sovva.Application.Services
             {
                 throw new InvalidOperationException(
                     $"[MIDNIGHT JOB] All {failedCount} orders failed to confirm. " +
-                    $"Check logs for {todayIst:yyyy-MM-dd}. " +
+                    $"Check logs for {deliveryDate:yyyy-MM-dd}. " +
                     $"Common causes: wallet balance, inactive delivery location, missing address.");
             }
         }
