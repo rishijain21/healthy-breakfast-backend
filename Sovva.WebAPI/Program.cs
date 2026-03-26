@@ -175,6 +175,14 @@ builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 builder.Services.AddMemoryCache();
 
 // ══════════════════════════════════════════════════
+// FILE UPLOAD SIZE LIMIT (10MB for meal photos)
+// ══════════════════════════════════════════════════
+builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options =>
+{
+    options.MultipartBodyLengthLimit = 10 * 1024 * 1024; // 10MB
+});
+
+// ══════════════════════════════════════════════════
 // JSON + VALIDATION
 // ══════════════════════════════════════════════════
 builder.Services.AddControllers()

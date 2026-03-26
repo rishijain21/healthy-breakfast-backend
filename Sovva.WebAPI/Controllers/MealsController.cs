@@ -295,8 +295,8 @@ namespace Sovva.WebAPI.Controllers
             if (!allowedExtensions.Contains(ext))
                 return BadRequest(new { message = "Only JPG, PNG, and WebP images are allowed" });
             
-            if (image.Length > 5 * 1024 * 1024) // 5MB limit
-                return BadRequest(new { message = "Image size cannot exceed 5MB" });
+            if (image.Length > 10 * 1024 * 1024) // 10MB limit
+                return BadRequest(new { message = "Image size cannot exceed 10MB" });
 
             var fileName = $"meal-{id}/{Guid.NewGuid():N}{ext}";
             var imageUrl = await _storageService.UploadImageAsync(image, fileName);
