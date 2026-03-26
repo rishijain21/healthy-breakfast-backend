@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Sovva.Application.Interfaces;
+using Sovva.Application.Helpers;
 using Sovva.Domain.Entities;
 using Sovva.Infrastructure.Data;
 
@@ -12,40 +14,49 @@ namespace Sovva.Infrastructure.Repositories
     public class KitchenRepository : IKitchenRepository
     {
         private readonly AppDbContext _context;
+        private readonly ILogger<KitchenRepository> _logger;
 
-        public KitchenRepository(AppDbContext context)
+        public KitchenRepository(AppDbContext context, ILogger<KitchenRepository> logger)
         {
             _context = context;
+            _logger = logger;
         }
 
-        public async Task<List<Order>> GetOrdersForPreparationAsync(DateTime date)
+        public async Task<List<Order>> GetOrdersForPreparationAsync(DateTime istDate)
         {
-            // Normalize the input date to date-only
-            var targetDate = date.Date;
-            
-            Console.WriteLine($"🔍 [KitchenRepository] Querying Orders WHERE ScheduledFor.Date = {targetDate:yyyy-MM-dd}");
-            Console.WriteLine($"🔍 [KitchenRepository] Input date kind: {date.Kind}, Target date: {targetDate:yyyy-MM-dd}");
-            
+            // istDate is an IST calendar date (Kind=Unspecified, e.g. 2026-03-26 00:00:00)
+            // Convert IST midnight → UTC to get the inclusive window PostgreSQL understands
+            var windowStart = TimeZoneHelper.ToUtc(istDate);              // 2026-03-25 18:30:00 UTC
+            var windowEnd   = TimeZoneHelper.ToUtc(istDate.AddDays(1));   // 2026-03-26 18:30:00 UTC
+
+            _logger.LogInformation(
+                "[KitchenRepo] IST date={IstDate:yyyy-MM-dd}  UTC window=[{Start:u}, {End:u})",
+                istDate, windowStart, windowEnd);
+
             var orders = await _context.Orders
                 .Include(o => o.User)
                 .Include(o => o.UserMeal!)
                     .ThenInclude(um => um.UserMealIngredients)
                     .ThenInclude(umi => umi.Ingredient!)
                         .ThenInclude(i => i.IngredientCategory)
-                // ✅ NEW: Include DeliveryAddress and ServiceableLocation for batch grouping
                 .Include(o => o.DeliveryAddress!)
                     .ThenInclude(da => da.ServiceableLocation)
-                .Where(o => o.ScheduledFor.Date == targetDate && !o.IsPrepared)
+                .Where(o =>
+                    o.ScheduledFor >= windowStart &&
+                    o.ScheduledFor <  windowEnd   &&
+                    !o.IsPrepared)
                 .OrderBy(o => o.CreatedAt)
                 .ToListAsync();
-            
-            Console.WriteLine($"📦 [KitchenRepository] Found {orders.Count} orders for {targetDate:yyyy-MM-dd}");
-            
+
+            _logger.LogInformation("[KitchenRepo] Found {Count} orders in UTC window", orders.Count);
+
             foreach (var order in orders)
             {
-                Console.WriteLine($"   - Order #{order.OrderId}: {order.UserMeal?.MealName ?? "Custom"}, ScheduledFor: {order.ScheduledFor:yyyy-MM-dd HH:mm:ss}, IsPrepared: {order.IsPrepared}");
+                _logger.LogInformation(
+                    "   - Order #{OrderId}: {MealName}, ScheduledFor: {ScheduledFor:u}, IsPrepared: {IsPrepared}",
+                    order.OrderId, order.UserMeal?.MealName ?? "Custom", order.ScheduledFor, order.IsPrepared);
             }
-            
+
             return orders;
         }
 

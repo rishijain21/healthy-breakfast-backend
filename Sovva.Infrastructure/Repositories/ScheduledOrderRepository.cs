@@ -39,10 +39,11 @@ namespace Sovva.Infrastructure.Repositories
 
         public async Task<List<ScheduledOrder>> GetByAuthIdAndDateAsync(Guid authId, DateTime date)
         {
-            // date is treated as an IST calendar date (the caller passes IST date)
-            // ScheduledFor is stored as DateTime with 00:00:00 time portion
-            var targetDate = date.Date;
-            var targetDateEnd = targetDate.AddDays(1);
+            // Convert to DateOnly for direct comparison with DATE column
+            var istDateOnly = DateOnly.FromDateTime(
+                date.Kind == DateTimeKind.Utc 
+                    ? TimeZoneHelper.ToIST(date) 
+                    : date);
 
             return await _context.ScheduledOrders
                 .AsNoTracking()
@@ -50,8 +51,7 @@ namespace Sovva.Infrastructure.Repositories
                     .ThenInclude(soi => soi.Ingredient)
                         .ThenInclude(i => i.IngredientCategory)
                 .Where(so => so.AuthId == authId
-                          && so.ScheduledFor >= targetDate
-                          && so.ScheduledFor < targetDateEnd)
+                          && so.ScheduledFor == istDateOnly)
                 .OrderBy(so => so.CreatedAt)
                 .ToListAsync();
         }
@@ -61,8 +61,11 @@ namespace Sovva.Infrastructure.Repositories
         /// </summary>
         public async Task<List<ScheduledOrder>> GetByUserIdAndDateAsync(int userId, DateTime date)
         {
-            var targetDate = date.Date;
-            var targetDateEnd = targetDate.AddDays(1);
+            // Convert to DateOnly for direct comparison with DATE column
+            var istDateOnly = DateOnly.FromDateTime(
+                date.Kind == DateTimeKind.Utc 
+                    ? TimeZoneHelper.ToIST(date) 
+                    : date);
 
             return await _context.ScheduledOrders
                 .AsNoTracking()
@@ -70,8 +73,7 @@ namespace Sovva.Infrastructure.Repositories
                     .ThenInclude(soi => soi.Ingredient)
                         .ThenInclude(i => i.IngredientCategory)
                 .Where(so => so.UserId == userId
-                          && so.ScheduledFor >= targetDate
-                          && so.ScheduledFor < targetDateEnd)
+                          && so.ScheduledFor == istDateOnly)
                 .OrderBy(so => so.CreatedAt)
                 .ToListAsync();
         }
@@ -89,28 +91,24 @@ namespace Sovva.Infrastructure.Repositories
         // ─────────────────────────────────────────────────────────────────────
         // READ — job-scoped
         //
-        // FIX 1: ScheduledFor is a DATE column storing the IST calendar date.
-        //         We receive a UTC range from the job, convert to IST date,
-        //         then do a simple date equality query — clean and sargable.
+        // FIX: ScheduledFor is a PostgreSQL DATE column storing the IST calendar date.
+        //      We receive a UTC range from the job, convert to IST DateOnly,
+        //      then do a simple DateOnly equality query — clean and type-safe.
         // ─────────────────────────────────────────────────────────────────────
 
         public async Task<List<ScheduledOrder>> GetScheduledOrdersForUtcRangeAsync(
             DateTime startUtc, DateTime endUtc)
         {
-            // Convert UTC lower-bound to IST to get the delivery calendar date
-            var istDate = TimeZoneHelper.ToIST(startUtc).Date;
+            // Convert UTC to IST DateOnly (the delivery calendar date)
+            var istDate = DateOnly.FromDateTime(TimeZoneHelper.ToIST(startUtc));
             
-            // Convert to DateTime range for comparison (ScheduledFor is DateTime with 00:00:00)
-            var targetDateStart = istDate;
-            var targetDateEnd = istDate.AddDays(1);
-
             _logger.LogInformation(
-                "📅 [Repo] Querying ScheduledFor >= {Date} AND < {DateEnd} (IST calendar date, UTC range {Start}→{End})",
-                targetDateStart, targetDateEnd, startUtc, endUtc);
+                "[Repo] Querying ScheduledFor = {Date} (IST). UTC range was {Start:u}→{End:u}",
+                istDate, startUtc, endUtc);
 
             var orders = await _context.ScheduledOrders
                 .AsNoTracking()
-                .Where(so => so.ScheduledFor >= targetDateStart && so.ScheduledFor < targetDateEnd)
+                .Where(so => so.ScheduledFor == istDate)           // ← DateOnly == DateOnly
                 .Include(o => o.User)
                 .Include(o => o.Ingredients)
                     .ThenInclude(i => i.Ingredient)
@@ -120,24 +118,22 @@ namespace Sovva.Infrastructure.Repositories
                 .OrderBy(o => o.CreatedAt)
                 .ToListAsync();
 
-            _logger.LogInformation("📦 [Repo] Found {Count} orders for {Date}", orders.Count, istDate);
+            _logger.LogInformation("[Repo] Found {Count} orders for {Date}", orders.Count, istDate);
             return orders;
         }
 
         // Legacy method — kept for backward compatibility with controller manual endpoints.
-        // Uses date range comparison since ScheduledFor is DateTime
+        // Uses DateOnly equality since ScheduledFor is now DateOnly
         public async Task<List<ScheduledOrder>> GetScheduledOrdersForDateAsync(DateTime date)
         {
-            // Treat the incoming DateTime as already an IST date (how callers pass it)
-            var targetDateStart = date.Date;
-            var targetDateEnd = targetDateStart.AddDays(1);
+            // Convert to DateOnly for direct comparison
+            var targetDate = DateOnly.FromDateTime(date.Date);
 
-            _logger.LogDebug("📅 [Repo] GetScheduledOrdersForDateAsync — date >= {Start} AND < {End}", 
-                targetDateStart, targetDateEnd);
+            _logger.LogDebug("[Repo] GetScheduledOrdersForDateAsync — ScheduledFor = {Date}", targetDate);
 
             return await _context.ScheduledOrders
                 .AsNoTracking()
-                .Where(so => so.ScheduledFor >= targetDateStart && so.ScheduledFor < targetDateEnd)
+                .Where(so => so.ScheduledFor == targetDate)
                 .Include(o => o.User)
                 .Include(o => o.Ingredients)
                     .ThenInclude(i => i.Ingredient)
@@ -150,14 +146,13 @@ namespace Sovva.Infrastructure.Repositories
 
         public async Task<bool> HasScheduledOrdersForDateAsync(Guid authId, DateTime date)
         {
-            var targetDateStart = date.Date;
-            var targetDateEnd = targetDateStart.AddDays(1);
+            // Convert to DateOnly for direct comparison with DATE column
+            var targetDate = DateOnly.FromDateTime(date.Date);
             
             return await _context.ScheduledOrders
                 .AsNoTracking()
                 .AnyAsync(so => so.AuthId == authId
-                              && so.ScheduledFor >= targetDateStart
-                              && so.ScheduledFor < targetDateEnd
+                              && so.ScheduledFor == targetDate
                               && so.OrderStatus == "scheduled");
         }
 
@@ -175,16 +170,12 @@ namespace Sovva.Infrastructure.Repositories
         /// </summary>
         public async Task<ScheduledOrder?> GetBySubscriptionIdAndDateAsync(int subscriptionId, DateOnly date)
         {
-            // Convert DateOnly to DateTime for comparison with ScheduledFor column
-            var targetDate = date.ToDateTime(TimeOnly.MinValue);
-            var targetDateEnd = targetDate.AddDays(1);
-
+            // DateOnly equality - direct comparison with DATE column
             return await _context.ScheduledOrders
                 .AsNoTracking()
                 .FirstOrDefaultAsync(so => 
                     so.SubscriptionId == subscriptionId &&
-                    so.ScheduledFor >= targetDate &&
-                    so.ScheduledFor < targetDateEnd);
+                    so.ScheduledFor == date);  // DateOnly == DateOnly
         }
 
         // ─────────────────────────────────────────────────────────────────────

@@ -373,7 +373,7 @@ namespace Sovva.Application.Services
                 UserId = subscription.UserId,
                 AuthId = user.AuthMapping?.AuthId ?? Guid.Empty, // ✅ Get AuthId from UserAuthMapping
                 MealName = userMeal.MealName,
-                ScheduledFor = deliveryDateTimeUtc,
+                ScheduledFor = DateOnly.FromDateTime(deliveryDateTimeUtc),  // DateTime → DateOnly
                 DeliveryTimeSlot = "8:00 AM",
                 TotalPrice = totalPrice,
                 OrderStatus = "scheduled",

@@ -387,7 +387,7 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
                                 UnitPrice    = i.UnitPrice,
                                 TotalPrice   = i.TotalPrice
                             }).ToList(),
-                        ScheduledFor = DateTime.SpecifyKind(scheduledOrder.ScheduledFor, DateTimeKind.Utc)
+                        ScheduledFor = DateTime.SpecifyKind(scheduledOrder.ScheduledFor.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc)
                     };
 
                     // ✅ Use the dedicated confirmation path — no catalogue lookup, no UserMeal creation

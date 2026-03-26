@@ -192,7 +192,7 @@ namespace Sovva.Application.Services
                     MealName = o.MealName,
                     MealId = o.MealId,
                     MealImageUrl = o.MealImageUrl,
-                    ScheduledFor = o.ScheduledFor,
+                    ScheduledFor = o.ScheduledFor.ToDateTime(TimeOnly.MinValue),  // DateOnly → DateTime for DTO
                     DeliveryTimeSlot = o.DeliveryTimeSlot,
                     TotalPrice = o.TotalPrice,
                     OrderStatus = o.OrderStatus,

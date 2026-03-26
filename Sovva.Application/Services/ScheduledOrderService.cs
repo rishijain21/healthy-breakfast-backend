@@ -89,28 +89,30 @@ namespace Sovva.Application.Services
 
             _logger.LogInformation($"✅ Delivery address validated: {primaryAddress.ServiceableLocation.Area}, {primaryAddress.ServiceableLocation.City}");
 
-            // ✅ FIXED: Handle ScheduledFor as DateTime (not string)
-            DateTime deliveryDate;
+            // ✅ FIXED: Handle ScheduledFor as DateOnly (IST calendar date)
+            DateOnly deliveryDate;
             var istNow = TimeZoneHelper.NowIST();
             
             if (dto.ScheduledFor != default(DateTime))
             {
-                // Use the date from the DTO (already a DateTime)
-                deliveryDate = DateTime.SpecifyKind(dto.ScheduledFor.Date, DateTimeKind.Utc);
+                // Caller passed a DateTime — convert to IST to get the calendar date
+                var asIst = dto.ScheduledFor.Kind == DateTimeKind.Utc
+                    ? TimeZoneHelper.ToIST(dto.ScheduledFor)
+                    : dto.ScheduledFor;  // treat as IST if Unspecified
+                deliveryDate = DateOnly.FromDateTime(asIst);
                 
-                _logger.LogInformation($"📅 Using scheduled date from request: {deliveryDate:yyyy-MM-dd}");
+                _logger.LogInformation("[ScheduledOrder] Using scheduled date from request: {Date}", deliveryDate);
             }
             else
             {
                 // Fallback: use tomorrow if not provided
-                var tomorrowIst = istNow.Date.AddDays(1);
-                deliveryDate = DateTime.SpecifyKind(tomorrowIst, DateTimeKind.Utc);
+                deliveryDate = TimeZoneHelper.TodayIST().AddDays(1);
                 
-                _logger.LogInformation($"📅 No date provided, using tomorrow: {deliveryDate:yyyy-MM-dd}");
+                _logger.LogInformation("[ScheduledOrder] No date provided, using tomorrow: {Date}", deliveryDate);
             }
             
-            _logger.LogInformation($"📦 Order placed at: {istNow:yyyy-MM-dd HH:mm:ss} IST");
-            _logger.LogInformation($"🚚 Delivery scheduled for: {deliveryDate:yyyy-MM-dd}");
+            _logger.LogInformation("[ScheduledOrder] Order placed at: {Ist:yyyy-MM-dd HH:mm:ss} IST");
+            _logger.LogInformation("[ScheduledOrder] Delivery scheduled for: {Date}", deliveryDate);
 
             // ✅ Price calculation logic
             decimal totalPrice;
@@ -157,7 +159,7 @@ namespace Sovva.Application.Services
                 MealName = dto.MealName ?? "Custom Overnight Oats",
                 MealId = dto.MealId,               // ✅ ADD: Soft reference for traceability
                 MealImageUrl = dto.MealImageUrl,   // ✅ ADD: Snapshot for display
-                ScheduledFor = deliveryDate,
+                ScheduledFor = deliveryDate,       // ← DateOnly directly
                 DeliveryTimeSlot = dto.DeliveryTimeSlot ?? "8:00 AM",
                 TotalPrice = totalPrice,
                 NutritionalSummary = dto.NutritionalSummary != null
@@ -165,7 +167,8 @@ namespace Sovva.Application.Services
                     : null,
                 OrderStatus = "scheduled",
                 CanModify = true,
-                ExpiresAt = deliveryDate.AddDays(1),
+                // ExpiresAt is timestamptz — use UTC midnight of next day
+                ExpiresAt = TimeZoneHelper.ToUtc(deliveryDate.AddDays(1).ToDateTime(TimeOnly.MinValue)),
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow,
                 DeliveryAddressId = deliveryAddressId,
@@ -269,7 +272,7 @@ namespace Sovva.Application.Services
                     MealName = originalOrder.MealName,
                     MealId = originalOrder.MealId,               // ✅ ADD: Copy soft reference
                     MealImageUrl = originalOrder.MealImageUrl,   // ✅ ADD: Copy snapshot
-                    ScheduledFor = DateTime.SpecifyKind(originalOrder.ScheduledFor, DateTimeKind.Utc),
+                    ScheduledFor = originalOrder.ScheduledFor,  // DateOnly → DateOnly
                     DeliveryTimeSlot = originalOrder.DeliveryTimeSlot,
                     TotalPrice = originalOrder.TotalPrice,
                     NutritionalSummary = originalOrder.NutritionalSummary,
@@ -658,7 +661,7 @@ namespace Sovva.Application.Services
                 MealName = order.MealName,
                 MealId = order.MealId,               // ✅ ADD: Soft reference for traceability
                 MealImageUrl = order.MealImageUrl,   // ✅ ADD: Snapshot for display
-                ScheduledFor = order.ScheduledFor,
+                ScheduledFor = order.ScheduledFor.ToDateTime(TimeOnly.MinValue),  // DateOnly → DateTime for DTO
                 DeliveryTimeSlot = order.DeliveryTimeSlot,
                 TotalPrice = order.TotalPrice,
                 OrderStatus = order.OrderStatus,

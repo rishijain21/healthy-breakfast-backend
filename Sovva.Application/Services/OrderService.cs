@@ -560,8 +560,10 @@ namespace Sovva.Application.Services
                     OrderStatus       = OrderStatus.Confirmed,
                     TotalPrice        = scheduledOrder.TotalPrice,
 
-                    // ✅ ScheduledFor comes from DATE column → Kind=Unspecified → force UTC
-                    ScheduledFor = DateTime.SpecifyKind(scheduledOrder.ScheduledFor, DateTimeKind.Utc),
+                    // ✅ ScheduledFor comes from DATE column → DateOnly → convert to UTC midnight
+                    ScheduledFor = DateTime.SpecifyKind(
+                        scheduledOrder.ScheduledFor.ToDateTime(TimeOnly.MinValue), 
+                        DateTimeKind.Utc),
 
                     OrderDate = DateTime.UtcNow,
                     CreatedAt = DateTime.UtcNow,

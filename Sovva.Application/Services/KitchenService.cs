@@ -24,36 +24,31 @@ namespace Sovva.Application.Services
 
         public async Task<List<KitchenOrderDto>> GetOrdersForPreparationAsync()
         {
-            var utcNow = DateTime.UtcNow;
             var istNow = TimeZoneHelper.NowIST();
-            
-            // ✅ FIXED: Show orders for TODAY (not tomorrow)
-            var today = istNow.Date;
-            
-            Console.WriteLine($"🍳 [KitchenService] UTC Time: {utcNow:yyyy-MM-dd HH:mm:ss} UTC");
-            Console.WriteLine($"🍳 [KitchenService] IST Time: {istNow:yyyy-MM-dd HH:mm:ss} IST");
-            Console.WriteLine($"🍳 [KitchenService] Fetching orders for TODAY: {today:yyyy-MM-dd}");
-            
-            var deliveryDate = DateTime.SpecifyKind(today, DateTimeKind.Utc);
+            var todayIst = istNow.Date; // 2026-03-26
 
-            var orders = await _kitchenRepository.GetOrdersForPreparationAsync(deliveryDate);
+            _logger.LogInformation(
+                "[Kitchen] UTC={Utc:u}  IST={Ist:u}  Querying for IST date={Date:yyyy-MM-dd}",
+                DateTime.UtcNow, istNow, todayIst);
 
-            var result = orders.Select(o => MapToDto(o)).ToList();
+            // Pass the IST calendar date as Unspecified — repository owns the UTC conversion
+            var orders = await _kitchenRepository.GetOrdersForPreparationAsync(todayIst);
 
-            Console.WriteLine($"📦 [KitchenService] {result.Count} orders to prepare for TODAY ({today:yyyy-MM-dd})");
+            _logger.LogInformation("[Kitchen] {Count} orders found for {Date:yyyy-MM-dd}", 
+                orders.Count, todayIst);
 
-            return result;
+            return orders.Select(MapToDto).ToList();
         }
 
         public async Task<List<KitchenOrderDto>> GetOrdersForTomorrowAsync()
         {
             var istNow = TimeZoneHelper.NowIST();
             
-            var tomorrowDate = DateTime.SpecifyKind(istNow.Date.AddDays(1), DateTimeKind.Utc);
+            var tomorrowIst = istNow.Date.AddDays(1);
 
-            _logger.LogInformation($"🍳 Kitchen Preview: TOMORROW's delivery ({istNow.Date.AddDays(1):yyyy-MM-dd})");
+            _logger.LogInformation($"🍳 Kitchen Preview: TOMORROW's delivery ({tomorrowIst:yyyy-MM-dd})");
 
-            var orders = await _kitchenRepository.GetOrdersForPreparationAsync(tomorrowDate);
+            var orders = await _kitchenRepository.GetOrdersForPreparationAsync(tomorrowIst);
 
             var result = orders.Select(o => MapToDto(o)).ToList();
 
@@ -64,9 +59,8 @@ namespace Sovva.Application.Services
 
         public async Task<List<KitchenOrderDto>> GetOrdersForDateAsync(DateTime date)
         {
-            var utcDate = DateTime.SpecifyKind(date.Date, DateTimeKind.Utc);
-            
-            var orders = await _kitchenRepository.GetOrdersForPreparationAsync(utcDate);
+            // Pass the IST calendar date — repository owns the UTC conversion
+            var orders = await _kitchenRepository.GetOrdersForPreparationAsync(date.Date);
 
             return orders.Select(o => MapToDto(o)).ToList();
         }
@@ -92,10 +86,9 @@ namespace Sovva.Application.Services
         public async Task<KitchenStatsDto> GetTodayStatsAsync()
         {
             var istNow = TimeZoneHelper.NowIST();
-            
-            var deliveryDate = DateTime.SpecifyKind(istNow.Date, DateTimeKind.Utc);
+            var todayIst = istNow.Date;
 
-            var todayOrders = await _kitchenRepository.GetOrdersForPreparationAsync(deliveryDate);
+            var todayOrders = await _kitchenRepository.GetOrdersForPreparationAsync(todayIst);
 
             var stats = new KitchenStatsDto
             {
@@ -115,10 +108,9 @@ namespace Sovva.Application.Services
         public async Task<KitchenStatsDto> GetTomorrowStatsAsync()
         {
             var istNow = TimeZoneHelper.NowIST();
-            
-            var tomorrowDate = DateTime.SpecifyKind(istNow.Date.AddDays(1), DateTimeKind.Utc);
+            var tomorrowIst = istNow.Date.AddDays(1);
 
-            var tomorrowOrders = await _kitchenRepository.GetOrdersForPreparationAsync(tomorrowDate);
+            var tomorrowOrders = await _kitchenRepository.GetOrdersForPreparationAsync(tomorrowIst);
 
             var stats = new KitchenStatsDto
             {

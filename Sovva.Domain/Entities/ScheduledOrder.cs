@@ -25,7 +25,7 @@ namespace Sovva.Domain.Entities
         public string? MealImageUrl { get; set; }
         
         [Column(TypeName = "date")]
-        public DateTime ScheduledFor { get; set; } // Delivery date (date only)
+        public DateOnly ScheduledFor { get; set; } // Delivery date (date only)
         
         public string DeliveryTimeSlot { get; set; } = "10:00 AM";
         
