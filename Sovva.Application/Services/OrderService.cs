@@ -543,18 +543,14 @@ namespace Sovva.Application.Services
         // ✅ NEW: Dedicated method for confirming scheduled orders
         // No catalogue lookup, no UserMeal creation, no price recalculation
         // Everything comes from the snapshot
+        // NOTE: Wallet deduction is now done atomically in ScheduledOrderService.ConfirmAllScheduledOrdersAsync
+        // before calling this method, to prevent race conditions
         public async Task<int> ConfirmScheduledOrderAsync(ScheduledOrder scheduledOrder)
         {
             await _unitOfWork.BeginTransactionAsync();
             try
             {
-                // STEP 1: Debit wallet using snapshot price
-                await _walletService.DebitWalletAsync(
-                    scheduledOrder.UserId,
-                    scheduledOrder.TotalPrice,
-                    $"Scheduled delivery — {scheduledOrder.MealName}");
-
-                // STEP 2: Create Order directly from snapshot
+                // Create Order directly from snapshot (wallet already deducted atomically)
                 var order = new Order
                 {
                     UserId            = scheduledOrder.UserId,

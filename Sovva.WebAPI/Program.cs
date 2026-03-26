@@ -217,48 +217,36 @@ builder.Services.AddResponseCompression(options =>
 // ══════════════════════════════════════════════════
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowFrontend", policy =>
+    options.AddPolicy("CorsPolicy", policy =>
     {
         policy
             .SetIsOriginAllowed(origin =>
             {
-                if (string.IsNullOrEmpty(origin)) return false;
-                Uri uri;
-                if (!Uri.TryCreate(origin, UriKind.Absolute, out uri!)) return false;
+                if (string.IsNullOrWhiteSpace(origin))
+                    return false;
 
-                // Local development
-                if (uri.Host == "localhost" || uri.Host == "127.0.0.1")
+                if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri))
+                    return false;
+
+                var host = uri.Host.ToLower();
+
+                // ✅ Local development
+                if (host == "localhost" || host == "127.0.0.1")
                     return true;
 
-                // Vercel preview + production URLs for your project
-                if (uri.Host.EndsWith(".vercel.app"))
-                {
-                    // Check against configured slugs OR your project slug
-                    var slugs = corsConfig.AllowedVercelSlugs.Length > 0
-                        ? corsConfig.AllowedVercelSlugs
-                        : new[] { "rishijain21s-projects" };
-
-                    if (slugs.Any(slug => uri.Host.Contains(slug)))
-                        return true;
-                }
-
-                // Explicit production origins from config/env
-                var productionOrigin = Environment.GetEnvironmentVariable("PRODUCTION_ORIGIN")
-                    ?? builder.Configuration["Cors:ProductionOrigin"];
-
-                if (!string.IsNullOrEmpty(productionOrigin) &&
-                    origin.Equals(productionOrigin, StringComparison.OrdinalIgnoreCase))
+                // ✅ Production frontend (VERY IMPORTANT)
+                if (host == "sovva.vercel.app")
                     return true;
 
-                // Explicit allowed origins from config
-                if (corsConfig.AllowedOrigins.Any(o =>
-                    o.Equals(origin, StringComparison.OrdinalIgnoreCase)))
+                // ✅ Allow ALL Vercel deployments (preview + future)
+                if (host.EndsWith(".vercel.app"))
                     return true;
 
                 return false;
             })
             .AllowAnyHeader()
-            .AllowAnyMethod();
+            .AllowAnyMethod()
+            .AllowCredentials(); // keep if using JWT/auth
     });
 });
 
@@ -422,7 +410,7 @@ var app = builder.Build();
 // Middleware order matters — do not rearrange
 app.UseMiddleware<GlobalExceptionMiddleware>(); // 1. catch all errors
 app.UseMiddleware<CorrelationIdMiddleware>();     // 2. add correlation ID for tracing
-app.UseCors("AllowFrontend");                  // 2. CORS headers on every response
+app.UseCors("CorsPolicy");                  // 2. CORS headers on every response
 app.UseSerilogRequestLogging();                // 3. request logs
 app.UseResponseCompression();                  // 4. compress
 app.UseRateLimiter();                          // 5. rate limit

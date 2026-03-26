@@ -167,7 +167,7 @@ namespace Sovva.Application.Services
                     _logger.LogInformation($"📍 Using delivery address ID: {deliveryAddressId} for subscription {subscription.SubscriptionId}");
 
                     // ✅ Create scheduled order for TOMORROW with adjusted quantities
-                    var tomorrowDateTime = istNow.Date.AddDays(1);
+                    var tomorrowIst = istNow.Date.AddDays(1); // midnight IST
 
                     var scheduledOrderDto = new CreateScheduledOrderDto
                     {
@@ -178,7 +178,7 @@ namespace Sovva.Application.Services
                             IngredientId = i.IngredientId,
                             Quantity = i.Quantity * quantity  // ✅ Multiply by quantity
                         }).ToList(),
-                        ScheduledFor = DateTime.SpecifyKind(tomorrowDateTime, DateTimeKind.Utc),
+                        ScheduledFor = TimeZoneHelper.ToUtc(tomorrowIst), // properly converts IST → UTC
                         DeliveryTimeSlot = "7:00 AM",
                         DeliveryAddressId = deliveryAddressId, // ✅ ADD: Link to delivery address
                         NutritionalSummary = null,
@@ -381,7 +381,7 @@ namespace Sovva.Application.Services
             }
 
             // Create scheduled order for tomorrow
-            var tomorrowDateTime = istNow.Date.AddDays(1);
+            var tomorrowIst = istNow.Date.AddDays(1); // midnight IST
 
             var scheduledOrderDto = new CreateScheduledOrderDto
             {
@@ -392,7 +392,7 @@ namespace Sovva.Application.Services
                     IngredientId = i.IngredientId,
                     Quantity = i.Quantity * quantity
                 }).ToList(),
-                ScheduledFor = DateTime.SpecifyKind(tomorrowDateTime, DateTimeKind.Utc),
+                ScheduledFor = TimeZoneHelper.ToUtc(tomorrowIst), // properly converts IST → UTC
                 DeliveryTimeSlot = "7:00 AM",
                 DeliveryAddressId = deliveryAddressId,
                 NutritionalSummary = null,

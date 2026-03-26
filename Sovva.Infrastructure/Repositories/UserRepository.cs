@@ -113,5 +113,20 @@ namespace Sovva.Infrastructure.Repositories
                 .Include(u => u.AuthMapping)
                 .Where(u => userIds.Contains(u.UserId))
                 .ToListAsync();
+
+        // ✅ NEW: Atomic wallet deduction with balance check (prevents race conditions)
+        // Returns the new balance if successful, or null if insufficient funds
+        public async Task<bool> DeductWalletBalanceAtomicAsync(int userId, decimal amount)
+        {
+            // Use raw SQL for atomic UPDATE with condition
+            // This ensures the check-and-deduct is a single atomic operation
+            var rowsAffected = await _context.Database.ExecuteSqlRawAsync(
+                @"UPDATE users 
+                  SET wallet_balance = wallet_balance - {0}, updated_at = {1}
+                  WHERE user_id = {2} AND wallet_balance >= {0}",
+                amount, DateTime.UtcNow, userId);
+
+            return rowsAffected == 1;
+        }
     }
 }

@@ -21,5 +21,8 @@ namespace Sovva.Application.Interfaces
 
         // ✅ NEW: Batch get users with AuthMapping by user IDs (for generation job optimization)
         Task<List<User>> GetByIdsWithAuthMappingAsync(List<int> userIds);
+
+        // ✅ NEW: Atomic wallet deduction with balance check (prevents race conditions)
+        Task<bool> DeductWalletBalanceAtomicAsync(int userId, decimal amount);
     }
 }

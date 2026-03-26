@@ -474,13 +474,6 @@ namespace Sovva.Application.Services
                 .Where(u => u.AuthMapping != null)
                 .ToDictionary(u => u.AuthMapping!.AuthId);
 
-            var addressIds = pendingOrders
-                .Where(o => o.DeliveryAddressId.HasValue)
-                .Select(o => o.DeliveryAddressId!.Value)
-                .Distinct().ToList();
-            var addresses = await _userAddressRepository.GetByIdsAsync(addressIds);
-            var addressesById = addresses.ToDictionary(a => a.Id);
-
             int confirmedCount = 0;
             int failedCount = 0;
 
@@ -514,18 +507,7 @@ namespace Sovva.Application.Services
                         continue;
                     }
 
-                    // ✅ Use pre-loaded dictionary instead of DB call
-                    if (!addressesById.TryGetValue(deliveryAddressId.Value, out var address))
-                    {
-                        _logger.LogWarning($"❌ FAIL: Address not found for order #{scheduledOrder.ScheduledOrderId}");
-                        scheduledOrder.OrderStatus = "failed";
-                        scheduledOrder.CanModify = false;
-                        await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
-                        failedCount++;
-                        continue;
-                    }
-
-                    // Load ServiceableLocation for address
+                    // ✅ Use GetByIdWithDetailsAsync to load ServiceableLocation
                     var addressWithLocation = await _userAddressRepository.GetByIdWithDetailsAsync(deliveryAddressId.Value);
                     
                     _logger.LogInformation($"🔍 Validating order #{scheduledOrder.ScheduledOrderId}");
@@ -553,7 +535,7 @@ namespace Sovva.Application.Services
                         continue;
                     }
                     
-                    if (!address.ServiceableLocation.IsActive)
+                    if (!addressWithLocation.ServiceableLocation.IsActive)
                     {
                         _logger.LogWarning($"❌ FAIL: ServiceableLocation inactive for order #{scheduledOrder.ScheduledOrderId}");
                         scheduledOrder.OrderStatus = "failed";
@@ -563,14 +545,11 @@ namespace Sovva.Application.Services
                         continue;
                     }
 
-                    // ✅ FIX: Check wallet balance against FRESH database value to prevent race condition
-                    // If we use the pre-loaded user dict, all 7 orders could pass with ₹100 wallet (14.29 each)
-                    var freshUser = await _userRepository.GetByIdAsync(user.UserId);
-                    if (freshUser == null || freshUser.WalletBalance < scheduledOrder.TotalPrice)
+                    // ✅ FIX: Use atomic wallet deduction to prevent race condition
+                    bool deducted = await _userRepository.DeductWalletBalanceAtomicAsync(user.UserId, scheduledOrder.TotalPrice);
+                    if (!deducted)
                     {
-                        _logger.LogWarning(
-                            $"❌ Insufficient balance for order #{scheduledOrder.ScheduledOrderId}. " +
-                            $"Required: ₹{scheduledOrder.TotalPrice}, Available: ₹{freshUser?.WalletBalance ?? 0}");
+                        _logger.LogWarning($"❌ Insufficient balance for order #{scheduledOrder.ScheduledOrderId}. Required: ₹{scheduledOrder.TotalPrice}");
                         
                         scheduledOrder.OrderStatus = "cancelled";
                         scheduledOrder.CanModify = false;
