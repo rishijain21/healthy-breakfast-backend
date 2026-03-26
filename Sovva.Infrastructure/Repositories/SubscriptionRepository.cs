@@ -76,17 +76,20 @@ namespace Sovva.Infrastructure.Repositories
             return subscription;
         }
 
-        public async Task<Subscription> UpdateAsync(Subscription subscription)
-        {
-            // UpdatedAt handled by TimestampInterceptor
-            
-            // ✅ Use Attach + State.Modified instead of Update to avoid tracking conflicts
-            _context.Subscriptions.Attach(subscription);
-            _context.Entry(subscription).State = EntityState.Modified;
-            await _context.SaveChangesAsync();
-            return subscription;
-        }
+public async Task<Subscription> UpdateAsync(Subscription subscription)
+{
+    // Detach any existing tracked instance to avoid identity conflict
+    // This happens when batch-loaded entities are still in the DbContext tracker
+    var tracked = _context.ChangeTracker.Entries<Subscription>()
+        .FirstOrDefault(e => e.Entity.SubscriptionId == subscription.SubscriptionId);
 
+    if (tracked != null)
+        tracked.State = EntityState.Detached;
+
+    _context.Subscriptions.Update(subscription);
+    await _context.SaveChangesAsync();
+    return subscription;
+}
         /// <summary>
         /// ✅ NEW: Batch update multiple subscriptions in a single transaction
         /// </summary>
