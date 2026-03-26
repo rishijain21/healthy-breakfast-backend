@@ -570,6 +570,16 @@ namespace Sovva.Application.Services
 
                 await _orderRepository.AddAsync(order);
                 await _unitOfWork.SaveChangesAsync();
+
+                // ✅ Write the wallet transaction record so the ledger matches the balance deduction
+                // that was already applied atomically in ConfirmAllScheduledOrdersAsync
+                await _walletService.WriteTransactionRecordAsync(
+                    scheduledOrder.UserId,
+                    scheduledOrder.TotalPrice,
+                    "Debit",
+                    $"Order #{order.OrderId} - {scheduledOrder.MealName}"
+                );
+
                 await _unitOfWork.CommitAsync();
 
                 return order.OrderId;

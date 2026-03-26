@@ -1,5 +1,3 @@
-// Sovva.WebAPI/Program.cs
-
 using Serilog;
 using Sovva.Application.Helpers;
 using Sovva.Application.Interfaces;

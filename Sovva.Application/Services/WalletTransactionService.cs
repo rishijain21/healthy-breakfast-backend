@@ -181,6 +181,20 @@ namespace Sovva.Application.Services
         public async Task<decimal> GetWalletBalanceAsync(int userId)
             => await GetUserBalanceAsync(userId);
 
+        // ✅ NEW: Write transaction record without balance check (balance already deducted atomically)
+        public async Task WriteTransactionRecordAsync(int userId, decimal amount, string type, string description)
+        {
+            // No balance check — balance already adjusted atomically upstream
+            var transaction = new WalletTransaction
+            {
+                UserId = userId,
+                Amount = amount,
+                Type = type,
+                Description = description
+            };
+            await _walletTransactionRepository.CreateAsync(transaction);
+        }
+
         private static WalletTransactionDto MapToDto(WalletTransaction t)
             => new WalletTransactionDto
             {

@@ -17,5 +17,8 @@ Task<decimal> GetWalletBalanceAsync(int userId);
         Task<WalletTransactionDto> TopUpWalletAsync(int userId, WalletTopUpDto topUpDto);
         Task<WalletTransactionDto> DebitWalletAsync(int userId, decimal amount, string description);
         Task<bool> HasSufficientBalanceAsync(int userId, decimal amount);
+
+        // ✅ NEW: Write transaction record without balance check (balance already deducted atomically)
+        Task WriteTransactionRecordAsync(int userId, decimal amount, string type, string description);
     }
 }
