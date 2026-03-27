@@ -521,11 +521,11 @@ try
             MisfireHandling = MisfireHandlingMode.Relaxed
         });
 
-    // 4. Generate tomorrow's subscription orders — always AFTER confirmation
+    // 4. Generate tomorrow's subscription orders at 11:00 PM — gives users time to modify
     jobs.AddOrUpdate<ISubscriptionSchedulingService>(
         "subscription-order-generation",
         s => s.GenerateScheduledOrdersFromSubscriptionsAsync(),
-        "1 0 * * *",
+        "0 23 * * *",   // 11:00 PM IST - run BEFORE midnight so orders exist for confirmation
         new RecurringJobOptions
         {
             TimeZone = istZone,
