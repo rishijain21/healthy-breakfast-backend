@@ -458,8 +458,11 @@ namespace Sovva.Application.Services
             _logger.LogInformation($"📦 Found {scheduledOrders.Count} total orders for {deliveryDate:yyyy-MM-dd}");
 
             // ✅ IDEMPOTENCY: Skip orders already "scheduled" or "processing" to prevent double-run on retry
+            // Also include "failed" to allow retry on failed orders
             var pendingOrders = scheduledOrders
-                .Where(o => o.OrderStatus.ToLower() == "scheduled" || o.OrderStatus.ToLower() == "processing")
+                .Where(o => o.OrderStatus.ToLower() == "scheduled" 
+                         || o.OrderStatus.ToLower() == "processing"
+                         || o.OrderStatus.ToLower() == "failed")
                 .ToList();
 
             _logger.LogInformation($"📋 {pendingOrders.Count} orders pending confirmation");
