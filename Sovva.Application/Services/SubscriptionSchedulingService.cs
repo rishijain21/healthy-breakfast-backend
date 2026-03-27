@@ -54,10 +54,10 @@ namespace Sovva.Application.Services
         {
             var istNow = _time.ToIst(_time.UtcNow);
             var today = _time.TodayIst;
-            var tomorrow = today.AddDays(1);
+            var deliveryDate = today; // Generate for TODAY instead of tomorrow
             
             _logger.LogInformation($"🥛 [MILKBASKET SUBSCRIPTION JOB] Starting at {istNow:yyyy-MM-dd HH:mm:ss} IST");
-            _logger.LogInformation($"📦 Creating scheduled orders for TOMORROW's delivery: {tomorrow:yyyy-MM-dd} ({tomorrow.DayOfWeek})");
+            _logger.LogInformation($"📦 Creating scheduled orders for TODAY's delivery: {deliveryDate:yyyy-MM-dd} ({deliveryDate.DayOfWeek})");
 
             var allSubscriptions = await _subscriptionRepo.GetActiveSubscriptionsAsync();
             
@@ -89,16 +89,16 @@ namespace Sovva.Application.Services
             {
                 try
                 {
-                    // ✅ Check if this subscription should generate an order for tomorrow
-                    if (!ShouldGenerateOrderForDate(subscription, tomorrow))
+                    // ✅ Check if this subscription should generate an order for TODAY
+                    if (!ShouldGenerateOrderForDate(subscription, deliveryDate))
                     {
                         skippedCount++;
                         continue;
                     }
 
                     // ✅ FIX 5: Guard against expired subscriptions
-                    // EndDate is the last valid delivery date — skip if tomorrow is past it
-                    if (subscription.EndDate < tomorrow)
+                    // EndDate is the last valid delivery date — skip if today is past it
+                    if (subscription.EndDate < deliveryDate)
                     {
                         _logger.LogInformation(
                             "⏭️ Subscription #{SubscriptionId} expired on {EndDate}, skipping",
@@ -107,21 +107,22 @@ namespace Sovva.Application.Services
                         continue;
                     }
 
-                    // ✅ Get quantity for tomorrow (especially important for weekly subscriptions)
-                    int quantity = GetQuantityForDate(subscription, tomorrow);
+                    // ✅ Get quantity for today (especially important for weekly subscriptions)
+                    int quantity = GetQuantityForDate(subscription, deliveryDate);
                     
                     _logger.LogInformation(
                         $"🔄 Processing subscription #{subscription.SubscriptionId} " +
                         $"(Frequency: {subscription.Frequency}, Quantity: {quantity})");
 
-                    // ✅ NEW: Check if order already exists for this subscription on tomorrow (prevent duplicates on retry)
+                    // ✅ NEW: Check if order already exists for this subscription on TODAY (prevent duplicates on retry)
+                    // Note: This includes failed orders - we want to allow retry on failed orders
                     var existingOrder = await _scheduledOrderRepo.GetBySubscriptionIdAndDateAsync(
-                        subscription.SubscriptionId, tomorrow);
+                        subscription.SubscriptionId, deliveryDate);
                     if (existingOrder != null)
                     {
                         _logger.LogInformation(
                             "⏭️ Order already exists for subscription #{SubscriptionId} on {Date}, skipping (prevented duplicate)",
-                            subscription.SubscriptionId, tomorrow);
+                            subscription.SubscriptionId, deliveryDate);
                         skippedCount++;
                         continue;
                     }
@@ -169,7 +170,7 @@ namespace Sovva.Application.Services
                     
                     _logger.LogInformation($"📍 Using delivery address ID: {deliveryAddressId} for subscription {subscription.SubscriptionId}");
 
-                    // ✅ Create scheduled order for TOMORROW with adjusted quantities
+                    // ✅ Create scheduled order for TODAY with adjusted quantities
 
                     var scheduledOrderDto = new CreateScheduledOrderDto
                     {
@@ -180,7 +181,7 @@ namespace Sovva.Application.Services
                             IngredientId = i.IngredientId,
                             Quantity = i.Quantity * quantity  // ✅ Multiply by quantity
                         }).ToList(),
-                        ScheduledFor = tomorrow.ToDateTime(TimeOnly.MinValue), // DateOnly → DateTime, no UTC conversion
+                        ScheduledFor = deliveryDate.ToDateTime(TimeOnly.MinValue), // DateOnly → DateTime, no UTC conversion
                         DeliveryTimeSlot = "7:00 AM",
                         DeliveryAddressId = deliveryAddressId, // ✅ ADD: Link to delivery address
                         NutritionalSummary = null,
@@ -191,14 +192,14 @@ namespace Sovva.Application.Services
                     await _scheduledOrderService.CreateScheduledOrderAsync(user.UserId, user.AuthMapping.AuthId, scheduledOrderDto, skipWalletCheck: true);
 
                     // ✅ Update NextScheduledDate
-                    subscription.NextScheduledDate = CalculateNextScheduledDate(subscription, tomorrow);
+                    subscription.NextScheduledDate = CalculateNextScheduledDate(subscription, deliveryDate);
                     subscription.UpdatedAt = _time.UtcNow;
                     await _subscriptionRepo.UpdateAsync(subscription);
 
                     generatedCount++;
                     _logger.LogInformation(
                         $"✅ Generated order for subscription #{subscription.SubscriptionId} " +
-                        $"({userMeal.MealName}) - Delivery: {tomorrow:yyyy-MM-dd}, Qty: {quantity}, Next: {subscription.NextScheduledDate:yyyy-MM-dd}");
+                        $"({userMeal.MealName}) - Delivery: {deliveryDate:yyyy-MM-dd}, Qty: {quantity}, Next: {subscription.NextScheduledDate:yyyy-MM-dd}");
                 }
                 catch (Exception ex)
                 {
@@ -337,19 +338,19 @@ namespace Sovva.Application.Services
 
             var istNow = _time.ToIst(_time.UtcNow);
             var today = _time.TodayIst;
-            var tomorrow = today.AddDays(1);
+            var deliveryDate = today; // Generate for TODAY
 
-            _logger.LogInformation($"📦 Generating immediate order for subscription #{subscriptionId} (Tomorrow: {tomorrow:yyyy-MM-dd})");
+            _logger.LogInformation($"📦 Generating immediate order for subscription #{subscriptionId} (Today: {deliveryDate:yyyy-MM-dd})");
 
-            // Check if subscription should generate an order for tomorrow
-            if (!ShouldGenerateOrderForDate(subscription, tomorrow))
+            // Check if subscription should generate an order for today
+            if (!ShouldGenerateOrderForDate(subscription, deliveryDate))
             {
-                _logger.LogInformation($"⏭️ Subscription #{subscriptionId} not scheduled for {tomorrow:yyyy-MM-dd}");
+                _logger.LogInformation($"⏭️ Subscription #{subscriptionId} not scheduled for {deliveryDate:yyyy-MM-dd}");
                 return;
             }
 
             // Get quantity for tomorrow
-            int quantity = GetQuantityForDate(subscription, tomorrow);
+            int quantity = GetQuantityForDate(subscription, deliveryDate);
 
             // Get UserMeal details
             var userMeal = await _userMealRepo.GetByIdAsync(subscription.UserMealId);
@@ -389,7 +390,7 @@ namespace Sovva.Application.Services
                 deliveryAddressId = primaryAddress.Id;
             }
 
-            // Create scheduled order for tomorrow
+            // Create scheduled order for TODAY
 
             var scheduledOrderDto = new CreateScheduledOrderDto
             {
@@ -400,7 +401,7 @@ namespace Sovva.Application.Services
                     IngredientId = i.IngredientId,
                     Quantity = i.Quantity * quantity
                 }).ToList(),
-                ScheduledFor = tomorrow.ToDateTime(TimeOnly.MinValue), // DateOnly → DateTime, no UTC conversion
+                ScheduledFor = deliveryDate.ToDateTime(TimeOnly.MinValue), // DateOnly → DateTime, no UTC conversion
                 DeliveryTimeSlot = "7:00 AM",
                 DeliveryAddressId = deliveryAddressId,
                 NutritionalSummary = null,
@@ -412,7 +413,7 @@ namespace Sovva.Application.Services
 
             _logger.LogInformation(
                 $"✅ Generated order for subscription #{subscriptionId} " +
-                $"({userMeal.MealName}) - Delivery: {tomorrow:yyyy-MM-dd}, Qty: {quantity}");
+                $"({userMeal.MealName}) - Delivery: {deliveryDate:yyyy-MM-dd}, Qty: {quantity}");
         }
 
         /// <summary>

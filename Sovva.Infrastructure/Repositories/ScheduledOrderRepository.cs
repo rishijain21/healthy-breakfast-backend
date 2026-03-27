@@ -190,7 +190,8 @@ namespace Sovva.Infrastructure.Repositories
                 .AsNoTracking()
                 .FirstOrDefaultAsync(so => 
                     so.SubscriptionId == subscriptionId &&
-                    so.ScheduledFor == date);  // DateOnly == DateOnly
+                    so.ScheduledFor == date &&
+                    so.OrderStatus != "failed");  // ← allow retry on failed orders
         }
 
         // ─────────────────────────────────────────────────────────────────────
