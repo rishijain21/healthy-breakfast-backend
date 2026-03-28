@@ -192,7 +192,8 @@ namespace Sovva.Application.Services
                 Type = type,
                 Description = description
             };
-            await _walletTransactionRepository.CreateAsync(transaction);
+            // ✅ Use WriteRecordOnlyAsync — balance already deducted atomically upstream
+            await _walletTransactionRepository.WriteRecordOnlyAsync(transaction);
         }
 
         private static WalletTransactionDto MapToDto(WalletTransaction t)

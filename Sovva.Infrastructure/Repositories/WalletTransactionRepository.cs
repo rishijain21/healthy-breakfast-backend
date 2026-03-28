@@ -109,5 +109,16 @@ namespace Sovva.Infrastructure.Repositories
                 await _context.SaveChangesAsync();
             }
         }
+
+        /// <summary>
+        /// ✅ NEW: Write ledger record ONLY — no wallet balance update
+        /// Used when balance is already deducted atomically upstream (midnight confirm job)
+        /// </summary>
+        public async Task WriteRecordOnlyAsync(WalletTransaction transaction)
+        {
+            _context.WalletTransactions.Add(transaction);
+            await _context.SaveChangesAsync();
+            // ❌ Do NOT call UpdateUserWalletBalance — balance already correct
+        }
     }
 }

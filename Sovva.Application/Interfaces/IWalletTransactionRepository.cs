@@ -14,5 +14,11 @@ namespace Sovva.Application.Interfaces
         Task<bool> HasSufficientBalanceAsync(int userId, decimal amount);
         Task<(decimal totalCredits, decimal totalDebits, int transactionCount, DateTime? lastTransactionDate)> GetUserWalletSummaryAsync(int userId);
         Task AcquireUserWalletLockAsync(int userId);
+
+        /// <summary>
+        /// ✅ NEW: Write ledger record ONLY — no wallet balance update
+        /// Used when balance is already deducted atomically upstream (midnight confirm job)
+        /// </summary>
+        Task WriteRecordOnlyAsync(WalletTransaction transaction);
     }
 }
