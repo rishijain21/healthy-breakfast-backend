@@ -123,10 +123,11 @@ namespace Sovva.Infrastructure.Repositories
         {
             // Use raw SQL for atomic UPDATE with condition
             // This ensures the check-and-deduct is a single atomic operation
-            var rowsAffected = await _context.Database.ExecuteSqlRawAsync(
+            // CORRECT — match exact column names from your schema
+var rowsAffected = await _context.Database.ExecuteSqlRawAsync(
     @"UPDATE public.""Users"" 
-      SET wallet_balance = wallet_balance - @p0, updated_at = @p1
-      WHERE user_id = @p2 AND wallet_balance >= @p0",
+       SET ""WalletBalance"" = ""WalletBalance"" - @p0, ""UpdatedAt"" = @p1
+       WHERE ""UserId"" = @p2 AND ""WalletBalance"" >= @p0",
     amount, DateTime.UtcNow, userId);
 
             return rowsAffected == 1;
