@@ -21,5 +21,11 @@ namespace Sovva.Application.Interfaces
         // ✅ NEW: Enhanced methods with eager loading
         Task<IEnumerable<Order>> GetUserOrdersWithDetailsAsync(int userId);
         Task<IEnumerable<Order>> GetAllOrdersWithDetailsAsync();
+
+        /// <summary>
+        /// ✅ NEW: Get order by ScheduledOrderId for idempotency check
+        /// Used by midnight job to check if order was already created
+        /// </summary>
+        Task<Order?> GetByScheduledOrderIdAsync(int scheduledOrderId);
     }
 }

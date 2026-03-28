@@ -479,117 +479,11 @@ namespace Sovva.Application.Services
 
             foreach (var scheduledOrder in pendingOrders)
             {
-                try
-                {
-                    _logger.LogInformation($"🔄 Processing order #{scheduledOrder.ScheduledOrderId}");
-
-                    // ✅ Use pre-loaded dictionary instead of DB call
-                    if (!usersByAuthId.TryGetValue(scheduledOrder.AuthId, out var user))
-                    {
-                        _logger.LogWarning($"❌ User not found for order #{scheduledOrder.ScheduledOrderId}");
-                        scheduledOrder.OrderStatus = "failed";
-                        scheduledOrder.CanModify = false;
-                        await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
-                        failedCount++;
-                        continue;
-                    }
-
-                    // ✅ Use the scheduled order's DeliveryAddressId (preserve original address)
-                    var deliveryAddressId = scheduledOrder.DeliveryAddressId;
-                    
-                    if (deliveryAddressId == null)
-                    {
-                        _logger.LogWarning($"❌ No delivery address for order #{scheduledOrder.ScheduledOrderId}");
-                        scheduledOrder.OrderStatus = "failed";
-                        scheduledOrder.CanModify = false;
-                        await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
-                        failedCount++;
-                        continue;
-                    }
-
-                    // ✅ Use GetByIdWithDetailsAsync to load ServiceableLocation
-                    var addressWithLocation = await _userAddressRepository.GetByIdWithDetailsAsync(deliveryAddressId.Value);
-                    
-                    _logger.LogInformation($"🔍 Validating order #{scheduledOrder.ScheduledOrderId}");
-                    _logger.LogInformation($"📍 Address loaded: {addressWithLocation != null}");
-                    _logger.LogInformation($"📍 ServiceableLocation loaded: {addressWithLocation?.ServiceableLocation != null}");
-                    _logger.LogInformation($"📍 ServiceableLocation active: {addressWithLocation?.ServiceableLocation?.IsActive}");
-                    
-                    if (addressWithLocation == null)
-                    {
-                        _logger.LogWarning($"❌ FAIL: Address not found for order #{scheduledOrder.ScheduledOrderId}");
-                        scheduledOrder.OrderStatus = "failed";
-                        scheduledOrder.CanModify = false;
-                        await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
-                        failedCount++;
-                        continue;
-                    }
-                    
-                    if (addressWithLocation.ServiceableLocation == null)
-                    {
-                        _logger.LogWarning($"❌ FAIL: ServiceableLocation is null for address #{deliveryAddressId}");
-                        scheduledOrder.OrderStatus = "failed";
-                        scheduledOrder.CanModify = false;
-                        await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
-                        failedCount++;
-                        continue;
-                    }
-                    
-                    if (!addressWithLocation.ServiceableLocation.IsActive)
-                    {
-                        _logger.LogWarning($"❌ FAIL: ServiceableLocation inactive for order #{scheduledOrder.ScheduledOrderId}");
-                        scheduledOrder.OrderStatus = "failed";
-                        scheduledOrder.CanModify = false;
-                        await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
-                        failedCount++;
-                        continue;
-                    }
-
-                    // ✅ FIX: Use atomic wallet deduction to prevent race condition
-                    bool deducted = await _userRepository.DeductWalletBalanceAtomicAsync(user.UserId, scheduledOrder.TotalPrice);
-                    if (!deducted)
-                    {
-                        _logger.LogWarning($"❌ Insufficient balance for order #{scheduledOrder.ScheduledOrderId}. Required: ₹{scheduledOrder.TotalPrice}");
-                        
-                        scheduledOrder.OrderStatus = "cancelled";
-                        scheduledOrder.CanModify = false;
-                        await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
-                        failedCount++;
-                        continue;
-                    }
-
-                    // ✅ IDEMPOTENCY GUARD: Mark as "processing" FIRST before doing any financial operation
-                    // If the job retries, "processing" orders will be skipped (see filter above)
-                    scheduledOrder.OrderStatus = "processing";
-                    await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
-
-                    // ✅ NEW: Use dedicated method for confirming scheduled orders
-                    // No catalogue lookup, no UserMeal creation, no price recalculation
-                    var orderId = await _orderService.ConfirmScheduledOrderAsync(scheduledOrder);
-
-                    _logger.LogInformation(
-                        $"✅ Confirmed! Created Order #{orderId} from cart order #{scheduledOrder.ScheduledOrderId}");
-                    _logger.LogInformation($"   📍 Delivers to address ID: {scheduledOrder.DeliveryAddressId}");
-                    _logger.LogInformation($"   💰 Amount charged: ₹{scheduledOrder.TotalPrice}");
-
-                    // ✅ FIX: Populate audit trail fields
-                    scheduledOrder.OrderStatus = "processed";
-                    scheduledOrder.CanModify = false;
-                    scheduledOrder.ConfirmedAt = _time.UtcNow;
-                    scheduledOrder.IsProcessedToOrder = true;    // ✅ Audit: mark as processed
-                    scheduledOrder.ConfirmedOrderId = orderId; // ✅ Audit: link to confirmed order
-                    await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
-
-                    confirmedCount++;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, $"❌ Failed to confirm order #{scheduledOrder.ScheduledOrderId}");
-                    scheduledOrder.OrderStatus = "failed";
-                    scheduledOrder.CanModify = false;
-                    await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
-                    failedCount++;
-                }
+                // ✅ INDUSTRY PATTERN: Each order fully isolated
+                // One failure never affects the next order
+                var success = await ConfirmSingleOrderAsync(scheduledOrder, usersByAuthId);
+                if (success) confirmedCount++;
+                else failedCount++;
             }
 
             _logger.LogInformation($"🎉 [MIDNIGHT JOB] Complete!");
@@ -681,6 +575,117 @@ namespace Sovva.Application.Services
                 // ✅ ADD: Subscription ID for filtering orders by subscription
                 SubscriptionId = order.SubscriptionId
             };
+        }
+
+        // ----------------------------------------------------------------------------------------
+        // ✅ Each order gets its own isolated execution scope
+        // Safe to retry — idempotency handled inside ConfirmSingleOrderAsync
+        // ----------------------------------------------------------------------------------------
+        private async Task<bool> ConfirmSingleOrderAsync(
+            ScheduledOrder scheduledOrder,
+            Dictionary<Guid, User> usersByAuthId)
+        {
+            try
+            {
+                _logger.LogInformation(
+                    "🔄 Processing order #{Id}", scheduledOrder.ScheduledOrderId);
+
+                // ── STEP 1: Validate user ────────────────────────────────────────
+                if (!usersByAuthId.TryGetValue(scheduledOrder.AuthId, out var user))
+                {
+                    _logger.LogWarning(
+                        "❌ User not found for order #{Id}",
+                        scheduledOrder.ScheduledOrderId);
+                    await _scheduledOrderRepository.MarkAsAsync(
+                        scheduledOrder.ScheduledOrderId, "failed");
+                    return false;
+                }
+
+                // ── STEP 2: Validate address ─────────────────────────────────────
+                if (scheduledOrder.DeliveryAddressId == null)
+                {
+                    _logger.LogWarning(
+                        "❌ No delivery address for order #{Id}",
+                        scheduledOrder.ScheduledOrderId);
+                    await _scheduledOrderRepository.MarkAsAsync(
+                        scheduledOrder.ScheduledOrderId, "failed");
+                    return false;
+                }
+
+                var address = await _userAddressRepository
+                    .GetByIdWithDetailsAsync(scheduledOrder.DeliveryAddressId.Value);
+
+                if (address?.ServiceableLocation == null 
+                    || !address.ServiceableLocation.IsActive)
+                {
+                    _logger.LogWarning(
+                        "❌ Invalid/inactive address for order #{Id}",
+                        scheduledOrder.ScheduledOrderId);
+                    await _scheduledOrderRepository.MarkAsAsync(
+                        scheduledOrder.ScheduledOrderId, "failed");
+                    return false;
+                }
+
+                _logger.LogInformation(
+                    "📍 Address validated: {Area} — active: {Active}",
+                    address.ServiceableLocation.Area,
+                    address.ServiceableLocation.IsActive);
+
+                // ── STEP 3: IDEMPOTENCY — did a previous attempt create the Order? ──
+                var existingOrder = await _orderService
+                    .GetByScheduledOrderIdAsync(scheduledOrder.ScheduledOrderId);
+
+                if (existingOrder != null)
+                {
+                    _logger.LogInformation(
+                        "♻️ Order #{OrderId} already exists — marking processed",
+                        existingOrder.OrderId);
+                    await _scheduledOrderRepository.MarkAsProcessedAsync(
+                        scheduledOrder.ScheduledOrderId,
+                        existingOrder.OrderId,
+                        _time.UtcNow);
+                    return true;
+                }
+
+                // ── STEP 4: Atomic wallet deduction ──────────────────────────────
+                bool deducted = await _userRepository
+                    .DeductWalletBalanceAtomicAsync(user.UserId, scheduledOrder.TotalPrice);
+
+                if (!deducted)
+                {
+                    _logger.LogWarning(
+                        "❌ Insufficient balance for order #{Id}. Required: ₹{Price}",
+                        scheduledOrder.ScheduledOrderId, scheduledOrder.TotalPrice);
+                    await _scheduledOrderRepository.MarkAsAsync(
+                        scheduledOrder.ScheduledOrderId, "cancelled");
+                    return false;
+                }
+
+                // ── STEP 5: Create Order row ──────────────────────────────────────
+                var orderId = await _orderService
+                    .ConfirmScheduledOrderAsync(scheduledOrder);
+
+                // ── STEP 6: Mark scheduled order processed — raw SQL, no EF tracker
+                await _scheduledOrderRepository.MarkAsProcessedAsync(
+                    scheduledOrder.ScheduledOrderId,
+                    orderId,
+                    _time.UtcNow);
+
+                _logger.LogInformation(
+                    "✅ Confirmed! Order #{OrderId} ← ScheduledOrder #{Id} — ₹{Price}",
+                    orderId, scheduledOrder.ScheduledOrderId, scheduledOrder.TotalPrice);
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "❌ Exception confirming order #{Id}",
+                    scheduledOrder.ScheduledOrderId);
+                await _scheduledOrderRepository.MarkAsAsync(
+                    scheduledOrder.ScheduledOrderId, "failed");
+                return false;
+            }
         }
     }
 }

@@ -29,5 +29,11 @@ namespace Sovva.Application.Interfaces
 
         // ✅ NEW: Dedicated method for confirming scheduled orders (no catalogue lookup, no UserMeal creation)
         Task<int> ConfirmScheduledOrderAsync(ScheduledOrder scheduledOrder);
+
+        /// <summary>
+        /// ✅ NEW: Get order by ScheduledOrderId for idempotency check
+        /// Used by midnight job to check if order was already created
+        /// </summary>
+        Task<Order?> GetByScheduledOrderIdAsync(int scheduledOrderId);
     }
 }

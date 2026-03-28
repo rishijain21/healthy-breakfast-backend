@@ -91,5 +91,16 @@ namespace Sovva.Infrastructure.Repositories
                 .OrderByDescending(o => o.CreatedAt)
                 .ToListAsync();
         }
+
+        /// <summary>
+        /// ✅ NEW: Get order by ScheduledOrderId for idempotency check
+        /// Uses AsNoTracking to avoid EF Core tracking conflicts
+        /// </summary>
+        public async Task<Order?> GetByScheduledOrderIdAsync(int scheduledOrderId)
+        {
+            return await _context.Orders
+                .AsNoTracking()
+                .FirstOrDefaultAsync(o => o.ScheduledOrderId == scheduledOrderId);
+        }
     }
 }

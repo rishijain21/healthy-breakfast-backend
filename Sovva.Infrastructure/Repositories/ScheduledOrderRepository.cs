@@ -246,5 +246,45 @@ namespace Sovva.Infrastructure.Repositories
                 await _context.SaveChangesAsync();
             }
         }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // ✅ NEW: Raw SQL methods for midnight job (avoid EF Core tracking)
+        // ─────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Mark a scheduled order status using raw SQL (no EF tracker)
+        /// Used by midnight job to update status without triggering entity tracking issues
+        /// </summary>
+        public async Task MarkAsAsync(int scheduledOrderId, string status)
+        {
+            await _context.Database.ExecuteSqlRawAsync(
+                @"UPDATE public.""ScheduledOrders"" 
+                  SET ""OrderStatus"" = @p0, 
+                      ""CanModify"" = false, 
+                      ""UpdatedAt"" = @p1
+                  WHERE ""ScheduledOrderId"" = @p2",
+                status, DateTime.UtcNow, scheduledOrderId);
+        }
+
+        /// <summary>
+        /// Mark a scheduled order as processed with confirmed order details
+        /// Uses raw SQL to avoid EF Core tracking conflicts
+        /// </summary>
+        public async Task MarkAsProcessedAsync(
+            int scheduledOrderId, 
+            int confirmedOrderId, 
+            DateTime confirmedAt)
+        {
+            await _context.Database.ExecuteSqlRawAsync(
+                @"UPDATE public.""ScheduledOrders"" 
+                  SET ""OrderStatus"" = 'processed',
+                      ""CanModify"" = false,
+                      ""IsProcessedToOrder"" = true,
+                      ""ConfirmedOrderId"" = @p0,
+                      ""ConfirmedAt"" = @p1,
+                      ""UpdatedAt"" = @p2
+                  WHERE ""ScheduledOrderId"" = @p3",
+                confirmedOrderId, confirmedAt, DateTime.UtcNow, scheduledOrderId);
+        }
     }
 }

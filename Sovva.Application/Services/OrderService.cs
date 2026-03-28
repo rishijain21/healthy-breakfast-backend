@@ -547,6 +547,18 @@ namespace Sovva.Application.Services
         // before calling this method, to prevent race conditions
         public async Task<int> ConfirmScheduledOrderAsync(ScheduledOrder scheduledOrder)
         {
+            // ✅ IDEMPOTENCY: If a previous attempt already created the Order row,
+            // return its ID immediately — no duplicate insert, no double charge
+            var existingOrder = await _orderRepository
+                .GetByScheduledOrderIdAsync(scheduledOrder.ScheduledOrderId);
+            
+            if (existingOrder != null)
+            {
+                return existingOrder.OrderId;
+            }
+
+            // ✅ Fresh DbContext scope via explicit transaction
+            // No other tracked entities involved — clean save
             await _unitOfWork.BeginTransactionAsync();
             try
             {
@@ -591,6 +603,14 @@ namespace Sovva.Application.Services
                 await _unitOfWork.RollbackAsync();
                 throw;
             }
+        }
+
+        /// <summary>
+        /// ✅ NEW: Get order by ScheduledOrderId for idempotency check
+        /// </summary>
+        public async Task<Order?> GetByScheduledOrderIdAsync(int scheduledOrderId)
+        {
+            return await _orderRepository.GetByScheduledOrderIdAsync(scheduledOrderId);
         }
     }
 }

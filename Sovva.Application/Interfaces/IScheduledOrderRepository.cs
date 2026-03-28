@@ -36,5 +36,17 @@ namespace Sovva.Application.Interfaces
         /// Used to prevent duplicate order generation on job retry
         /// </summary>
         Task<ScheduledOrder?> GetBySubscriptionIdAndDateAsync(int subscriptionId, DateOnly date);
+
+        /// <summary>
+        /// ✅ NEW: Mark a scheduled order status using raw SQL (no EF tracker)
+        /// Used by midnight job to update status without triggering entity tracking issues
+        /// </summary>
+        Task MarkAsAsync(int scheduledOrderId, string status);
+
+        /// <summary>
+        /// ✅ NEW: Mark a scheduled order as processed with confirmed order details
+        /// Uses raw SQL to avoid EF Core tracking conflicts
+        /// </summary>
+        Task MarkAsProcessedAsync(int scheduledOrderId, int confirmedOrderId, DateTime confirmedAt);
     }
 }
