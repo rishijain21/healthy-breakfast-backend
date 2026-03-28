@@ -545,6 +545,7 @@ namespace Sovva.Application.Services
         // Everything comes from the snapshot
         // NOTE: Wallet deduction is now done atomically in ScheduledOrderService.ConfirmAllScheduledOrdersAsync
         // before calling this method, to prevent race conditions
+        // NOTE: No manual transaction - NpgsqlRetryingExecutionStrategy blocks user-initiated transactions
         public async Task<int> ConfirmScheduledOrderAsync(ScheduledOrder scheduledOrder)
         {
             // ✅ IDEMPOTENCY: If a previous attempt already created the Order row,
@@ -557,52 +558,40 @@ namespace Sovva.Application.Services
                 return existingOrder.OrderId;
             }
 
-            // ✅ Fresh DbContext scope via explicit transaction
-            // No other tracked entities involved — clean save
-            await _unitOfWork.BeginTransactionAsync();
-            try
+            // ✅ Single INSERT — atomic by itself, no manual transaction needed
+            // (NpgsqlRetryingExecutionStrategy blocks manual transactions)
+            var order = new Order
             {
-                // Create Order directly from snapshot (wallet already deducted atomically)
-                var order = new Order
-                {
-                    UserId            = scheduledOrder.UserId,
-                    UserMealId        = null,
-                    ScheduledOrderId  = scheduledOrder.ScheduledOrderId,
-                    DeliveryAddressId = scheduledOrder.DeliveryAddressId!.Value,
-                    OrderStatus       = OrderStatus.Confirmed,
-                    TotalPrice        = scheduledOrder.TotalPrice,
+                UserId            = scheduledOrder.UserId,
+                UserMealId        = null,
+                ScheduledOrderId  = scheduledOrder.ScheduledOrderId,
+                DeliveryAddressId = scheduledOrder.DeliveryAddressId!.Value,
+                OrderStatus       = OrderStatus.Confirmed,
+                TotalPrice        = scheduledOrder.TotalPrice,
 
-                    // ✅ ScheduledFor comes from DATE column → DateOnly → convert to UTC midnight
-                    ScheduledFor = DateTime.SpecifyKind(
-                        scheduledOrder.ScheduledFor.ToDateTime(TimeOnly.MinValue), 
-                        DateTimeKind.Utc),
+                // ✅ ScheduledFor comes from DATE column → DateOnly → convert to UTC midnight
+                ScheduledFor = DateTime.SpecifyKind(
+                    scheduledOrder.ScheduledFor.ToDateTime(TimeOnly.MinValue), 
+                    DateTimeKind.Utc),
 
-                    OrderDate = DateTime.UtcNow,
-                    CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow
-                };
+                OrderDate = DateTime.UtcNow,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
 
-                await _orderRepository.AddAsync(order);
-                await _unitOfWork.SaveChangesAsync();
+            await _orderRepository.AddAsync(order);
+            await _orderRepository.SaveChangesAsync();
 
-                // ✅ Write the wallet transaction record so the ledger matches the balance deduction
-                // that was already applied atomically in ConfirmAllScheduledOrdersAsync
-                await _walletService.WriteTransactionRecordAsync(
-                    scheduledOrder.UserId,
-                    scheduledOrder.TotalPrice,
-                    "Debit",
-                    $"Order #{order.OrderId} - {scheduledOrder.MealName}"
-                );
+            // ✅ Write the wallet transaction record so the ledger matches the balance deduction
+            // that was already applied atomically in ConfirmAllScheduledOrdersAsync
+            await _walletService.WriteTransactionRecordAsync(
+                scheduledOrder.UserId,
+                scheduledOrder.TotalPrice,
+                "Debit",
+                $"Order #{order.OrderId} - {scheduledOrder.MealName}"
+            );
 
-                await _unitOfWork.CommitAsync();
-
-                return order.OrderId;
-            }
-            catch
-            {
-                await _unitOfWork.RollbackAsync();
-                throw;
-            }
+            return order.OrderId;
         }
 
         /// <summary>
