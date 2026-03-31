@@ -65,22 +65,18 @@ var corsConfig = builder.Configuration
     .Get<CorsOptions>() ?? new CorsOptions();
 
 // ══════════════════════════════════════════════════
-// DATABASE — Supabase PgBouncer (Transaction Mode)
-// Port 6543 = PgBouncer Transaction mode
-// Do NOT use prepared statements — PgBouncer doesn't support them
+// DATABASE — Supabase Session Mode (port 5432)
+// Use session mode for transactional workloads
 // ══════════════════════════════════════════════════
 var connectionString =
-    Environment.GetEnvironmentVariable("DATABASE_URL")
+    Environment.GetEnvironmentVariable("DATABASE_SESSION_URL")
+    ?? Environment.GetEnvironmentVariable("DATABASE_URL")
     ?? builder.Configuration.GetConnectionString("DefaultConnection")
     ?? throw new InvalidOperationException("Database connection string not configured");
 
 var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);
 
-// ⚠️ CRITICAL for PgBouncer Transaction mode:
-// Prepared statements are NOT supported — must disable
-dataSourceBuilder.ConnectionStringBuilder.NoResetOnClose = true;
-dataSourceBuilder.ConnectionStringBuilder.MaxAutoPrepare = 0; // disable prepared statements
-dataSourceBuilder.ConnectionStringBuilder.Pooling = false;    // let PgBouncer handle pooling
+// Session mode supports full EF Core features
 dataSourceBuilder.ConnectionStringBuilder.CommandTimeout = dbOptions.CommandTimeout;
 
 var dataSource = dataSourceBuilder.Build();
@@ -95,8 +91,6 @@ builder.Services.AddDbContext<AppDbContext>((sp, options) =>
                 errorCodesToAdd: null
             );
             npgsql.CommandTimeout(dbOptions.CommandTimeout);
-            // ⚠️ CRITICAL: disable for PgBouncer transaction mode
-            npgsql.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
         })
         .EnableServiceProviderCaching()
         .AddInterceptors(sp.GetRequiredService<TimestampInterceptor>())

@@ -81,32 +81,37 @@ namespace Sovva.Infrastructure.Repositories
         // ✅ NEW METHOD: Create user with auth mapping in transaction
         public async Task<User> CreateUserWithAuthMappingAsync(User user, Guid authId)
         {
-            using var transaction = await _context.Database.BeginTransactionAsync();
-            try
-            {
-                // Create user
-                _context.Users.Add(user);
-                await _context.SaveChangesAsync();
+            var strategy = _context.Database.CreateExecutionStrategy();
 
-                // Create auth mapping
-                var authMapping = new UserAuthMapping
+            return await strategy.ExecuteAsync(async () =>
+            {
+                await using var transaction = await _context.Database.BeginTransactionAsync();
+                try
                 {
-                    AuthId = authId,
-                    UserId = user.UserId
-                    // CreatedAt handled by TimestampInterceptor
-                };
+                    // Create user
+                    _context.Users.Add(user);
+                    await _context.SaveChangesAsync();
 
-                _context.UserAuthMappings.Add(authMapping);
-                await _context.SaveChangesAsync();
-                await transaction.CommitAsync();
+                    // Create auth mapping
+                    var authMapping = new UserAuthMapping
+                    {
+                        AuthId = authId,
+                        UserId = user.UserId
+                        // CreatedAt handled by TimestampInterceptor
+                    };
 
-                return user;
-            }
-            catch
-            {
-                await transaction.RollbackAsync();
-                throw;
-            }
+                    _context.UserAuthMappings.Add(authMapping);
+                    await _context.SaveChangesAsync();
+                    await transaction.CommitAsync();
+
+                    return user;
+                }
+                catch
+                {
+                    await transaction.RollbackAsync();
+                    throw;
+                }
+            });
         }
 
         // ✅ NEW: Batch get users with AuthMapping by user IDs (for generation job optimization)
