@@ -13,13 +13,19 @@ namespace Sovva.WebAPI.Controllers
     public class UserMealsController : ControllerBase
     {
         private readonly IUserMealService _userMealService;
+        private readonly ISubscriptionRepository _subscriptionRepository;
+        private readonly ISubscriptionSchedulingService _subscriptionSchedulingService;
         private readonly ILogger<UserMealsController> _logger;
 
         public UserMealsController(
             IUserMealService userMealService,
+            ISubscriptionRepository subscriptionRepository,
+            ISubscriptionSchedulingService subscriptionSchedulingService,
             ILogger<UserMealsController> logger)
         {
             _userMealService = userMealService;
+            _subscriptionRepository = subscriptionRepository;
+            _subscriptionSchedulingService = subscriptionSchedulingService;
             _logger = logger;
         }
 
@@ -64,6 +70,40 @@ namespace Sovva.WebAPI.Controllers
 
                 // ✅ Pass userId as separate parameter (not trusting client input)
                 var userMealId = await _userMealService.CreateUserMealAsync(dto, userId);
+
+                // ✅ THE FIX: After meal builder completes, generate tomorrow's scheduled order
+                try
+                {
+                    var authIdStr = HttpContext.Items["auth_id"]?.ToString();
+                    if (!string.IsNullOrEmpty(authIdStr) && Guid.TryParse(authIdStr, out var authGuid))
+                    {
+                        // Get user's active subscription for this meal
+                        var subscription = await _subscriptionRepository
+                            .GetActiveSubscriptionByUserMealIdAsync(userId, userMealId);
+
+                        if (subscription != null)
+                        {
+                            _logger.LogInformation(
+                                "🔄 Meal builder complete — triggering scheduled order for subscription #{SubId}",
+                                subscription.SubscriptionId);
+
+                            await _subscriptionSchedulingService.GenerateOrderForSubscriptionAsync(
+                                subscription.SubscriptionId, userId, authGuid);
+
+                            _logger.LogInformation("✅ Scheduled order generated after meal builder");
+                        }
+                        else
+                        {
+                            _logger.LogInformation("ℹ️ No active subscription found for UserMeal #{UserMealId} — skipping scheduling", userMealId);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // ✅ Don't fail meal builder if scheduling fails — just log it
+                    _logger.LogWarning(ex, "⚠️ Meal builder succeeded but scheduling failed for userId {UserId}", userId);
+                }
+
                 return Ok(new { userMealId, message = "UserMeal created successfully" });
             }
             catch (Exception ex)

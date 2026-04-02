@@ -10,7 +10,7 @@ namespace Sovva.Application.DTOs
         public string? MealImageUrl { get; set; } // ✅ ADD: Snapshot for display
         public decimal? MealPrice { get; set; }
         public List<ScheduledOrderIngredientDto> SelectedIngredients { get; set; } = new();
-        public DateTime ScheduledFor { get; set; }
+        public DateTimeOffset ScheduledFor { get; set; }
         public string DeliveryTimeSlot { get; set; } = "10:00 AM";
         public int? DeliveryAddressId { get; set; } // ✅ ADD: Delivery address for subscription orders
         public NutritionalSummaryDto? NutritionalSummary { get; set; }

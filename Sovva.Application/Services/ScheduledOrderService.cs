@@ -94,24 +94,28 @@ namespace Sovva.Application.Services
 
             // ✅ FIXED: Handle ScheduledFor as DateOnly (IST calendar date)
             DateOnly deliveryDate;
-            var istNow = _time.ToIst(_time.UtcNow);
+            var todayIst = _time.TodayIst;
             
-            if (dto.ScheduledFor != default(DateTime))
+            if (dto.ScheduledFor != default(DateTimeOffset))
             {
-                // Caller passed a DateTime — convert to IST to get the calendar date
-                var asIst = dto.ScheduledFor.Kind == DateTimeKind.Utc
-                    ? _time.ToIst(dto.ScheduledFor)
-                    : dto.ScheduledFor;  // treat as IST if Unspecified
-                deliveryDate = DateOnly.FromDateTime(asIst);
+                // ✅ DateTimeOffset preserves +05:30 — convert to UTC then IST
+                var utc = dto.ScheduledFor.UtcDateTime;           // 2026-04-02T18:30:00 UTC
+                var ist = _time.ToIst(utc);                       // 2026-04-03T00:00:00 IST ✅
+                deliveryDate = DateOnly.FromDateTime(ist);
                 
-                _logger.LogInformation("[ScheduledOrder] Using scheduled date from request: {Date}", deliveryDate);
+                _logger.LogInformation("[ScheduledOrder] Parsed delivery date: {Date}", deliveryDate);
             }
             else
             {
-                // Fallback: use tomorrow if not provided
-                deliveryDate = _time.TodayIst.AddDays(1);
-                
-                _logger.LogInformation("[ScheduledOrder] No date provided, using tomorrow: {Date}", deliveryDate);
+                deliveryDate = todayIst.AddDays(1);
+                _logger.LogInformation("[ScheduledOrder] No date provided, defaulting to tomorrow: {Date}", deliveryDate);
+            }
+            
+            // ✅ Safety guard — never store today or past
+            if (deliveryDate <= todayIst)
+            {
+                _logger.LogWarning("[ScheduledOrder] Date {Date} is today/past, overriding to tomorrow", deliveryDate);
+                deliveryDate = todayIst.AddDays(1);
             }
             
             _logger.LogInformation("[ScheduledOrder] Order placed at: {Ist:yyyy-MM-dd HH:mm:ss} IST");
