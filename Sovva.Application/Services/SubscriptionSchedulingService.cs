@@ -1,12 +1,13 @@
 // Sovva.Application/Services/SubscriptionSchedulingService.cs
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Sovva.Application.Interfaces;
-using Sovva.Application.DTOs;
 using Sovva.Application.Helpers;
+using Sovva.Domain.Entities;
 using Sovva.Domain.Enums;
 
 namespace Sovva.Application.Services
@@ -14,226 +15,371 @@ namespace Sovva.Application.Services
     public class SubscriptionSchedulingService : ISubscriptionSchedulingService
     {
         private readonly ISubscriptionRepository _subscriptionRepo;
+        private readonly IScheduledOrderRepository _scheduledOrderRepo;
         private readonly IScheduledOrderService _scheduledOrderService;
-        private readonly IScheduledOrderRepository _scheduledOrderRepo; // ✅ NEW: For duplicate check
         private readonly IUserMealRepository _userMealRepo;
-        private readonly IUserRepository _userRepo;
         private readonly IUserMealIngredientRepository _userMealIngredientRepo;
-        private readonly IUserAddressRepository _userAddressRepo; // ✅ ADD: Delivery address repository
+        private readonly IUserRepository _userRepo;
+        private readonly IUserAddressRepository _userAddressRepo;
+        private readonly IMealRepository _mealRepo;
+        private readonly IIngredientRepository _ingredientRepo;
         private readonly IAppTimeProvider _time;
         private readonly ILogger<SubscriptionSchedulingService> _logger;
 
         public SubscriptionSchedulingService(
             ISubscriptionRepository subscriptionRepo,
+            IScheduledOrderRepository scheduledOrderRepo,
             IScheduledOrderService scheduledOrderService,
-            IScheduledOrderRepository scheduledOrderRepo, // ✅ NEW
             IUserMealRepository userMealRepo,
-            IUserRepository userRepo,
             IUserMealIngredientRepository userMealIngredientRepo,
-            IUserAddressRepository userAddressRepo, // ✅ ADD: Delivery address repository
+            IUserRepository userRepo,
+            IUserAddressRepository userAddressRepo,
+            IMealRepository mealRepo,
+            IIngredientRepository ingredientRepo,
             IAppTimeProvider time,
             ILogger<SubscriptionSchedulingService> logger)
         {
-            _subscriptionRepo = subscriptionRepo;
-            _scheduledOrderService = scheduledOrderService;
-            _scheduledOrderRepo = scheduledOrderRepo;
-            _userMealRepo = userMealRepo;
-            _userRepo = userRepo;
-            _userMealIngredientRepo = userMealIngredientRepo;
-            _userAddressRepo = userAddressRepo; // ✅ ADD: Delivery address repository
-            _time = time; // ✅ ADD: Time provider
-            _logger = logger;
+            _subscriptionRepo        = subscriptionRepo;
+            _scheduledOrderRepo      = scheduledOrderRepo;
+            _scheduledOrderService   = scheduledOrderService;
+            _userMealRepo            = userMealRepo;
+            _userMealIngredientRepo  = userMealIngredientRepo;
+            _userRepo                = userRepo;
+            _userAddressRepo         = userAddressRepo;
+            _mealRepo                = mealRepo;
+            _ingredientRepo          = ingredientRepo;
+            _time                    = time;
+            _logger                  = logger;
         }
 
-        /// <summary>
-        /// ✅ MILKBASKET STYLE: Called by Hangfire daily at 12:01 AM IST 
-        /// Creates scheduled orders for TOMORROW's delivery from active subscriptions
-        /// Supports Daily, Weekly (with specific days & quantities), and Monthly frequencies
-        /// </summary>
+        // ─────────────────────────────────────────────────────────────────────
+        // NIGHTLY JOB — 12:01 AM IST
+        // Generates ScheduledOrders for tomorrow's delivery (today + 1)
+        // Runs one minute AFTER the midnight confirm job.
+        // ─────────────────────────────────────────────────────────────────────
         public async Task GenerateScheduledOrdersFromSubscriptionsAsync()
         {
-            var istNow = _time.ToIst(_time.UtcNow);
-            var today = _time.TodayIst;
-            var tomorrow = today.AddDays(1); // Generate for TOMORROW - correct, run at 11 PM
-            
-            _logger.LogInformation($"🥛 [MILKBASKET SUBSCRIPTION JOB] Starting at {istNow:yyyy-MM-dd HH:mm:ss} IST");
-            _logger.LogInformation($"📦 Creating scheduled orders for TOMORROW's delivery: {tomorrow:yyyy-MM-dd} ({tomorrow.DayOfWeek})");
+            var istNow      = _time.ToIst(_time.UtcNow);
+            var today       = _time.TodayIst;           // April 3 (job runs at 12:01 AM April 3)
+            var deliveryDay = today.AddDays(1);          // April 4 — the day we're scheduling for
+
+            _logger.LogInformation(
+                "[SUB-JOB] Started at {Now:yyyy-MM-dd HH:mm:ss} IST. Generating orders for {DeliveryDay:yyyy-MM-dd}",
+                istNow, deliveryDay);
 
             var allSubscriptions = await _subscriptionRepo.GetActiveSubscriptionsAsync();
-            
-            _logger.LogInformation($"📋 Found {allSubscriptions.Count()} total active subscriptions");
+            _logger.LogInformation("[SUB-JOB] Active subscriptions: {Count}", allSubscriptions.Count());
 
-            // ── BATCH LOAD — 5 queries total regardless of subscription count ──
+            // ── BATCH LOAD — 5 queries regardless of subscription count ──────
             var userMealIds = allSubscriptions.Select(s => s.UserMealId).Distinct().ToList();
             var userIds     = allSubscriptions.Select(s => s.UserId).Distinct().ToList();
 
-            var userMealsMap   = (await _userMealRepo.GetByIdsAsync(userMealIds))
-                                 .ToDictionary(m => m.UserMealId);
+            var userMealsMap  = (await _userMealRepo.GetByIdsAsync(userMealIds))
+                                .ToDictionary(m => m.UserMealId);
 
-            var ingredientsMap = (await _userMealIngredientRepo.GetByUserMealIdsAsync(userMealIds))
-                                 .GroupBy(i => i.UserMealId)
-                                 .ToDictionary(g => g.Key, g => g.ToList());
+            var userMealIngredientsMap = (await _userMealIngredientRepo.GetByUserMealIdsAsync(userMealIds))
+                                         .GroupBy(i => i.UserMealId)
+                                         .ToDictionary(g => g.Key, g => g.ToList());
 
-            var usersMap       = (await _userRepo.GetByIdsWithAuthMappingAsync(userIds))
-                                 .ToDictionary(u => u.UserId);
+            var usersMap      = (await _userRepo.GetByIdsWithAuthMappingAsync(userIds))
+                                .ToDictionary(u => u.UserId);
 
-            var addressesMap   = (await _userAddressRepo.GetPrimaryAddressesByUserIdsAsync(userIds))
-                                 .ToDictionary(a => a.UserId);
-            // ─────────────────────────────────────────────────────────────────────
+            var addressesMap  = (await _userAddressRepo.GetPrimaryAddressesByUserIdsAsync(userIds))
+                                .ToDictionary(a => a.UserId);
+            // ─────────────────────────────────────────────────────────────────
 
-            int generatedCount = 0;
-            int skippedCount = 0;
-            int failedCount = 0;
+            int generated = 0, skipped = 0, failed = 0;
 
             foreach (var subscription in allSubscriptions)
             {
                 try
                 {
-                    // ✅ Check if this subscription should generate an order for tomorrow
-                    if (!ShouldGenerateOrderForDate(subscription, tomorrow))
+                    // 1. Is this subscription due on deliveryDay?
+                    if (!IsDueOnDate(subscription, deliveryDay))
                     {
-                        skippedCount++;
+                        _logger.LogDebug(
+                            "[SUB-JOB] Subscription #{Id} ({Freq}) not due on {Date} — NextScheduledDate: {Next}",
+                            subscription.SubscriptionId, subscription.Frequency, deliveryDay,
+                            subscription.NextScheduledDate?.ToString("yyyy-MM-dd") ?? "null");
+                        skipped++;
                         continue;
                     }
 
-                    // ✅ FIX 5: Guard against expired subscriptions
-                    // EndDate is the last valid delivery date — skip if tomorrow is past it
-                    if (subscription.EndDate < tomorrow)
+                    // 2. EndDate guard
+                    if (subscription.EndDate < deliveryDay)
                     {
                         _logger.LogInformation(
-                            "⏭️ Subscription #{SubscriptionId} expired on {EndDate}, skipping",
+                            "[SUB-JOB] Subscription #{Id} expired on {End}, skipping",
                             subscription.SubscriptionId, subscription.EndDate);
-                        skippedCount++;
+                        skipped++;
                         continue;
                     }
 
-                    // ✅ Get quantity for tomorrow (especially important for weekly subscriptions)
-                    int quantity = GetQuantityForDate(subscription, tomorrow);
-                    
-                    _logger.LogInformation(
-                        $"🔄 Processing subscription #{subscription.SubscriptionId} " +
-                        $"(Frequency: {subscription.Frequency}, Quantity: {quantity})");
-
-                    // ✅ NEW: Check if order already exists for this subscription on tomorrow (prevent duplicates on retry)
-                    // Note: This includes failed orders - we want to allow retry on failed orders
-                    var existingOrder = await _scheduledOrderRepo.GetBySubscriptionIdAndDateAsync(
-                        subscription.SubscriptionId, tomorrow);
-                    if (existingOrder != null)
+                    // 3. Duplicate guard — DB unique index also enforces this, but check first
+                    //    to avoid noisy constraint violations in logs
+                    var existing = await _scheduledOrderRepo.GetBySubscriptionIdAndDateAsync(
+                        subscription.SubscriptionId, deliveryDay);
+                    if (existing != null)
                     {
                         _logger.LogInformation(
-                            "⏭️ Order already exists for subscription #{SubscriptionId} on {Date}, skipping (prevented duplicate)",
-                            subscription.SubscriptionId, tomorrow);
-                        skippedCount++;
+                            "[SUB-JOB] Order already exists for subscription #{Id} on {Date}, skipping",
+                            subscription.SubscriptionId, deliveryDay);
+                        skipped++;
                         continue;
                     }
 
-                    // Get UserMeal details (from batch-loaded map)
+                    // 4. Resolve quantity (weekly subscriptions can have per-day quantities)
+                    int quantity = GetQuantityForDate(subscription, deliveryDay);
+
+                    // 5. Resolve UserMeal
                     if (!userMealsMap.TryGetValue(subscription.UserMealId, out var userMeal))
                     {
-                        _logger.LogWarning($"❌ UserMeal {subscription.UserMealId} not found for subscription {subscription.SubscriptionId}");
-                        failedCount++;
+                        _logger.LogWarning(
+                            "[SUB-JOB] UserMeal {UserMealId} not found for subscription #{Id}",
+                            subscription.UserMealId, subscription.SubscriptionId);
+                        failed++;
                         continue;
                     }
 
-                    // Get UserMealIngredients (from batch-loaded map)
-                    if (!ingredientsMap.TryGetValue(subscription.UserMealId, out var userMealIngredients)
-                        || !userMealIngredients.Any())
+                    // 6. Resolve ingredients — custom meal first, then catalogue fallback
+                    var resolvedIngredients = await ResolveIngredientsAsync(
+                        subscription.SubscriptionId, userMeal, userMealIngredientsMap, quantity);
+
+                    if (resolvedIngredients == null)
                     {
-                        _logger.LogWarning($"❌ UserMeal {subscription.UserMealId} has no ingredients");
-                        failedCount++;
+                        failed++;
                         continue;
                     }
 
-                    // Get user with auth mapping (from batch-loaded map)
+                    // 7. Resolve user
                     if (!usersMap.TryGetValue(subscription.UserId, out var user)
-                        || user?.AuthMapping?.AuthId == null)
+                        || user.AuthMapping?.AuthId == null)
                     {
-                        _logger.LogWarning($"❌ User {subscription.UserId} has no AuthId mapping");
-                        failedCount++;
+                        _logger.LogWarning(
+                            "[SUB-JOB] User {UserId} or AuthMapping missing for subscription #{Id}",
+                            subscription.UserId, subscription.SubscriptionId);
+                        failed++;
                         continue;
                     }
 
-                    // ✅ Get delivery address for this subscription
+                    // 8. Resolve delivery address
                     int? deliveryAddressId = subscription.DeliveryAddressId;
-                    
-                    // If subscription doesn't have address, use primary address (from batch-loaded map)
                     if (deliveryAddressId == null)
                     {
                         if (!addressesMap.TryGetValue(subscription.UserId, out var primaryAddress))
                         {
-                            _logger.LogWarning($"❌ User {subscription.UserId} has no primary address. Skipping subscription {subscription.SubscriptionId}");
-                            failedCount++;
+                            _logger.LogWarning(
+                                "[SUB-JOB] No primary address for user {UserId}, subscription #{Id}",
+                                subscription.UserId, subscription.SubscriptionId);
+                            failed++;
                             continue;
                         }
                         deliveryAddressId = primaryAddress.Id;
                     }
-                    
-                    _logger.LogInformation($"📍 Using delivery address ID: {deliveryAddressId} for subscription {subscription.SubscriptionId}");
 
-                    // ✅ Create scheduled order for TOMORROW with adjusted quantities
-
-                    var scheduledOrderDto = new CreateScheduledOrderDto
+                    // 9. Build and persist ScheduledOrder directly — no service layer indirection
+                    var scheduledOrder = new ScheduledOrder
                     {
-                        MealName = $"{userMeal.MealName} (Subscription)",
-                        MealPrice = userMeal.TotalPrice * quantity, // ✅ Multiply by quantity
-                        SelectedIngredients = userMealIngredients.Select(i => new ScheduledOrderIngredientDto
-                        {
-                            IngredientId = i.IngredientId,
-                            Quantity = i.Quantity * quantity  // ✅ Multiply by quantity
-                        }).ToList(),
-                        ScheduledFor = tomorrow.ToDateTime(TimeOnly.MinValue), // DateOnly → DateTime, no UTC conversion
+                        UserId           = subscription.UserId,
+                        AuthId           = user.AuthMapping!.AuthId,
+                        MealName         = $"{userMeal.MealName} (Subscription)",
+                        ScheduledFor     = deliveryDay,
                         DeliveryTimeSlot = "7:00 AM",
-                        DeliveryAddressId = deliveryAddressId, // ✅ ADD: Link to delivery address
-                        NutritionalSummary = null,
-                        // ✅ ADD: Link to subscription - Critical fix!
-                        SubscriptionId = subscription.SubscriptionId
+                        TotalPrice       = userMeal.TotalPrice * quantity,
+                        OrderStatus      = "scheduled",
+                        CanModify        = true,
+                        ExpiresAt        = _time.ToUtc(
+                                               deliveryDay.AddDays(1)
+                                                          .ToDateTime(TimeOnly.MinValue)),
+                        CreatedAt        = _time.UtcNow,
+                        UpdatedAt        = _time.UtcNow,
+                        DeliveryAddressId = deliveryAddressId,
+                        SubscriptionId   = subscription.SubscriptionId,
+                        Ingredients      = resolvedIngredients
                     };
 
-                    await _scheduledOrderService.CreateScheduledOrderAsync(user.UserId, user.AuthMapping.AuthId, scheduledOrderDto, skipWalletCheck: true);
+                    await _scheduledOrderRepo.CreateAsync(scheduledOrder);
 
-                    // ✅ Update NextScheduledDate
-                    subscription.NextScheduledDate = CalculateNextScheduledDate(subscription, tomorrow);
-                    subscription.UpdatedAt = _time.UtcNow;
+                    // 10. Advance NextScheduledDate
+                    subscription.NextScheduledDate = CalculateNextScheduledDate(subscription, deliveryDay);
+                    subscription.UpdatedAt         = _time.UtcNow;
                     await _subscriptionRepo.UpdateAsync(subscription);
 
-                    generatedCount++;
+                    generated++;
                     _logger.LogInformation(
-                        $"✅ Generated order for subscription #{subscription.SubscriptionId} " +
-                        $"({userMeal.MealName}) - Delivery: {tomorrow:yyyy-MM-dd}, Qty: {quantity}, Next: {subscription.NextScheduledDate:yyyy-MM-dd}");
+                        "[SUB-JOB] ✅ Created order for subscription #{Id} ({Meal}) → delivery {Date}, qty {Qty}, next {Next:yyyy-MM-dd}",
+                        subscription.SubscriptionId, userMeal.MealName, deliveryDay,
+                        quantity, subscription.NextScheduledDate);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, $"❌ Failed to generate order for subscription {subscription.SubscriptionId}");
-                    failedCount++;
+                    _logger.LogError(ex,
+                        "[SUB-JOB] ❌ Unhandled exception for subscription #{Id}",
+                        subscription.SubscriptionId);
+                    failed++;
                 }
             }
 
             _logger.LogInformation(
-                $"🎉 [SUBSCRIPTION JOB] Complete: {generatedCount} generated, {skippedCount} skipped, {failedCount} failed");
+                "[SUB-JOB] Complete — generated: {G}, skipped: {S}, failed: {F}",
+                generated, skipped, failed);
         }
 
+        // ─────────────────────────────────────────────────────────────────────
+        // REAL-TIME — called immediately when user subscribes or resumes
+        // ─────────────────────────────────────────────────────────────────────
+        public async Task GenerateOrderForSubscriptionAsync(int subscriptionId, int userId, Guid authId)
+        {
+            var subscription = await _subscriptionRepo.GetByIdAsync(subscriptionId);
+            if (subscription == null)
+                throw new InvalidOperationException($"Subscription #{subscriptionId} not found");
+
+            if (!subscription.Active)
+            {
+                _logger.LogInformation(
+                    "[REALTIME] Subscription #{Id} is inactive, skipping", subscriptionId);
+                return;
+            }
+
+            var today       = _time.TodayIst;
+            var deliveryDay = today.AddDays(1);
+
+            // For weekly: if tomorrow isn't a scheduled day, find the next one
+            if (!IsDueOnDate(subscription, deliveryDay))
+            {
+                if (subscription.Frequency == SubscriptionFrequency.Weekly)
+                {
+                    var scheduledDays = subscription.WeeklySchedule.Select(s => s.DayOfWeek).ToList();
+                    deliveryDay = FindNextWeeklyDate(today, scheduledDays);
+                }
+                else
+                {
+                    _logger.LogInformation(
+                        "[REALTIME] Subscription #{Id} not due on {Date}", subscriptionId, deliveryDay);
+                    return;
+                }
+            }
+
+            // Duplicate guard
+            var existing = await _scheduledOrderRepo.GetBySubscriptionIdAndDateAsync(
+                subscriptionId, deliveryDay);
+            if (existing != null)
+            {
+                _logger.LogInformation(
+                    "[REALTIME] Order already exists for subscription #{Id} on {Date}",
+                    subscriptionId, deliveryDay);
+                return;
+            }
+
+            int quantity   = GetQuantityForDate(subscription, deliveryDay);
+            var userMeal   = await _userMealRepo.GetByIdAsync(subscription.UserMealId)
+                             ?? throw new InvalidOperationException("UserMeal not found");
+            var user       = await _userRepo.GetByIdAsync(userId)
+                             ?? throw new InvalidOperationException("User not found");
+
+            if (user.AuthMapping?.AuthId == null)
+                throw new InvalidOperationException("User AuthMapping missing");
+
+            var ingredients = await _userMealIngredientRepo.GetByUserMealIdAsync(subscription.UserMealId);
+            var resolvedIngredients = await BuildIngredientListAsync(
+                subscription.SubscriptionId, userMeal, ingredients.ToList(), quantity);
+
+            if (resolvedIngredients == null)
+                throw new InvalidOperationException(
+                    $"No ingredients found for UserMeal #{subscription.UserMealId}");
+
+            int? deliveryAddressId = subscription.DeliveryAddressId
+                ?? (await _userAddressRepo.GetPrimaryAddressAsync(userId))?.Id
+                ?? throw new InvalidOperationException("No delivery address found");
+
+            var scheduledOrder = new ScheduledOrder
+            {
+                UserId            = userId,
+                AuthId            = user.AuthMapping.AuthId,
+                MealName          = $"{userMeal.MealName} (Subscription)",
+                ScheduledFor      = deliveryDay,
+                DeliveryTimeSlot  = "7:00 AM",
+                TotalPrice        = userMeal.TotalPrice * quantity,
+                OrderStatus       = "scheduled",
+                CanModify         = true,
+                ExpiresAt         = _time.ToUtc(
+                                        deliveryDay.AddDays(1)
+                                                   .ToDateTime(TimeOnly.MinValue)),
+                CreatedAt         = _time.UtcNow,
+                UpdatedAt         = _time.UtcNow,
+                DeliveryAddressId = deliveryAddressId,
+                SubscriptionId    = subscriptionId,
+                Ingredients       = resolvedIngredients
+            };
+
+            await _scheduledOrderRepo.CreateAsync(scheduledOrder);
+
+            _logger.LogInformation(
+                "[REALTIME] ✅ Created order for subscription #{Id} → delivery {Date}",
+                subscriptionId, deliveryDay);
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // CANCEL — called when user pauses or deletes subscription
+        // ─────────────────────────────────────────────────────────────────────
+        public async Task CancelOrderForSubscriptionAsync(int subscriptionId, int userId, Guid authId)
+        {
+            var tomorrow = _time.TodayIst.AddDays(1);
+
+            var orders = await _scheduledOrderRepo.GetBySubscriptionIdAsync(subscriptionId);
+            var toCancel = orders
+                .Where(o => o.ScheduledFor == tomorrow && o.OrderStatus == "scheduled")
+                .ToList();
+
+            _logger.LogInformation(
+                "[CANCEL] Found {Count} orders to cancel for subscription #{Id} on {Date}",
+                toCancel.Count, subscriptionId, tomorrow);
+
+            foreach (var order in toCancel)
+            {
+                try
+                {
+                    await _scheduledOrderRepo.DeleteAsync(order.ScheduledOrderId);
+                    _logger.LogInformation("[CANCEL] ✅ Deleted order #{OrderId}", order.ScheduledOrderId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex,
+                        "[CANCEL] ⚠️ Failed to delete order #{OrderId}", order.ScheduledOrderId);
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // PRIVATE HELPERS
+        // ─────────────────────────────────────────────────────────────────────
+
         /// <summary>
-        /// ✅ Determines if an order should be generated for a specific date
+        /// Determines if a subscription should generate an order for the given date.
         /// </summary>
-        private bool ShouldGenerateOrderForDate(Domain.Entities.Subscription subscription, DateOnly date)
+        private bool IsDueOnDate(Subscription subscription, DateOnly date)
         {
             switch (subscription.Frequency)
             {
                 case SubscriptionFrequency.Daily:
-                    // Daily subscriptions run every day
                     return true;
 
                 case SubscriptionFrequency.Weekly:
-                    // Check if tomorrow's day is in the weekly schedule
-                    int dayOfWeek = (int)date.DayOfWeek;
-                    return subscription.WeeklySchedule.Any(s => s.DayOfWeek == dayOfWeek);
-
-                case SubscriptionFrequency.Monthly:
-                    // Monthly subscriptions run once per month on the same day
-                    return subscription.NextScheduledDate == date;
+                    int dow = (int)date.DayOfWeek;
+                    return subscription.WeeklySchedule.Any(s => s.DayOfWeek == dow);
 
                 case SubscriptionFrequency.Alternate:
-                    // Alternate subscriptions run every other day
+                    if (subscription.NextScheduledDate == null)
+                    {
+                        // Fallback: use StartDate parity
+                        int diff = date.DayNumber - subscription.StartDate.DayNumber;
+                        return diff >= 0 && diff % 2 == 0;
+                    }
+                    return subscription.NextScheduledDate == date;
+
+                case SubscriptionFrequency.Monthly:
+                    if (subscription.NextScheduledDate == null)
+                        return date.Day == subscription.StartDate.Day;
                     return subscription.NextScheduledDate == date;
 
                 default:
@@ -241,217 +387,153 @@ namespace Sovva.Application.Services
             }
         }
 
-        /// <summary>
-        /// ✅ Gets the quantity for a specific date (important for weekly subscriptions)
-        /// </summary>
-        private int GetQuantityForDate(Domain.Entities.Subscription subscription, DateOnly date)
+        private int GetQuantityForDate(Subscription subscription, DateOnly date)
         {
             if (subscription.Frequency == SubscriptionFrequency.Weekly)
             {
-                int dayOfWeek = (int)date.DayOfWeek;
-                var schedule = subscription.WeeklySchedule.FirstOrDefault(s => s.DayOfWeek == dayOfWeek);
-                return schedule?.Quantity ?? 1;
+                int dow = (int)date.DayOfWeek;
+                return subscription.WeeklySchedule
+                    .FirstOrDefault(s => s.DayOfWeek == dow)?.Quantity ?? 1;
             }
-
-            // Daily and Monthly always return 1
             return 1;
         }
 
-        /// <summary>
-        /// ✅ Calculates the next scheduled date based on frequency and current date
-        /// </summary>
-        private DateOnly CalculateNextScheduledDate(Domain.Entities.Subscription subscription, DateOnly currentDate)
+        private DateOnly CalculateNextScheduledDate(Subscription subscription, DateOnly deliveredOn)
         {
             switch (subscription.Frequency)
             {
                 case SubscriptionFrequency.Daily:
-                    return currentDate.AddDays(1);
+                    return deliveredOn.AddDays(1);
 
                 case SubscriptionFrequency.Weekly:
-                    // Find the next day in the weekly schedule
-                    return FindNextWeeklyDate(subscription, currentDate);
+                    var days = subscription.WeeklySchedule.Select(s => s.DayOfWeek).ToList();
+                    return FindNextWeeklyDate(deliveredOn, days);
 
                 case SubscriptionFrequency.Monthly:
-                    return currentDate.AddMonths(1);
+                    return deliveredOn.AddMonths(1);
 
                 case SubscriptionFrequency.Alternate:
-                    return currentDate.AddDays(2);
+                    return deliveredOn.AddDays(2);
 
                 default:
-                    return currentDate.AddDays(1);
+                    return deliveredOn.AddDays(1);
             }
         }
 
         /// <summary>
-        /// ✅ Finds the next scheduled date for weekly subscriptions
-        /// Example: If today is Monday and schedule is [Mon, Wed, Fri], next is Wednesday
+        /// Finds next weekly delivery date. Uses nullable int to avoid Sunday (0) = default(int) bug.
         /// </summary>
-        private DateOnly FindNextWeeklyDate(Domain.Entities.Subscription subscription, DateOnly currentDate)
+        private static DateOnly FindNextWeeklyDate(DateOnly fromDate, List<int> scheduledDays)
         {
-            if (!subscription.WeeklySchedule.Any())
-                return currentDate.AddDays(7);
+            if (!scheduledDays.Any())
+                return fromDate.AddDays(7);
 
-            var scheduledDays = subscription.WeeklySchedule
-                .Select(s => s.DayOfWeek)
-                .OrderBy(d => d)
-                .ToList();
+            var ordered = scheduledDays.OrderBy(d => d).ToList();
+            int current = (int)fromDate.DayOfWeek;
 
-            int currentDayOfWeek = (int)currentDate.DayOfWeek;
+            var next = ordered.Cast<int?>().FirstOrDefault(d => d > current);
+            if (next.HasValue)
+                return fromDate.AddDays(next.Value - current);
 
-            // Find the next day in the same week
-            var nextDayInWeek = scheduledDays.FirstOrDefault(d => d > currentDayOfWeek);
-            
-            if (nextDayInWeek > 0)
-            {
-                // Next delivery is later this week
-                int daysUntilNext = nextDayInWeek - currentDayOfWeek;
-                return currentDate.AddDays(daysUntilNext);
-            }
-            else
-            {
-                // Next delivery is next week (first scheduled day)
-                int firstDay = scheduledDays.First();
-                int daysUntilNext = (7 - currentDayOfWeek) + firstDay;
-                return currentDate.AddDays(daysUntilNext);
-            }
+            int first = ordered.First();
+            return fromDate.AddDays((7 - current) + first);
         }
 
         /// <summary>
-        /// ✅ NEW: Generate a single scheduled order for a specific subscription (real-time)
-        /// Called when user subscribes or resumes subscription
+        /// Resolves ingredient list for nightly batch job (uses pre-loaded maps).
+        /// Returns null if ingredients cannot be resolved — caller should increment failedCount.
         /// </summary>
-        public async Task GenerateOrderForSubscriptionAsync(int subscriptionId, int userId, Guid authId)
+        private async Task<List<ScheduledOrderIngredient>?> ResolveIngredientsAsync(
+            int subscriptionId,
+            UserMeal userMeal,
+            Dictionary<int, List<UserMealIngredient>> userMealIngredientsMap,
+            int quantity)
         {
-            var subscription = await _subscriptionRepo.GetByIdAsync(subscriptionId);
-            
-            if (subscription == null)
+            // Path A: custom meal — UserMealIngredients exist
+            if (userMealIngredientsMap.TryGetValue(userMeal.UserMealId, out var umi) && umi.Any())
             {
-                _logger.LogWarning($"❌ Subscription {subscriptionId} not found");
-                throw new InvalidOperationException("Subscription not found");
+                return await BuildIngredientListAsync(subscriptionId, userMeal, umi, quantity);
             }
 
-            if (!subscription.Active)
+            // Path B: catalogue meal — fall back to MealOptions default option
+            var meal = await _mealRepo.GetByIdWithOptionsAsync(userMeal.MealId);
+            var defaultOption = meal?.MealOptions?.FirstOrDefault();
+
+            if (defaultOption == null || !defaultOption.MealOptionIngredients.Any())
             {
-                _logger.LogInformation($"⏭️ Subscription {subscriptionId} is paused, skipping order generation");
-                return;
+                _logger.LogWarning(
+                    "[SUB-JOB] No ingredients resolvable for UserMeal #{UserMealId} " +
+                    "(MealId: {MealId}), subscription #{SubId}",
+                    userMeal.UserMealId, userMeal.MealId, subscriptionId);
+                return null;
             }
 
-            var istNow = _time.ToIst(_time.UtcNow);
-            var today = _time.TodayIst;
-            var tomorrow = today.AddDays(1); // For real-time subscriptions, generate for TOMORROW
+            // Batch load ingredient prices for the catalogue path
+            var ingredientIds = defaultOption.MealOptionIngredients
+                .Select(i => i.IngredientId).ToList();
+            var ingredientPrices = (await _ingredientRepo.GetByIdsAsync(ingredientIds))
+                .ToDictionary(i => i.IngredientId);
 
-            _logger.LogInformation($"📦 Generating immediate order for subscription #{subscriptionId} (Tomorrow: {tomorrow:yyyy-MM-dd})");
-
-            // Check if subscription should generate an order for tomorrow
-            if (!ShouldGenerateOrderForDate(subscription, tomorrow))
+            var result = new List<ScheduledOrderIngredient>();
+            foreach (var moi in defaultOption.MealOptionIngredients)
             {
-                _logger.LogInformation($"⏭️ Subscription #{subscriptionId} not scheduled for {tomorrow:yyyy-MM-dd}");
-                return;
-            }
+                // MealOptionIngredient has no Quantity — default to 1 per ingredient per serving
+                int qty = 1 * quantity;
+                ingredientPrices.TryGetValue(moi.IngredientId, out var ing);
+                decimal unitPrice = ing?.Price ?? 0m;
 
-            // Get quantity for tomorrow
-            int quantity = GetQuantityForDate(subscription, tomorrow);
-
-            // Get UserMeal details
-            var userMeal = await _userMealRepo.GetByIdAsync(subscription.UserMealId);
-            if (userMeal == null)
-            {
-                _logger.LogWarning($"❌ UserMeal {subscription.UserMealId} not found");
-                throw new InvalidOperationException("User meal not found");
-            }
-
-            // Get ingredients
-            var userMealIngredients = await _userMealIngredientRepo.GetByUserMealIdAsync(subscription.UserMealId);
-            if (userMealIngredients == null || !userMealIngredients.Any())
-            {
-                _logger.LogWarning($"❌ UserMeal {subscription.UserMealId} has no ingredients");
-                throw new InvalidOperationException("User meal has no ingredients");
-            }
-
-            // Get user
-            var user = await _userRepo.GetByIdAsync(subscription.UserId);
-            if (user?.AuthMapping?.AuthId == null)
-            {
-                _logger.LogWarning($"❌ User {subscription.UserId} has no AuthId mapping");
-                throw new InvalidOperationException("User authentication not found");
-            }
-
-            // Get delivery address
-            int? deliveryAddressId = subscription.DeliveryAddressId;
-            
-            if (deliveryAddressId == null)
-            {
-                var primaryAddress = await _userAddressRepo.GetPrimaryAddressAsync(subscription.UserId);
-                if (primaryAddress == null)
+                result.Add(new ScheduledOrderIngredient
                 {
-                    _logger.LogWarning($"❌ User {subscription.UserId} has no primary address");
-                    throw new InvalidOperationException("No delivery address found");
-                }
-                deliveryAddressId = primaryAddress.Id;
+                    IngredientId = moi.IngredientId,
+                    Quantity     = qty,
+                    UnitPrice    = unitPrice,
+                    TotalPrice   = unitPrice * qty,
+                    CreatedAt    = DateTime.UtcNow
+                });
             }
-
-            // Create scheduled order for TOMORROW
-
-            var scheduledOrderDto = new CreateScheduledOrderDto
-            {
-                MealName = $"{userMeal.MealName} (Subscription)",
-                MealPrice = userMeal.TotalPrice * quantity,
-                SelectedIngredients = userMealIngredients.Select(i => new ScheduledOrderIngredientDto
-                {
-                    IngredientId = i.IngredientId,
-                    Quantity = i.Quantity * quantity
-                }).ToList(),
-                ScheduledFor = tomorrow.ToDateTime(TimeOnly.MinValue), // DateOnly → DateTime, no UTC conversion
-                DeliveryTimeSlot = "7:00 AM",
-                DeliveryAddressId = deliveryAddressId,
-                NutritionalSummary = null,
-                        // ✅ ADD: Link to subscription - Critical fix!
-                        SubscriptionId = subscription.SubscriptionId
-            };
-
-            await _scheduledOrderService.CreateScheduledOrderAsync(user.UserId, user.AuthMapping.AuthId, scheduledOrderDto, skipWalletCheck: true);
-
-            _logger.LogInformation(
-                $"✅ Generated order for subscription #{subscriptionId} " +
-                $"({userMeal.MealName}) - Delivery: {tomorrow:yyyy-MM-dd}, Qty: {quantity}");
+            return result;
         }
 
         /// <summary>
-        /// ✅ NEW: Cancel tomorrow's scheduled order for a specific subscription
-        /// Called when user pauses or deletes subscription
+        /// Builds ScheduledOrderIngredient list from UserMealIngredients.
+        /// Used by both batch job and real-time path.
+        /// Returns null if ingredients list is empty.
         /// </summary>
-        public async Task CancelOrderForSubscriptionAsync(int subscriptionId, int userId, Guid authId)
+        private async Task<List<ScheduledOrderIngredient>?> BuildIngredientListAsync(
+            int subscriptionId,
+            UserMeal userMeal,
+            List<UserMealIngredient> umi,
+            int quantity)
         {
-            var tomorrow = _time.TodayIst.AddDays(1);
-
-            _logger.LogInformation($"🗑️ Looking for scheduled orders for subscription #{subscriptionId} on {tomorrow:yyyy-MM-dd}");
-
-            // Find all scheduled orders for tomorrow from this subscription
-            var tomorrowOrders = await _scheduledOrderService.GetScheduledOrdersForDateAsync(
-                userId,
-                authId, 
-                DateTime.SpecifyKind(tomorrow.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc)
-            );
-
-            // ✅ RELIABLE — use direct SubscriptionId FK link instead of fragile string match
-            var ordersToCancel = tomorrowOrders
-                .Where(order => order.SubscriptionId == subscriptionId)
-                .ToList();
-
-            _logger.LogInformation($"Found {ordersToCancel.Count} orders to cancel for subscription #{subscriptionId}");
-
-            foreach (var order in ordersToCancel)
+            if (!umi.Any())
             {
-                try
-                {
-                    await _scheduledOrderService.CancelScheduledOrderAsync(userId, authId, order.ScheduledOrderId);
-                    _logger.LogInformation($"✅ Cancelled order #{order.ScheduledOrderId}");
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, $"⚠️ Failed to cancel order #{order.ScheduledOrderId}");
-                }
+                _logger.LogWarning(
+                    "[INGREDIENTS] Empty UserMealIngredients for UserMeal #{Id}, subscription #{SubId}",
+                    userMeal.UserMealId, subscriptionId);
+                return null;
             }
+
+            var ingredientIds = umi.Select(i => i.IngredientId).ToList();
+            var prices = (await _ingredientRepo.GetByIdsAsync(ingredientIds))
+                .ToDictionary(i => i.IngredientId);
+
+            var result = new List<ScheduledOrderIngredient>();
+            foreach (var item in umi)
+            {
+                prices.TryGetValue(item.IngredientId, out var ing);
+                decimal unitPrice = ing?.Price ?? 0m;
+                int     qty       = item.Quantity * quantity;
+
+                result.Add(new ScheduledOrderIngredient
+                {
+                    IngredientId = item.IngredientId,
+                    Quantity     = qty,
+                    UnitPrice    = unitPrice,
+                    TotalPrice   = unitPrice * qty,
+                    CreatedAt    = DateTime.UtcNow
+                });
+            }
+            return result;
         }
     }
 }

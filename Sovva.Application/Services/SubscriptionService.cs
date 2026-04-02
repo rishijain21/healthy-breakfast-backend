@@ -642,11 +642,11 @@ namespace Sovva.Application.Services
             var orderedDays = scheduledDays.OrderBy(d => d).ToList();
             int currentDayOfWeek = (int)currentDate.DayOfWeek;
             
-            var nextDayInWeek = orderedDays.FirstOrDefault(d => d > currentDayOfWeek);
-            
-            if (nextDayInWeek > 0)
+            var nextDayInWeek = orderedDays.Cast<int?>().FirstOrDefault(d => d > currentDayOfWeek);
+
+            if (nextDayInWeek.HasValue)
             {
-                int daysUntilNext = nextDayInWeek - currentDayOfWeek;
+                int daysUntilNext = nextDayInWeek.Value - currentDayOfWeek;
                 return currentDate.AddDays(daysUntilNext);
             }
             else
@@ -689,8 +689,7 @@ namespace Sovva.Application.Services
         /// <summary>
         /// Runs nightly at 11:50 PM IST via Hangfire.
         /// Deactivates any subscription whose EndDate has passed.
-        /// Must run before sync-subscription-dates (11:55 PM) and
-        /// midnight-order-confirmation (11:59 PM).
+        /// Runs before sync-subscription-dates (11:55 PM).
         /// </summary>
         public async Task ExpireSubscriptionsAsync()
         {
