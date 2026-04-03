@@ -4,7 +4,7 @@ namespace Sovva.Application.DTOs
 {
     public class OrderDto
     {
-        public int OrderId { get; set; }
+        public long OrderId { get; set; }
         public int UserId { get; set; }
         
         // ✅ OPTIMIZED: Use enum instead of string

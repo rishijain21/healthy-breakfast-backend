@@ -9,6 +9,7 @@ using Sovva.Application.Interfaces;
 using Sovva.Application.Helpers;
 using Sovva.Application.DTOs;
 using Sovva.Domain.Entities;
+using Sovva.Domain.Enums;
 using Sovva.WebAPI.Extensions;
 
 namespace Sovva.WebAPI.Controllers
@@ -319,14 +320,14 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
                 scheduledOrders.Count, targetIst);
 
             var pendingOrders = scheduledOrders
-                .Where(o => o.OrderStatus.ToLower() == "scheduled")
+                .Where(o => o.OrderStatus == ScheduledOrderStatus.Scheduled)
                 .ToList();
 
             _logger.LogInformation("📋 {Count} orders pending confirmation", pendingOrders.Count);
 
             if (pendingOrders.Count == 0)
             {
-                var alreadyProcessed = scheduledOrders.Count(o => o.OrderStatus == "processed");
+                var alreadyProcessed = scheduledOrders.Count(o => o.OrderStatus == ScheduledOrderStatus.Processed);
                 return new ProcessOrdersResponseDto
                 {
                     Success               = true,
@@ -355,7 +356,7 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
                     if (user == null)
                     {
                         _logger.LogWarning("❌ User not found for order #{Id}", scheduledOrder.ScheduledOrderId);
-                        scheduledOrder.OrderStatus = "failed";
+                        scheduledOrder.OrderStatus = ScheduledOrderStatus.Failed;
                         scheduledOrder.CanModify   = false;
                         await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
                         failedCount++;
@@ -369,7 +370,7 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
                         _logger.LogWarning(
                             "❌ Insufficient balance for order #{Id}: need ₹{Need}, have ₹{Have}",
                             scheduledOrder.ScheduledOrderId, scheduledOrder.TotalPrice, freshUser?.WalletBalance ?? 0);
-                        scheduledOrder.OrderStatus = "cancelled";
+                        scheduledOrder.OrderStatus = ScheduledOrderStatus.Cancelled;
                         scheduledOrder.CanModify   = false;
                         await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
                         failedCount++;
@@ -401,7 +402,7 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
                         scheduledOrder.ScheduledOrderId, orderId, scheduledOrder.TotalPrice);
 
                     // ✅ FIX: Populate audit trail
-                    scheduledOrder.OrderStatus        = "processed";
+                    scheduledOrder.OrderStatus        = ScheduledOrderStatus.Processed;
                     scheduledOrder.CanModify          = false;
                     scheduledOrder.ConfirmedAt        = DateTime.UtcNow;
                     scheduledOrder.IsProcessedToOrder = true;
@@ -413,7 +414,7 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "❌ Failed to confirm order #{Id}", scheduledOrder.ScheduledOrderId);
-                    scheduledOrder.OrderStatus = "failed";
+                    scheduledOrder.OrderStatus = ScheduledOrderStatus.Failed;
                     scheduledOrder.CanModify   = false;
                     await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
                     failedCount++;

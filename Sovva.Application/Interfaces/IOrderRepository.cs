@@ -8,7 +8,7 @@ namespace Sovva.Application.Interfaces
     {
         Task AddAsync(Order entity);
         Task SaveChangesAsync();
-        Task<Order?> GetByIdAsync(int id);
+        Task<Order?> GetByIdAsync(long id);
         void Update(Order order);
         Task<IEnumerable<Order>> GetByUserIdAsync(int userId);
         

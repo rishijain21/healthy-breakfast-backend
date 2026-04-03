@@ -92,7 +92,7 @@ namespace Sovva.WebAPI.Controllers
         }
 
         [HttpGet("{id}")]
-        public async Task<IActionResult> GetById(int id)
+        public async Task<IActionResult> GetById(long id)
         {
             var order = await _orderService.GetOrderByIdAsync(id);
             if (order == null)

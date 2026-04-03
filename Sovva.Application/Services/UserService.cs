@@ -1,6 +1,7 @@
 using Sovva.Application.DTOs;
 using Sovva.Application.Interfaces;
 using Sovva.Domain.Entities;
+using Sovva.Domain.Enums;
 
 namespace Sovva.Application.Services
 {
@@ -23,7 +24,7 @@ namespace Sovva.Application.Services
                 Phone = dto.Phone,
                 WalletBalance = 0,
                 AccountStatus = "Active",
-                Role = "User",  // Default role
+                Role = UserRole.Customer,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
@@ -85,7 +86,7 @@ namespace Sovva.Application.Services
                 Phone = request.Phone ?? string.Empty,
                 WalletBalance = 0.00m,
                 AccountStatus = "Active",
-                Role = "User",  // Default role for new users
+                Role = UserRole.Customer,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
@@ -132,10 +133,7 @@ namespace Sovva.Application.Services
                 user.Phone = dto.Phone.Trim();
             }
 
-            if (dto.DeliveryAddress != null) // Allow empty string to clear address
-            {
-                user.DeliveryAddress = dto.DeliveryAddress.Trim();
-            }
+            // DeliveryAddress removed — managed via UserAddresses table
 
             user.UpdatedAt = DateTime.UtcNow;
 
@@ -154,15 +152,13 @@ namespace Sovva.Application.Services
                 Name = user.Name,
                 Email = user.Email,
                 Phone = user.Phone,
-                DeliveryAddress = user.DeliveryAddress,
                 AccountStatus = user.AccountStatus,
                 WalletBalance = user.WalletBalance,
-                Role = user.Role,  // ✅ Include role
+                Role = user.Role.ToString(),
                 CreatedAt = user.CreatedAt,
                 UpdatedAt = user.UpdatedAt,
                 ProfileComplete = !string.IsNullOrWhiteSpace(user.Name) &&
-                                !string.IsNullOrWhiteSpace(user.Phone) &&
-                                !string.IsNullOrWhiteSpace(user.DeliveryAddress)
+                                !string.IsNullOrWhiteSpace(user.Phone)
             };
         }
 
@@ -173,11 +169,10 @@ namespace Sovva.Application.Services
             if (user == null)
                 return false;
 
-            var validRoles = new[] { "User", "Admin" };
-            if (!validRoles.Contains(role))
-                throw new ArgumentException($"Invalid role. Must be one of: {string.Join(", ", validRoles)}");
+            if (!Enum.TryParse<UserRole>(role, ignoreCase: true, out var parsedRole))
+                throw new ArgumentException($"Invalid role. Must be one of: {string.Join(", ", Enum.GetNames<UserRole>())}");
 
-            user.Role = role;
+            user.Role = parsedRole;
             user.UpdatedAt = DateTime.UtcNow;
 
             await _userRepository.UpdateUserAsync(user);

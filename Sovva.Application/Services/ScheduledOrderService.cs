@@ -8,6 +8,7 @@ using Sovva.Application.Interfaces;
 using Sovva.Application.Helpers;
 using Sovva.Application.DTOs;
 using Sovva.Domain.Entities;
+using Sovva.Domain.Enums;
 
 
 namespace Sovva.Application.Services
@@ -172,7 +173,7 @@ namespace Sovva.Application.Services
                 NutritionalSummary = dto.NutritionalSummary != null
                     ? JsonSerializer.Serialize(dto.NutritionalSummary)
                     : null,
-                OrderStatus = "scheduled",
+                OrderStatus = ScheduledOrderStatus.Scheduled,
                 CanModify = true,
                 // ExpiresAt is timestamptz — use UTC midnight of next day
                 ExpiresAt = _time.ToUtc(deliveryDate.AddDays(1).ToDateTime(TimeOnly.MinValue)),
@@ -223,7 +224,7 @@ namespace Sovva.Application.Services
                 _logger.LogInformation($"✅ Found original order: {originalOrder.MealName}");
 
                 // 2. Validate order can be duplicated
-                if (originalOrder.OrderStatus.ToLower() != "scheduled")
+                if (originalOrder.OrderStatus != ScheduledOrderStatus.Scheduled)
                 {
                     _logger.LogWarning($"❌ Cannot duplicate order with status: {originalOrder.OrderStatus}");
                     throw new InvalidOperationException($"Cannot duplicate order with status '{originalOrder.OrderStatus}'");
@@ -282,7 +283,7 @@ namespace Sovva.Application.Services
                     DeliveryTimeSlot = originalOrder.DeliveryTimeSlot,
                     TotalPrice = originalOrder.TotalPrice,
                     NutritionalSummary = originalOrder.NutritionalSummary,
-                    OrderStatus = "scheduled",
+                    OrderStatus = ScheduledOrderStatus.Scheduled,
                     CanModify = true,
                     // ExpiresAt already UTC
                     // CreatedAt/UpdatedAt handled by TimestampInterceptor
@@ -355,7 +356,7 @@ namespace Sovva.Application.Services
                 throw new InvalidOperationException("Scheduled order not found");
 
             // Check if still editable
-            if (!scheduledOrder.CanModify || scheduledOrder.OrderStatus != "scheduled")
+            if (!scheduledOrder.CanModify || scheduledOrder.OrderStatus != ScheduledOrderStatus.Scheduled)
                 throw new InvalidOperationException("Order can no longer be modified");
 
             var ingredients = new List<(Ingredient ingredient, int quantity)>();
@@ -418,7 +419,7 @@ namespace Sovva.Application.Services
             if (scheduledOrder == null)
                 throw new InvalidOperationException("Scheduled order not found");
 
-            if (!scheduledOrder.CanModify || scheduledOrder.OrderStatus != "scheduled")
+            if (!scheduledOrder.CanModify || scheduledOrder.OrderStatus != ScheduledOrderStatus.Scheduled)
                 throw new InvalidOperationException("Order can no longer be cancelled");
 
             _logger.LogInformation($"🗑️ User cancelled order #{scheduledOrderId} - deleting from cart");
@@ -464,9 +465,9 @@ namespace Sovva.Application.Services
             // ✅ IDEMPOTENCY: Skip orders already "scheduled" or "processing" to prevent double-run on retry
             // Also include "failed" to allow retry on failed orders
             var pendingOrders = scheduledOrders
-                .Where(o => o.OrderStatus.ToLower() == "scheduled" 
-                         || o.OrderStatus.ToLower() == "processing"
-                         || o.OrderStatus.ToLower() == "failed")
+                .Where(o => o.OrderStatus == ScheduledOrderStatus.Scheduled
+                         || o.OrderStatus == ScheduledOrderStatus.Processing
+                         || o.OrderStatus == ScheduledOrderStatus.Failed)
                 .ToList();
 
             _logger.LogInformation($"📋 {pendingOrders.Count} orders pending confirmation");
@@ -560,7 +561,7 @@ namespace Sovva.Application.Services
                 ScheduledFor = order.ScheduledFor.ToDateTime(TimeOnly.MinValue),  // DateOnly → DateTime for DTO
                 DeliveryTimeSlot = order.DeliveryTimeSlot,
                 TotalPrice = order.TotalPrice,
-                OrderStatus = order.OrderStatus,
+                OrderStatus = order.OrderStatus.ToString(),
                 CanModify = order.CanModify,
                 CreatedAt = order.CreatedAt,
                 ExpiresAt = order.ExpiresAt,

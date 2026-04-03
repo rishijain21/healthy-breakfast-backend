@@ -37,7 +37,7 @@ namespace Sovva.Application.DTOs
         public decimal WalletBalanceBefore { get; set; }
         public decimal WalletBalanceAfter { get; set; }
         public string OrderStatus { get; set; } = null!;
-        public int TransactionId { get; set; }
+        public long TransactionId { get; set; }
         public DateTime OrderDate { get; set; }
         public DateTime? ScheduledFor { get; set; }
         public List<IngredientBreakdownDto> IngredientBreakdown { get; set; } = new();

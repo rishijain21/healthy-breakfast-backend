@@ -186,7 +186,7 @@ namespace Sovva.Application.Services
                         ScheduledFor     = deliveryDay,
                         DeliveryTimeSlot = "7:00 AM",
                         TotalPrice       = userMeal.TotalPrice * quantity,
-                        OrderStatus      = "scheduled",
+                        OrderStatus      = ScheduledOrderStatus.Scheduled,
                         CanModify        = true,
                         ExpiresAt        = _time.ToUtc(
                                                deliveryDay.AddDays(1)
@@ -300,7 +300,7 @@ namespace Sovva.Application.Services
                 ScheduledFor      = deliveryDay,
                 DeliveryTimeSlot  = "7:00 AM",
                 TotalPrice        = userMeal.TotalPrice * quantity,
-                OrderStatus       = "scheduled",
+                OrderStatus       = ScheduledOrderStatus.Scheduled,
                 CanModify         = true,
                 ExpiresAt         = _time.ToUtc(
                                         deliveryDay.AddDays(1)
@@ -328,11 +328,10 @@ namespace Sovva.Application.Services
 
             var orders = await _scheduledOrderRepo.GetBySubscriptionIdAsync(subscriptionId);
             var toCancel = orders
-                .Where(o => o.ScheduledFor == tomorrow && o.OrderStatus == "scheduled")
+                .Where(o => o.ScheduledFor == tomorrow && o.OrderStatus == ScheduledOrderStatus.Scheduled)
                 .ToList();
 
-            _logger.LogInformation(
-                "[CANCEL] Found {Count} orders to cancel for subscription #{Id} on {Date}",
+            _logger.LogInformation("[CANCEL] Found {Count} orders to cancel for subscription #{Id} on {Date}",
                 toCancel.Count, subscriptionId, tomorrow);
 
             foreach (var order in toCancel)

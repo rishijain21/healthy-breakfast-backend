@@ -1,5 +1,6 @@
 using Sovva.Application.Interfaces;
 using Sovva.Application.Helpers;
+using Sovva.Application.DTOs;
 using Sovva.Domain.Entities;
 using Sovva.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -23,7 +24,7 @@ namespace Sovva.Infrastructure.Repositories
                         .OrderByDescending(wt => wt.CreatedAt).ToListAsync();
 
         // ✅ OPTIMIZED: Removed .Include(wt => wt.User) for faster queries
-        public async Task<WalletTransaction?> GetByIdAsync(int transactionId)
+        public async Task<WalletTransaction?> GetByIdAsync(long transactionId)
             => await _context.WalletTransactions
                         .FirstOrDefaultAsync(wt => wt.TransactionId == transactionId);
 
@@ -119,6 +120,38 @@ namespace Sovva.Infrastructure.Repositories
             _context.WalletTransactions.Add(transaction);
             await _context.SaveChangesAsync();
             // ❌ Do NOT call UpdateUserWalletBalance — balance already correct
+        }
+
+        /// <summary>
+        /// ✅ NEW: Atomic debit using Postgres function - prevents race conditions
+        /// </summary>
+        public async Task<(bool success, decimal newBalance, string message)> DebitWalletAsync(
+            int userId, decimal amount, string description, string? referenceType, int? referenceId)
+        {
+            var result = await _context.Database
+                .SqlQueryRaw<WalletDebitResult>(
+                    @"SELECT success, new_balance AS ""NewBalance"", message 
+                      FROM debit_wallet({0}, {1}, {2}, {3}, {4})",
+                    userId, amount, description, referenceType ?? (object)DBNull.Value, referenceId ?? (object)DBNull.Value)
+                .FirstOrDefaultAsync();
+
+            return (result?.Success ?? false, result?.NewBalance ?? 0, result?.Message ?? "Error");
+        }
+
+        /// <summary>
+        /// ✅ NEW: Atomic credit using Postgres function - prevents race conditions
+        /// </summary>
+        public async Task<(bool success, decimal newBalance, string message)> CreditWalletAsync(
+            int userId, decimal amount, string description, string? referenceType, int? referenceId)
+        {
+            var result = await _context.Database
+                .SqlQueryRaw<WalletDebitResult>(
+                    @"SELECT success, new_balance AS ""NewBalance"", message 
+                      FROM credit_wallet({0}, {1}, {2}, {3}, {4})",
+                    userId, amount, description, referenceType ?? (object)DBNull.Value, referenceId ?? (object)DBNull.Value)
+                .FirstOrDefaultAsync();
+
+            return (result?.Success ?? false, result?.NewBalance ?? 0, result?.Message ?? "Error");
         }
     }
 }

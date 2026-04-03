@@ -10,6 +10,7 @@ using Microsoft.Extensions.Logging;
 using Sovva.Application.DTOs;
 using Sovva.Application.Helpers;
 using Sovva.Application.Interfaces;
+using Sovva.Domain.Enums;
 
 namespace Sovva.Application.Services
 {
@@ -121,15 +122,13 @@ namespace Sovva.Application.Services
                 Name = user.Name,
                 Email = user.Email,
                 Phone = user.Phone,
-                DeliveryAddress = user.DeliveryAddress,
                 AccountStatus = user.AccountStatus,
                 WalletBalance = user.WalletBalance,
-                Role = user.Role,
+                Role = user.Role.ToString(),
                 CreatedAt = user.CreatedAt,
                 UpdatedAt = user.UpdatedAt,
                 ProfileComplete = !string.IsNullOrWhiteSpace(user.Name) &&
-                                !string.IsNullOrWhiteSpace(user.Phone) &&
-                                !string.IsNullOrWhiteSpace(user.DeliveryAddress)
+                                !string.IsNullOrWhiteSpace(user.Phone)
             };
 
             // Cache for 5 minutes
@@ -188,7 +187,7 @@ namespace Sovva.Application.Services
             );
             
             return allOrders
-                .Where(o => o.OrderStatus.ToLower() == "scheduled")
+                .Where(o => o.OrderStatus == ScheduledOrderStatus.Scheduled)
                 .Select(o => new ScheduledOrderResponseDto
                 {
                     ScheduledOrderId = o.ScheduledOrderId,
@@ -198,7 +197,7 @@ namespace Sovva.Application.Services
                     ScheduledFor = o.ScheduledFor.ToDateTime(TimeOnly.MinValue),  // DateOnly → DateTime for DTO
                     DeliveryTimeSlot = o.DeliveryTimeSlot,
                     TotalPrice = o.TotalPrice,
-                    OrderStatus = o.OrderStatus,
+                    OrderStatus = o.OrderStatus.ToString(),
                     CanModify = o.CanModify,
                     CreatedAt = o.CreatedAt,
                     ExpiresAt = o.ExpiresAt,

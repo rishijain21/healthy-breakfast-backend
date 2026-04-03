@@ -5,7 +5,7 @@ namespace Sovva.Application.Interfaces
     public interface IWalletTransactionService
     {
         Task<IEnumerable<WalletTransactionDto>> GetAllTransactionsAsync();
-        Task<WalletTransactionDto?> GetTransactionByIdAsync(int transactionId);
+        Task<WalletTransactionDto?> GetTransactionByIdAsync(long transactionId);
         Task<IEnumerable<WalletTransactionDto>> GetUserTransactionsAsync(int userId);
         Task<IEnumerable<WalletTransactionDto>> GetUserTransactionsByTypeAsync(int userId, string type);
         Task<decimal> GetUserBalanceAsync(int userId);

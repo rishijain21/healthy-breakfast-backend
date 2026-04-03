@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
+using Sovva.Domain.Enums;
 
 namespace Sovva.Domain.Entities
 {
@@ -11,17 +13,16 @@ namespace Sovva.Domain.Entities
         public string Name { get; set; } = null!;
         public string Email { get; set; } = null!;
         public string Phone { get; set; } = null!;
-// Add this line after the AuthMapping property
-public ICollection<UserAddress> Addresses { get; set; } = new List<UserAddress>();
 
-        // ✅ NEW FIELDS - Add these
-        public string? DeliveryAddress { get; set; }
+        public ICollection<UserAddress> Addresses { get; set; } = new List<UserAddress>();
+
         public string AccountStatus { get; set; } = "Active"; // "Active", "Deactivated", "Deleted"
 
         public decimal WalletBalance { get; set; }
 
-        // ✅ ADD THIS - Role for authorization
-        public string Role { get; set; } = "User"; // "User" or "Admin"
+        public UserRole Role { get; set; } = UserRole.Customer;
+
+        public DateTime? DeletedAt { get; set; } // Soft delete
 
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }

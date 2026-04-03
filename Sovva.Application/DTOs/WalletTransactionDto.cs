@@ -2,7 +2,7 @@ namespace Sovva.Application.DTOs
 {
     public class WalletTransactionDto
     {
-        public int TransactionId { get; set; }
+        public long TransactionId { get; set; }
         public int UserId { get; set; }
         public decimal Amount { get; set; }
         public string Type { get; set; } = null!;

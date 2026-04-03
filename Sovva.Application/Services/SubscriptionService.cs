@@ -379,7 +379,7 @@ namespace Sovva.Application.Services
                 ScheduledFor = DateOnly.FromDateTime(deliveryDateTimeUtc),  // DateTime → DateOnly
                 DeliveryTimeSlot = "8:00 AM",
                 TotalPrice = totalPrice,
-                OrderStatus = "scheduled",
+                OrderStatus = ScheduledOrderStatus.Scheduled,
                 CanModify = true,
                 ExpiresAt = deliveryDateTimeUtc.AddDays(1),
                 CreatedAt = DateTime.UtcNow,

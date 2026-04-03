@@ -36,7 +36,7 @@ namespace Sovva.Application.Services
         }
 
         // ✅ SECURE: Create order with userId from JWT token
-        public async Task<int> CreateOrderAsync(CreateOrderDto dto, int userId)
+        public async Task<long> CreateOrderAsync(CreateOrderDto dto, int userId)
         {
             var entity = new Order
             {
@@ -55,7 +55,7 @@ namespace Sovva.Application.Services
             return entity.OrderId;
         }
 
-        public async Task<OrderDto?> GetOrderByIdAsync(int id)
+        public async Task<OrderDto?> GetOrderByIdAsync(long id)
         {
             var entity = await _orderRepository.GetByIdAsync(id);
             if (entity == null) return null;

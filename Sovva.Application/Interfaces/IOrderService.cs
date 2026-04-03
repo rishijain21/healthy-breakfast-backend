@@ -7,8 +7,8 @@ namespace Sovva.Application.Interfaces
     public interface IOrderService
     {
         // ✅ SECURE: Create order with userId from JWT token
-        Task<int> CreateOrderAsync(CreateOrderDto dto, int userId);
-        Task<OrderDto?> GetOrderByIdAsync(int id);
+        Task<long> CreateOrderAsync(CreateOrderDto dto, int userId);
+        Task<OrderDto?> GetOrderByIdAsync(long id);
         
         // ✅ SECURE: Meal builder method with userId from JWT token
         Task<OrderCreationResponseDto> CreateOrderFromMealBuilderAsync(CreateOrderFromMealBuilderDto dto, int userId);

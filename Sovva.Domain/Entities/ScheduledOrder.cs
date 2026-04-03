@@ -1,7 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
-using System.Collections.Generic;
+using Sovva.Domain.Enums;
 
 namespace Sovva.Domain.Entities
 {
@@ -33,7 +34,7 @@ namespace Sovva.Domain.Entities
         
         public string? NutritionalSummary { get; set; } // JSON string for calories, protein, etc.
         
-        public string OrderStatus { get; set; } = "scheduled"; // scheduled, confirmed, cancelled
+        public ScheduledOrderStatus OrderStatus { get; set; } = ScheduledOrderStatus.Scheduled;
         
         public bool CanModify { get; set; } = true;
         

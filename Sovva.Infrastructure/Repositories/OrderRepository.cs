@@ -27,7 +27,7 @@ namespace Sovva.Infrastructure.Repositories
             await _context.SaveChangesAsync();
         }
 
-        public async Task<Order?> GetByIdAsync(int id)
+        public async Task<Order?> GetByIdAsync(long id)
         {
             return await _context.Orders.AsNoTracking().FirstOrDefaultAsync(o => o.OrderId == id);
         }

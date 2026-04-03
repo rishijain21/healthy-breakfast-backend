@@ -28,7 +28,7 @@ namespace Sovva.Application.Services
         public async Task<IEnumerable<WalletTransactionDto>> GetAllTransactionsAsync()
             => (await _walletTransactionRepository.GetAllAsync()).Select(t => MapToDto(t!));
 
-        public async Task<WalletTransactionDto?> GetTransactionByIdAsync(int transactionId)
+        public async Task<WalletTransactionDto?> GetTransactionByIdAsync(long transactionId)
         {
             var transaction = await _walletTransactionRepository.GetByIdAsync(transactionId);
             if (transaction == null) return null;

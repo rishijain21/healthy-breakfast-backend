@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using Sovva.Application.Helpers;
 using Sovva.Application.Interfaces;
 using Sovva.Domain.Entities;
+using Sovva.Domain.Enums;
 using Sovva.Infrastructure.Data;
 
 namespace Sovva.Infrastructure.Repositories
@@ -168,7 +169,7 @@ namespace Sovva.Infrastructure.Repositories
                 .AsNoTracking()
                 .AnyAsync(so => so.AuthId == authId
                               && so.ScheduledFor == targetDate
-                              && so.OrderStatus == "scheduled");
+                              && so.OrderStatus == ScheduledOrderStatus.Scheduled);
         }
 
         public async Task<List<ScheduledOrder>> GetBySubscriptionIdAsync(int subscriptionId)
@@ -191,7 +192,7 @@ namespace Sovva.Infrastructure.Repositories
                 .FirstOrDefaultAsync(so => 
                     so.SubscriptionId == subscriptionId &&
                     so.ScheduledFor == date &&
-                    so.OrderStatus != "failed");  // ← allow retry on failed orders
+                    so.OrderStatus != ScheduledOrderStatus.Failed);  // ← allow retry on failed orders
         }
 
         // ─────────────────────────────────────────────────────────────────────
