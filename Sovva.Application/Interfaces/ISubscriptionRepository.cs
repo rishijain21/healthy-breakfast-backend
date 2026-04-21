@@ -22,6 +22,10 @@ namespace Sovva.Application.Interfaces
         // ✅ NEW: Prevent duplicate subscriptions (checks active + date range)
         Task<Subscription?> GetActiveSubscriptionByUserMealIdAsync(int userId, int userMealId);
 
+        // ✅ FIX BUG 2 & 4: Check any active subscription for this meal (ignores date range)
+        Task<Subscription?> GetAnyActiveSubscriptionByUserMealIdAsync(int userId, int userMealId);
+        Task<Subscription?> GetAnyActiveSubscriptionByMealIdAsync(int userId, int mealId);
+
         // ✅ NEW: Batch update for efficient DB operations
         Task UpdateBatchAsync(IEnumerable<Subscription> subscriptions);
     }

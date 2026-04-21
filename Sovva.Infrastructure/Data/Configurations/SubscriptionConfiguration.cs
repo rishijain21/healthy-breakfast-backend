@@ -37,6 +37,12 @@ namespace Sovva.Infrastructure.Data.Configurations
                 .HasForeignKey(e => e.DeliveryAddressId)
                 .OnDelete(DeleteBehavior.SetNull);
 
+            // ✅ FIX BUG 3: Partial unique index to prevent duplicate active subscriptions
+            builder.HasIndex(e => new { e.UserId, e.UserMealId })
+                .HasFilter("\"Active\" = true")
+                .IsUnique()
+                .HasDatabaseName("UX_Subscriptions_ActiveUserMeal");
+
             // Indexes
             builder.HasIndex(e => new { e.UserId, e.Active })
                 .HasDatabaseName("IX_Subscriptions_UserId_Active");

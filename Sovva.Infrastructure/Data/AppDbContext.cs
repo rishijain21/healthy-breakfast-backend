@@ -53,6 +53,9 @@ namespace Sovva.Infrastructure.Data
             // All entity config loaded from IEntityTypeConfiguration<T> classes
             modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
 
+            // Global soft-delete filter — excludes IsDeleted meals from all queries automatically
+            modelBuilder.Entity<Meal>().HasQueryFilter(m => !m.IsDeleted);
+
             // ======= SEED DATA =======
             var seedDate = new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 

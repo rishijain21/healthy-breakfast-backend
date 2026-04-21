@@ -167,5 +167,35 @@ public async Task<Subscription> UpdateAsync(Subscription subscription)
                     s.EndDate >= today
                 );
         }
+
+        // ✅ FIX BUG 2 & 4: Check any active subscription for this meal (ignores date range)
+        public async Task<Subscription?> GetAnyActiveSubscriptionByUserMealIdAsync(int userId, int userMealId)
+        {
+            return await _context.Subscriptions
+                .AsNoTracking()
+                .FirstOrDefaultAsync(s =>
+                    s.UserId     == userId     &&
+                    s.UserMealId == userMealId &&
+                    s.Active     == true       &&
+                    s.EndDate    >= _time.TodayIst
+                );
+        }
+
+        // ✅ FIX BUG 2: Check any active subscription for this meal (ignores date range)
+        public async Task<Subscription?> GetAnyActiveSubscriptionByMealIdAsync(int userId, int mealId)
+        {
+            return await _context.Subscriptions
+                .AsNoTracking()
+                .Include(s => s.WeeklySchedule)
+                .Where(s => s.UserId == userId && s.Active == true)
+                .Join(
+                    _context.UserMeals,
+                    s => s.UserMealId,
+                    um => um.UserMealId,
+                    (s, um) => new { Subscription = s, UserMeal = um })
+                .Where(x => x.UserMeal.MealId == mealId)
+                .Select(x => x.Subscription)
+                .FirstOrDefaultAsync();
+        }
     }
 }

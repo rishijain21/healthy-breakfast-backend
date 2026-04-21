@@ -92,7 +92,7 @@ namespace Sovva.Application.Services
 
             foreach (var subscription in allSubscriptions)
             {
-                try
+                try 
                 {
                     // 1. Is this subscription due on deliveryDay?
                     if (!IsDueOnDate(subscription, deliveryDay))

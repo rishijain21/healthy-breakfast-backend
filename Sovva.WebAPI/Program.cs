@@ -188,6 +188,7 @@ builder.Services.AddControllers()
         options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
         options.JsonSerializerOptions.DefaultIgnoreCondition =
             System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
+        options.JsonSerializerOptions.Converters.Add(new Sovva.WebAPI.Extensions.DateOnlyJsonConverter());
     });
 
 builder.Services.AddFluentValidationAutoValidation();

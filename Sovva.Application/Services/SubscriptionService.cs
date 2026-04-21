@@ -86,16 +86,48 @@ namespace Sovva.Application.Services
             if (user == null)
                 throw new ArgumentException("User not found");
 
-            // ✅ NEW: Auto-find or create UserMeal by MealId
+            // ✅ FIX BUG 5: Security check - validate user owns their account (fail fast)
+            if (user.UserId != dto.UserId)
+            {
+                _logger.LogWarning(
+                    "❌ Security violation: User {UserId} attempted to subscribe with invalid user account",
+                    dto.UserId);
+                
+                throw new UnauthorizedAccessException(
+                    "Invalid user account");
+            }
+
+            // ✅ FIX BUG 2: Validate meal exists BEFORE duplicate check (fail fast)
+            var meal = await _mealRepository.GetByIdAsync(dto.MealId);
+            if (meal == null)
+                throw new ArgumentException("Meal not found");
+
+            // ✅ FIX BUG 1: Check for duplicate subscription BEFORE creating UserMeal
+            // Uses MealId to check any active subscription for this meal (not just current date range)
+            _logger.LogInformation("🔍 Checking for existing subscription: UserId={UserId}, MealId={MealId}", dto.UserId, dto.MealId);
+            
+            var existingSubscription = await _subscriptionRepository.GetAnyActiveSubscriptionByMealIdAsync(
+                dto.UserId, 
+                dto.MealId
+            );
+            
+            if (existingSubscription != null)
+            {
+                _logger.LogWarning(
+                    "❌ Duplicate subscription attempt: User {UserId} tried to subscribe to Meal {MealId} again. Existing subscription ID: {ExistingSubId}",
+                    dto.UserId, dto.MealId, existingSubscription.SubscriptionId);
+                
+                throw new InvalidOperationException(
+                    $"You already have an active subscription for '{meal.MealName}'. " +
+                    "Please edit your existing subscription instead of creating a new one."
+                );
+            }
+
+            // ✅ FIX BUG 1: Now safe to look up or create UserMeal AFTER duplicate check passes
             var userMeal = await _userMealRepository.GetByUserIdAndMealIdAsync(dto.UserId, dto.MealId);
 
             if (userMeal == null)
             {
-                // Fetch meal details for UserMeal record
-                var meal = await _mealRepository.GetByIdAsync(dto.MealId);
-                if (meal == null)
-                    throw new ArgumentException("Meal not found");
-
                 userMeal = new UserMeal
                 {
                     UserId = dto.UserId,
@@ -112,19 +144,19 @@ namespace Sovva.Application.Services
             // Update the UserMealId in the DTO for downstream usage
             dto.UserMealId = userMeal.UserMealId;
 
-            // ✅ ADD: Check for existing active subscription for this UserMeal
-            _logger.LogInformation("🔍 Checking for existing subscription: UserId={UserId}, UserMealId={UserMealId}", dto.UserId, dto.UserMealId);
+            // ✅ Check for existing active subscription using the new simpler method (already validated but safe to check)
+            _logger.LogInformation("🔍 Final check: UserId={UserId}, UserMealId={UserMealId}", dto.UserId, dto.UserMealId);
             
-            var existingSubscription = await _subscriptionRepository.GetActiveSubscriptionByUserMealIdAsync(
+            var checkSubscription = await _subscriptionRepository.GetAnyActiveSubscriptionByUserMealIdAsync(
                 dto.UserId, 
                 dto.UserMealId
             );
             
-            if (existingSubscription != null)
+            if (checkSubscription != null)
             {
                 _logger.LogWarning(
                     "❌ Duplicate subscription attempt: User {UserId} tried to subscribe to UserMeal {UserMealId} again. Existing subscription ID: {ExistingSubId}",
-                    dto.UserId, dto.UserMealId, existingSubscription.SubscriptionId);
+                    dto.UserId, dto.UserMealId, checkSubscription.SubscriptionId);
                     
                 throw new InvalidOperationException(
                     $"You already have an active subscription for '{userMeal.MealName}'. " +
