@@ -113,5 +113,22 @@ namespace Sovva.Infrastructure.Repositories
                 .OrderBy(m => m.MealId)
                 .ToListAsync();
         }
+
+        // ✅ NEW: Batch fetch for users (single WHERE IN query with IsComplete filter)
+        public async Task<List<Meal>> GetByIdsForUsersAsync(List<int> ids)
+        {
+            if (ids == null || ids.Count == 0)
+                return new List<Meal>();
+
+            return await _context.Meals
+                .AsNoTracking()
+                .Include(m => m.MealOptions)
+                    .ThenInclude(mo => mo.IngredientCategory)
+                .Include(m => m.MealOptions)
+                    .ThenInclude(mo => mo.MealOptionIngredients)
+                        .ThenInclude(moi => moi.Ingredient)
+                .Where(m => ids.Contains(m.MealId) && m.IsComplete && !m.IsDeleted)
+                .ToListAsync();
+        }
     }
 }

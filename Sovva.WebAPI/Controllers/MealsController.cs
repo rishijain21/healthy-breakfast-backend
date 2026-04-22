@@ -37,49 +37,42 @@ namespace Sovva.WebAPI.Controllers
         }
 
         // ✅ ADD THIS — meal details for logged-in users (meal builder)
+        // ✅ FIX: Use user-facing method that returns MealWithDetailsDto (not AdminMealDetailDto)
         [HttpGet("{id}/details")]
         [Authorize]
-        [ProducesResponseType(typeof(AdminMealDetailDto), 200)]
+        [ProducesResponseType(typeof(MealWithDetailsDto), 200)]
         [ProducesResponseType(401)]
         [ProducesResponseType(404)]
         public async Task<IActionResult> GetMealDetails(int id)
         {
-            try
-            {
-                var meal = await _mealService.GetMealDetailForAdminAsync(id);
-                if (meal == null)
-                    return NotFound(new { message = $"Meal with ID {id} not found" });
+            // ✅ FIX: Use user-facing batch method for single meal too
+            var meals = await _mealService.GetMealsBatchDetailsForUsersAsync(new List<int> { id });
+            var meal = meals.FirstOrDefault();
+            
+            if (meal == null)
+                return NotFound(new { message = $"Meal with ID {id} not found or not available" });
 
-                return Ok(meal);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error retrieving meal details");
-                return StatusCode(500, new { message = "Error retrieving meal details" });
-            }
+            return Ok(meal);
         }
 
         // ✅ ADD after GetMealDetails — batch meal details for logged-in users
+        // ✅ FIX 1,2,3,4: Use user-facing method, single query, remove duplicates, preserve order, remove redundant catch
         [HttpPost("batch-details")]
         [Authorize]
         public async Task<IActionResult> GetMealsBatchDetails([FromBody] BatchMealRequestDto request)
         {
-            try
-            {
-                if (request.MealIds == null || request.MealIds.Count == 0)
-                    return BadRequest(new { message = "No meal IDs provided" });
+            if (request.MealIds == null || request.MealIds.Count == 0)
+                return BadRequest(new { message = "No meal IDs provided" });
 
-                if (request.MealIds.Count > 20)
-                    return BadRequest(new { message = "Maximum 20 meals per batch request" });
+            if (request.MealIds.Count > 20)
+                return BadRequest(new { message = "Maximum 20 meals per batch request" });
 
-                var meals = await _mealService.GetMealsBatchDetailsAsync(request.MealIds);
-                return Ok(meals);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error retrieving batch meal details");
-                return StatusCode(500, new { message = "Error retrieving meal details" });
-            }
+            // ✅ FIX 1: Use user-facing method that returns MealWithDetailsDto (not AdminMealDetailDto)
+            // ✅ FIX 2: Single DB query (N+1 fixed via WHERE IN)
+            // ✅ FIX 3: Duplicates removed and order preserved in service method
+            // ✅ FIX 4: Removed redundant catch - GlobalExceptionMiddleware handles errors
+            var meals = await _mealService.GetMealsBatchDetailsForUsersAsync(request.MealIds);
+            return Ok(meals);
         }
 
         // ✅ FIX 9: Add authorization to legacy endpoints (or remove if not needed)

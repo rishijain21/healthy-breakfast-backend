@@ -24,5 +24,8 @@ namespace Sovva.Application.Interfaces
 
         // ✅ NEW: Get all meals with options loaded (fixes N+1)
         Task<IEnumerable<Meal>> GetAllWithOptionsCountAsync();
+
+        // ✅ NEW: Batch fetch for users (single query with IsComplete filter)
+        Task<List<Meal>> GetByIdsForUsersAsync(List<int> ids);
     }
 }

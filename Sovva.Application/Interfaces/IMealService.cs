@@ -32,5 +32,8 @@ namespace Sovva.Application.Interfaces
         // ✅ NEW: Image management for meals
         Task<bool> UpdateMealImageAsync(int mealId, string imageUrl);
         Task<string?> DeleteMealImageAsync(int mealId);
+
+        // ✅ NEW: User-facing batch details (uses MealWithDetailsDto, filters IsComplete)
+        Task<List<MealWithDetailsDto>> GetMealsBatchDetailsForUsersAsync(List<int> mealIds);
     }
 }

@@ -667,5 +667,70 @@ namespace Sovva.Application.Services
                 return null;
             }
         }
+
+        // ✅ NEW: User-facing batch details - uses single query, filters IsComplete, preserves order
+        public async Task<List<MealWithDetailsDto>> GetMealsBatchDetailsForUsersAsync(List<int> mealIds)
+        {
+            if (mealIds == null || mealIds.Count == 0)
+                return new List<MealWithDetailsDto>();
+
+            // Remove duplicates and preserve input order
+            var uniqueIds = mealIds.Distinct().ToList();
+            var meals = await _mealRepository.GetByIdsForUsersAsync(uniqueIds);
+
+            // Build lookup map for order preservation
+            var mealMap = meals.ToDictionary(m => m.MealId);
+            var results = new List<MealWithDetailsDto>();
+
+            foreach (var id in uniqueIds)
+            {
+                if (mealMap.TryGetValue(id, out var meal))
+                {
+                    var dto = MapToMealWithDetailsDto(meal);
+                    // ✅ FIX: Generate signed URL for image (MealWithDetailsDto now has ImageUrl field)
+                    dto.ImageUrl = await GetSafeSignedUrlAsync(meal.ImageUrl);
+                    results.Add(dto);
+                }
+            }
+
+            return results;
+        }
+
+        // ✅ Helper: Map Meal entity to user-facing DTO
+        private static MealWithDetailsDto MapToMealWithDetailsDto(Meal meal)
+        {
+            var dto = new MealWithDetailsDto
+            {
+                MealId = meal.MealId,
+                MealName = meal.MealName,
+                Description = meal.Description,
+                BasePrice = meal.BasePrice,
+                ApproxCalories = meal.ApproxCalories,
+                ApproxProtein = meal.ApproxProtein,
+                ApproxCarbs = meal.ApproxCarbs,
+                ApproxFats = meal.ApproxFats,
+                CreatedAt = meal.CreatedAt,
+                UpdatedAt = meal.UpdatedAt,
+                MealOptionsCount = meal.MealOptions?.Count ?? 0,
+                MealOptions = new List<MealOptionDto>()
+            };
+
+            if (meal.MealOptions != null)
+            {
+                foreach (var option in meal.MealOptions)
+                {
+                    dto.MealOptions.Add(new MealOptionDto
+                    {
+                        MealOptionId = option.MealOptionId,
+                        CategoryId = option.CategoryId,
+                        CategoryName = option.IngredientCategory?.CategoryName ?? "",
+                        IsRequired = option.IsRequired,
+                        MaxSelectable = option.MaxSelectable
+                    });
+                }
+            }
+
+            return dto;
+        }
     }
 }

@@ -6,6 +6,7 @@ namespace Sovva.Application.DTOs
         public string MealName { get; set; } = null!;
         public string Description { get; set; } = null!;
         public decimal BasePrice { get; set; }
+        public string? ImageUrl { get; set; }
         public int? ApproxCalories { get; set; }
         public decimal? ApproxProtein { get; set; }
         public decimal? ApproxCarbs { get; set; }
