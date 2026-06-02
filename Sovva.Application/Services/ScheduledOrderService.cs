@@ -439,7 +439,12 @@ namespace Sovva.Application.Services
         {
             var scheduledOrder = await _scheduledOrderRepository.GetByIdAndAuthIdAsync(scheduledOrderId, authId);
             if (scheduledOrder == null)
-                throw new ScheduledOrderNotFoundException(scheduledOrderId);
+            {
+                // ✅ FIX: Idempotent delete. If the order is already deleted (e.g., via cascading subscription cancel), 
+                // we treat the cancellation as successful instead of throwing a 404, preventing frontend UI errors.
+                _logger.LogInformation("Order {OrderId} not found during cancellation (likely already deleted) - treating as success", scheduledOrderId);
+                return;
+            }
 
             // P1-3 FIX: Explicit userId ownership check — defense-in-depth beyond authId
             if (scheduledOrder.UserId != userId)
