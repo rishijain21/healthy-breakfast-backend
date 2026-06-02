@@ -1,6 +1,7 @@
 # Build outputs - never commit these
 bin/
 obj/
+publish/
 
 # IDE
 .vs/
