@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 
 namespace Sovva.Infrastructure.Repositories
 {
-    public class UserLoader : IUserLoader
+    internal class UserLoader : IUserLoader
     {
         private readonly AppDbContext _context;
 

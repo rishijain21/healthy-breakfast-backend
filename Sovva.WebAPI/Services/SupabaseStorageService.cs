@@ -10,8 +10,9 @@ namespace Sovva.WebAPI.Services
     {
         private readonly HttpClient _httpClient;
         private readonly string _storageUrl;
-        private readonly string _serviceRoleKey; // Use service role key to bypass RLS
+        private readonly string? _serviceRoleKey; // Use service role key to bypass RLS
         private readonly ILogger<SupabaseStorageService> _logger;
+        private readonly bool _isConfigured;
 
         public SupabaseStorageService(
             HttpClient httpClient,
@@ -19,14 +20,17 @@ namespace Sovva.WebAPI.Services
             ILogger<SupabaseStorageService> logger)
         {
             _httpClient = httpClient;
-            _storageUrl = config["Supabase:StorageUrl"]!;
-            _serviceRoleKey = config["Supabase:ServiceRoleKey"] ?? 
-                throw new ArgumentNullException("Supabase:ServiceRoleKey is required for storage operations");
+            _storageUrl = config["Supabase:StorageUrl"] ?? "";
+            _serviceRoleKey = config["Supabase:ServiceRoleKey"];
+            _isConfigured = !string.IsNullOrEmpty(_serviceRoleKey);
             _logger = logger;
         }
 
         public async Task<string> UploadImageAsync(IFormFile image, string filePath)
         {
+            if (!_isConfigured)
+                throw new InvalidOperationException("SupabaseStorageService is not configured: Supabase:ServiceRoleKey is missing. Storage features are unavailable.");
+
             // Validate type
             var allowedTypes = new[] { "image/jpeg", "image/png", "image/webp" };
             if (!allowedTypes.Contains(image.ContentType?.ToLower()))
@@ -68,13 +72,16 @@ namespace Sovva.WebAPI.Services
 
         public async Task<string?> GetSignedUrlAsync(string filePath, int expiresInSeconds = 3600)
         {
+            if (!_isConfigured)
+                throw new InvalidOperationException("SupabaseStorageService is not configured: Supabase:ServiceRoleKey is missing. Storage features are unavailable.");
+
             // Ensure we only pass relative path inside bucket
             var cleanPath = filePath.StartsWith("meal-images/")
                 ? filePath.Replace("meal-images/", "")
                 : filePath;
-
+            // P2-1 FIX: Use configured _storageUrl instead of hardcoded project URL
             var requestUrl =
-                $"https://beeqamwptmbpowswawfx.supabase.co/storage/v1/object/sign/meal-images/{cleanPath}";
+                $"{_storageUrl}/object/sign/meal-images/{cleanPath}";
 
             var request = new HttpRequestMessage(HttpMethod.Post, requestUrl)
             {
@@ -110,6 +117,9 @@ namespace Sovva.WebAPI.Services
 
         public async Task DeleteImageAsync(string filePath)
         {
+            if (!_isConfigured)
+                throw new InvalidOperationException("SupabaseStorageService is not configured: Supabase:ServiceRoleKey is missing. Storage features are unavailable.");
+
             // Ensure we only pass relative path inside bucket
             var cleanPath = filePath.StartsWith("meal-images/")
                 ? filePath

@@ -1,5 +1,7 @@
-using Sovva.Application.Constants;
+using Sovva.Domain.Constants;
 using Sovva.Application.DTOs;
+using Sovva.Application.Exceptions;
+using FluentValidation;
 
 namespace Sovva.WebAPI.Middleware;
 
@@ -29,35 +31,44 @@ public class GlobalExceptionMiddleware
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Unhandled exception on {Method} {Path}", 
-                context.Request.Method, context.Request.Path);
             await HandleExceptionAsync(context, ex);
         }
     }
 
-    private static Task HandleExceptionAsync(HttpContext context, Exception ex)
+    private async Task HandleExceptionAsync(HttpContext context, Exception ex)
     {
         var (statusCode, code, message) = ex switch
         {
+            // ✅ CUSTOM EXCEPTIONS
+            InsufficientBalanceException ibEx => HandleInsufficientBalance(ibEx),
+            AddressNotFoundException => 
+                (StatusCodes.Status400BadRequest, "NO_DELIVERY_ADDRESS", "Please add a delivery address before placing an order."),
+            DuplicateSubscriptionException => 
+                (StatusCodes.Status409Conflict, "DUPLICATE_SUBSCRIPTION", "You already have an active subscription for this meal."),
+            OrderNotFoundException onf =>
+                (StatusCodes.Status404NotFound, "NOT_FOUND", onf.Message),
+            ScheduledOrderNotFoundException sonf =>
+                (StatusCodes.Status404NotFound, "NOT_FOUND", sonf.Message),
+            UserNotFoundException unf =>
+                (StatusCodes.Status404NotFound, "NOT_FOUND", unf.Message),
+            OrderAlreadyPreparedException oap =>
+                (StatusCodes.Status409Conflict, "CONFLICT", oap.Message),
+
             // Not Found errors
             KeyNotFoundException => 
-                (StatusCodes.Status404NotFound, ErrorCodes.NotFound, ex.Message),
+                (StatusCodes.Status404NotFound, ErrorCodes.NotFound, "The requested resource was not found."),
 
-            // Invalid Operation errors - categorize by message content
-            InvalidOperationException operationEx when operationEx.Message.Contains("wallet", StringComparison.OrdinalIgnoreCase) =>
-                (StatusCodes.Status400BadRequest, ErrorCodes.InsufficientBalance, operationEx.Message),
+            // Validation errors
+            ValidationException valEx => 
+                (StatusCodes.Status400BadRequest, "VALIDATION_ERROR", string.Join("; ", valEx.Errors.Select(e => $"{e.PropertyName}: {e.ErrorMessage}"))),
 
-            InvalidOperationException operationEx when operationEx.Message.Contains("address", StringComparison.OrdinalIgnoreCase) =>
-                (StatusCodes.Status400BadRequest, ErrorCodes.NoDeliveryAddress, operationEx.Message),
+            // ✅ FIX 14: Use BusinessRuleException for safe client-facing messages
+            Sovva.Domain.Exceptions.BusinessRuleException bre => 
+                (StatusCodes.Status400BadRequest, "BUSINESS_RULE_ERROR", bre.Message),
 
-            InvalidOperationException operationEx when operationEx.Message.Contains("subscription", StringComparison.OrdinalIgnoreCase) =>
-                (StatusCodes.Status400BadRequest, ErrorCodes.SubscriptionNotFound, operationEx.Message),
-
-            InvalidOperationException operationEx when operationEx.Message.Contains("order", StringComparison.OrdinalIgnoreCase) =>
-                (StatusCodes.Status400BadRequest, ErrorCodes.InvalidOperation, operationEx.Message),
-
+            // ✅ FIX 14: Hide internal InvalidOperationException messages from clients
             InvalidOperationException => 
-                (StatusCodes.Status400BadRequest, ErrorCodes.InvalidOperation, ex.Message),
+                (StatusCodes.Status400BadRequest, ErrorCodes.InvalidOperation, "An error occurred while processing your request."),
 
             // Unauthorized - access denied
             UnauthorizedAccessException => 
@@ -65,25 +76,57 @@ public class GlobalExceptionMiddleware
 
             // Argument errors
             ArgumentException => 
-                (StatusCodes.Status400BadRequest, ErrorCodes.InvalidArgument, ex.Message),
+                (StatusCodes.Status400BadRequest, ErrorCodes.InvalidArgument, "Invalid request data."),
+
+            // Database errors
+            Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException =>
+                (StatusCodes.Status409Conflict, "CONCURRENCY_CONFLICT", "This record was modified by another request. Please retry."),
+
+            Microsoft.EntityFrameworkCore.DbUpdateException =>
+                (StatusCodes.Status500InternalServerError, ErrorCodes.InternalError, "A database error occurred."),
+                
+            Npgsql.PostgresException =>
+                (StatusCodes.Status500InternalServerError, ErrorCodes.InternalError, "A database error occurred."),
 
             // Default - internal server error
-            _ => (StatusCodes.Status500InternalServerError, ErrorCodes.InternalError, "An unexpected error occurred")
+            _ => (StatusCodes.Status500InternalServerError, ErrorCodes.InternalError, "An unexpected error occurred.")
         };
+
+        if (statusCode == StatusCodes.Status500InternalServerError)
+        {
+            _logger.LogError(ex, "Unhandled exception for {Path}", context.Request.Path);
+        }
+        else if (ex is InvalidOperationException)
+        {
+            // ✅ FIX 14: Log internal IOE message server-side with correlation id
+            _logger.LogError(ex, "InvalidOperationException [{CorrelationId}] for {Path}: {Message}", 
+                context.TraceIdentifier, context.Request.Path, ex.Message);
+        }
+        else
+        {
+            _logger.LogWarning("Handled exception for {Path}: {Code} - {Message}", 
+                context.Request.Path, code, message);
+        }
 
         context.Response.ContentType = "application/json";
         context.Response.StatusCode = statusCode;
 
-        var response = new ApiErrorDto
+        var response = new
         {
-            Success = false,
-            Code = code,
-            Message = message,
-#if DEBUG
-            Detail = ex.Message // Only show details in debug mode
-#endif
+            success = false,
+            code = code,
+            message = message
         };
 
-        return context.Response.WriteAsJsonAsync(response);
+        await context.Response.WriteAsJsonAsync(response);
+    }
+
+    private (int statusCode, string code, string message) HandleInsufficientBalance(InsufficientBalanceException ex)
+    {
+        _logger.LogWarning("Insufficient balance: Required={Required}, Available={Available}", 
+            ex.Required, ex.Available);
+            
+        return (StatusCodes.Status400BadRequest, "INSUFFICIENT_BALANCE", 
+            "You don't have enough balance to complete this order.");
     }
 }

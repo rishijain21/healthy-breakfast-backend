@@ -60,11 +60,25 @@ namespace Sovva.Application.Services
             var profile = await GetProfileAsync(userId, ct);
             if (profile == null)
             {
-                throw new InvalidOperationException("User not found");
+                _logger.LogWarning("⚠️ User {UserId} has no profile yet. Returning safe zero-state.", userId);
+                profile = new UserDto
+                {
+                    UserId = userId,
+                    Name = "New User",
+                    Email = "",
+                    Phone = "",
+                    AccountStatus = "Active",
+                    Role = "Customer",
+                    CreatedAt = _time.UtcNow,
+                    UpdatedAt = _time.UtcNow,
+                    IsProfileComplete = false
+                };
             }
 
             var walletBalance = await _walletTransactionRepository.GetUserBalanceAsync(userId);
-            var transactions = await _walletTransactionRepository.GetByUserIdAsync(userId);
+            profile.WalletBalance = walletBalance;
+            
+            var (transactions, _) = await _walletTransactionRepository.GetByUserIdAsync(userId, 1, 20);
             var subscriptions = await GetActiveSubscriptionsAsync(userId, ct);
             var tomorrowOrders = await GetTomorrowOrdersAsync(userId, tomorrowIst, ct);
 
@@ -122,12 +136,12 @@ namespace Sovva.Application.Services
                 Name = user.Name,
                 Email = user.Email,
                 Phone = user.Phone,
-                AccountStatus = user.AccountStatus,
-                WalletBalance = user.WalletBalance,
+                AccountStatus = user.AccountStatus.ToString(),
+                // WalletBalance omitted — dashboard top-level walletBalance uses GetUserBalanceAsync (ledger)
                 Role = user.Role.ToString(),
                 CreatedAt = user.CreatedAt,
                 UpdatedAt = user.UpdatedAt,
-                ProfileComplete = !string.IsNullOrWhiteSpace(user.Name) &&
+                IsProfileComplete = !string.IsNullOrWhiteSpace(user.Name) &&
                                 !string.IsNullOrWhiteSpace(user.Phone)
             };
 
@@ -147,7 +161,7 @@ namespace Sovva.Application.Services
             var today = _time.TodayIst;
             
             return subscriptions
-                .Where(s => s.Active && s.StartDate <= today && s.EndDate >= today)
+                .Where(s => s.IsActive && s.StartDate <= today && s.EndDate >= today)
                 .Select(s => new SubscriptionDto
                 {
                     SubscriptionId = s.SubscriptionId,
@@ -156,7 +170,7 @@ namespace Sovva.Application.Services
                     Frequency = s.Frequency,
                     StartDate = s.StartDate,
                     EndDate = s.EndDate,
-                    Active = s.Active,
+                    IsActive = s.IsActive,
                     NextScheduledDate = s.NextScheduledDate,
                     CreatedAt = s.CreatedAt,
                     UpdatedAt = s.UpdatedAt,

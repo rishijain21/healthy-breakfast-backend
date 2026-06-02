@@ -11,6 +11,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sovva.Infrastructure", "Sov
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sovva.WebAPI", "Sovva.WebAPI\Sovva.WebAPI.csproj", "{61787605-13B7-4F10-BD57-D31D3AB55B15}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sovva.Application.Tests", "Sovva.Application.Tests\Sovva.Application.Tests.csproj", "{9BCC4EF4-7077-4AD9-9D13-38D232E392C0}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -20,21 +22,25 @@ Global
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{5DD9750B-8973-45D9-8465-4835D1CB8B69}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5DD9750B-8973-45D9-8465-4835D1CB8B69}.Debug|Any CPU.IsActiveCfg = Debug|Any CPU
 		{5DD9750B-8973-45D9-8465-4835D1CB8B69}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{5DD9750B-8973-45D9-8465-4835D1CB8B69}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5DD9750B-8973-45D9-8465-4835D1CB8B69}.Release|Any CPU.IsActiveCfg = Release|Any CPU
 		{5DD9750B-8973-45D9-8465-4835D1CB8B69}.Release|Any CPU.Build.0 = Release|Any CPU
-		{90A15DF9-370B-47AC-9696-196DB946A917}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{90A15DF9-370B-47AC-9696-196DB946A917}.Debug|Any CPU.IsActiveCfg = Debug|Any CPU
 		{90A15DF9-370B-47AC-9696-196DB946A917}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{90A15DF9-370B-47AC-9696-196DB946A917}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{90A15DF9-370B-47AC-9696-196DB946A917}.Release|Any CPU.IsActiveCfg = Release|Any CPU
 		{90A15DF9-370B-47AC-9696-196DB946A917}.Release|Any CPU.Build.0 = Release|Any CPU
-		{FA2716C6-8006-4E2C-A861-FC8861805CB4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FA2716C6-8006-4E2C-A861-FC8861805CB4}.Debug|Any CPU.IsActiveCfg = Debug|Any CPU
 		{FA2716C6-8006-4E2C-A861-FC8861805CB4}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{FA2716C6-8006-4E2C-A861-FC8861805CB4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FA2716C6-8006-4E2C-A861-FC8861805CB4}.Release|Any CPU.IsActiveCfg = Release|Any CPU
 		{FA2716C6-8006-4E2C-A861-FC8861805CB4}.Release|Any CPU.Build.0 = Release|Any CPU
-		{61787605-13B7-4F10-BD57-D31D3AB55B15}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{61787605-13B7-4F10-BD57-D31D3AB55B15}.Debug|Any CPU.IsActiveCfg = Debug|Any CPU
 		{61787605-13B7-4F10-BD57-D31D3AB55B15}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{61787605-13B7-4F10-BD57-D31D3AB55B15}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{61787605-13B7-4F10-BD57-D31D3AB55B15}.Release|Any CPU.IsActiveCfg = Release|Any CPU
 		{61787605-13B7-4F10-BD57-D31D3AB55B15}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9BCC4EF4-7077-4AD9-9D13-38D232E392C0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9BCC4EF4-7077-4AD9-9D13-38D232E392C0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9BCC4EF4-7077-4AD9-9D13-38D232E392C0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9BCC4EF4-7077-4AD9-9D13-38D232E392C0}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

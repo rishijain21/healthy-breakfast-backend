@@ -32,7 +32,7 @@ namespace Sovva.Infrastructure.Data.Configurations
             builder.ToTable(t =>
             {
                 t.HasCheckConstraint("CK_ScheduledOrders_Status",
-                    $"\"OrderStatus\" IN ('{ScheduledOrderStatus.Scheduled}', '{ScheduledOrderStatus.Confirmed}', '{ScheduledOrderStatus.Cancelled}', '{ScheduledOrderStatus.Processed}')");
+                    $"\"OrderStatus\" IN ('{ScheduledOrderStatus.Scheduled}', '{ScheduledOrderStatus.Confirmed}', '{ScheduledOrderStatus.Cancelled}', '{ScheduledOrderStatus.Processed}', '{ScheduledOrderStatus.Processing}', '{ScheduledOrderStatus.Failed}')");
 
                 t.HasCheckConstraint("CK_ScheduledOrders_TotalPrice",
                     "\"TotalPrice\" >= 0");

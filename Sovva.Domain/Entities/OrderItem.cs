@@ -4,7 +4,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace Sovva.Domain.Entities
 {
-    public class OrderItem
+    public class OrderItem : BaseEntity
     {
         [Key]
         public int OrderItemId { get; set; }
@@ -17,8 +17,6 @@ namespace Sovva.Domain.Entities
 
         public int Quantity { get; set; }
         public decimal Price { get; set; }
-        public DateTime CreatedAt { get; set; }
-        public DateTime UpdatedAt { get; set; }
 
         // Navigation properties
         public Order Order { get; set; } = null!;

@@ -4,7 +4,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace Sovva.Domain.Entities
 {
-    public class MealOptionIngredient
+    public class MealOptionIngredient : BaseEntity
     {
         [Key]
         public int MealOptionIngredientId { get; set; }
@@ -14,9 +14,6 @@ namespace Sovva.Domain.Entities
 
         [ForeignKey("Ingredient")]
         public int IngredientId { get; set; }
-
-        public DateTime CreatedAt { get; set; }
-        public DateTime UpdatedAt { get; set; }
 
         // Navigation properties
         public MealOption MealOption { get; set; } = null!;

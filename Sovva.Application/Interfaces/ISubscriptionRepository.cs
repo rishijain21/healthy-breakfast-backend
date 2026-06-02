@@ -6,7 +6,8 @@ namespace Sovva.Application.Interfaces
 {
     public interface ISubscriptionRepository
     {
-        Task<IEnumerable<Subscription>> GetAllAsync();
+        Task<IEnumerable<Subscription>> GetAllAsync(int page = 1, int pageSize = 50);
+        Task<(IEnumerable<Subscription> Items, int TotalCount)> GetAllWithCountAsync(int page = 1, int pageSize = 50);
         Task<Subscription?> GetByIdAsync(int subscriptionId);
         Task<IEnumerable<Subscription>> GetByUserIdAsync(int userId);
         Task<IEnumerable<Subscription>> GetActiveSubscriptionsAsync();
@@ -28,5 +29,13 @@ namespace Sovva.Application.Interfaces
 
         // ✅ NEW: Batch update for efficient DB operations
         Task UpdateBatchAsync(IEnumerable<Subscription> subscriptions);
+
+        Task<int> CountAsync();
+
+        /// <summary>
+        /// Admin/analytics: returns soft-deleted subscriptions cancelled within the last N days.
+        /// Uses IgnoreQueryFilters() to bypass the soft-delete EF Core filter.
+        /// </summary>
+        Task<IEnumerable<Subscription>> GetCancelledSubscriptionsAsync(int daysAgo = 30);
     }
 }

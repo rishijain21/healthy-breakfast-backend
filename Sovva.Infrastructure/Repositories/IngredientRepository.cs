@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 
 namespace Sovva.Infrastructure.Repositories
 {
-    public class IngredientRepository : IIngredientRepository
+    internal class IngredientRepository : IIngredientRepository
     {
         private readonly AppDbContext _context;
 
@@ -44,12 +44,13 @@ namespace Sovva.Infrastructure.Repositories
                 .FirstOrDefaultAsync(i => i.IngredientId == id);
         }
 
-        public async Task<List<Ingredient>> GetByIdsAsync(List<int> ids)
+        public async Task<Dictionary<int, Ingredient>> GetByIdsAsync(IEnumerable<int> ids)
         {
             return await _context.Ingredients
                 .AsNoTracking()
+                .Include(i => i.IngredientCategory)
                 .Where(i => ids.Contains(i.IngredientId))
-                .ToListAsync();
+                .ToDictionaryAsync(i => i.IngredientId);
         }
 
         // ==================== CREATE OPERATIONS ====================

@@ -5,7 +5,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace Sovva.Domain.Entities
 {
-    public class MealOption
+    public class MealOption : BaseEntity
     {
         [Key]
         public int MealOptionId { get; set; }
@@ -18,8 +18,6 @@ namespace Sovva.Domain.Entities
 
         public bool IsRequired { get; set; }
         public int MaxSelectable { get; set; }
-        public DateTime CreatedAt { get; set; }
-        public DateTime UpdatedAt { get; set; }
 
         // Navigation properties
         public Meal Meal { get; set; } = null!;

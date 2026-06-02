@@ -1,8 +1,11 @@
 using Sovva.Application.DTOs;
 using Sovva.Application.Interfaces;
+using Sovva.Domain.Constants;
 using Sovva.WebAPI.Extensions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Collections.Generic;
+using System.Linq;
 using System.Security.Claims;
 using System.Threading;
 
@@ -26,10 +29,15 @@ namespace Sovva.WebAPI.Controllers
 
         [HttpGet]
         [Authorize(Roles = "Admin")]
-        public async Task<ActionResult<List<UserDto>>> GetAllUsers()
+        public async Task<ActionResult<ApiResponse<PagedResult<UserDto>>>> GetAllUsers([FromQuery] int page = 1, [FromQuery] int pageSize = 50)
         {
-            var users = await _userService.GetAllUsersAsync();
-            return Ok(users);
+            if (pageSize > 100)
+            {
+                return BadRequest(ApiResponse.Fail("BAD_REQUEST", "Maximum page size for users is 100."));
+            }
+
+            var usersResult = await _userService.GetAllUsersAsync(page, pageSize);
+            return Ok(ApiResponse.Ok(usersResult));
         }
 
         [HttpPost]
@@ -37,7 +45,14 @@ namespace Sovva.WebAPI.Controllers
         public async Task<IActionResult> CreateUser([FromBody] CreateUserDto dto)
         {
             if (!ModelState.IsValid)
-                return BadRequest(ModelState);
+            {
+                var errors = ModelState.Values
+                    .SelectMany(v => v.Errors)
+                    .Select(e => e.ErrorMessage)
+                    .ToList();
+                return BadRequest(ApiResponse<List<string>>
+                    .Fail("VALIDATION_ERROR", string.Join("; ", errors)));
+            }
 
             var userId = await _userService.CreateUserAsync(dto);
             return CreatedAtAction(nameof(GetUserById), new { id = userId }, null);
@@ -49,9 +64,9 @@ namespace Sovva.WebAPI.Controllers
         {
             var userDto = await _userService.GetUserByIdAsync(id);
             if (userDto == null)
-                return NotFound();
+                return NotFound(ApiResponse.Fail("NOT_FOUND", "Resource not found"));
 
-            return Ok(userDto);
+            return Ok(ApiResponse.Ok(userDto));
         }
 
         // ✅ NEW: Get current user's profile
@@ -59,30 +74,22 @@ namespace Sovva.WebAPI.Controllers
         [Authorize]
         public async Task<ActionResult<UserDto>> GetUserProfile()
         {
-            try
+            // Get AuthId from JWT token (sub claim)
+            var authIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value 
+                           ?? User.FindFirst("sub")?.Value;
+            
+            if (string.IsNullOrEmpty(authIdClaim) || !Guid.TryParse(authIdClaim, out Guid authId))
             {
-                // Get AuthId from JWT token (sub claim)
-                var authIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value 
-                               ?? User.FindFirst("sub")?.Value;
-                
-                if (string.IsNullOrEmpty(authIdClaim) || !Guid.TryParse(authIdClaim, out Guid authId))
-                {
-                    return Unauthorized(new { message = "Invalid user token" });
-                }
-
-                var userDto = await _userService.GetUserProfileByAuthIdAsync(authId);
-                if (userDto == null)
-                {
-                    return NotFound(new { message = "User not found" });
-                }
-
-                return Ok(userDto);
+                return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "Invalid user token"));
             }
-            catch (Exception ex)
+
+            var userDto = await _userService.GetUserProfileByAuthIdAsync(authId);
+            if (userDto == null)
             {
-                _logger.LogError(ex, "Error fetching user profile");
-                return StatusCode(500, new { message = "An error occurred while fetching profile" });
+                return NotFound(ApiResponse.Fail("NOT_FOUND", "User not found"));
             }
+
+            return Ok(ApiResponse.Ok(userDto));
         }
 
         // ✅ NEW: Dashboard Summary - aggregates all user data for fast login bootstrap
@@ -99,19 +106,14 @@ namespace Sovva.WebAPI.Controllers
             {
                 var userId = await GetCurrentUserIdAsync(ct);
                 if (userId == null)
-                    return Unauthorized(new { message = "User not authenticated" });
+                    return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
 
                 var summary = await _dashboardService.GetDashboardSummaryAsync(userId.Value, ct);
-                return Ok(summary);
+                return Ok(ApiResponse.Ok(summary));
             }
             catch (InvalidOperationException ex)
             {
-                return NotFound(new { message = ex.Message });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error fetching dashboard summary");
-                return StatusCode(500, new { message = "An error occurred while fetching dashboard" });
+                return NotFound(ApiResponse.Fail("NOT_FOUND", ex.Message));
             }
         }
 
@@ -128,27 +130,41 @@ namespace Sovva.WebAPI.Controllers
                 
                 if (string.IsNullOrEmpty(authIdClaim) || !Guid.TryParse(authIdClaim, out Guid authId))
                 {
-                    return Unauthorized(new { message = "Invalid user token" });
+                    return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "Invalid user token"));
                 }
 
                 // Validation
                 if (updateDto.Name != null && string.IsNullOrWhiteSpace(updateDto.Name))
                 {
-                    return BadRequest(new { message = "Name cannot be empty" });
+                    return BadRequest(ApiResponse.Fail("BAD_REQUEST", "Name cannot be empty"));
                 }
 
                 var updatedUser = await _userService.UpdateUserProfileAsync(authId, updateDto);
-                return Ok(updatedUser);
+                return Ok(ApiResponse.Ok(updatedUser));
             }
             catch (InvalidOperationException ex)
             {
-                return NotFound(new { message = ex.Message });
+                return NotFound(ApiResponse.Fail("NOT_FOUND", ex.Message));
             }
-            catch (Exception ex)
+        }
+
+        // ✅ ACCOUNT DELETION
+        /// <summary>
+        /// Soft deletes the authenticated user's account
+        /// </summary>
+        [HttpDelete("account")]
+        public async Task<IActionResult> DeleteAccount()
+        {
+            var userId = await GetCurrentUserIdAsync();
+            if (userId == null)
             {
-                _logger.LogError(ex, "Error updating user profile");
-                return StatusCode(500, new { message = "An error occurred while updating profile" });
+                return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
             }
+
+            var success = await _userService.DeleteAccountAsync(userId.Value);
+            if (!success) return NotFound(ApiResponse.Fail("NOT_FOUND", "User not found"));
+
+            return Ok(ApiResponse.Ok(new { message = "Account deleted successfully" }));
         }
 
         // ✅ ADMIN: Update user role
@@ -159,28 +175,27 @@ namespace Sovva.WebAPI.Controllers
         [Authorize(Roles = "Admin")]
         public async Task<IActionResult> UpdateUserRole(int id, [FromBody] UpdateRoleDto dto)
         {
-            var validRoles = new[] { "User", "Admin" };
+            var validRoles = new[] { "User", RoleConstants.Admin };
             if (!validRoles.Contains(dto.Role))
-                return BadRequest(new { message = $"Invalid role. Must be one of: {string.Join(", ", validRoles)}" });
+                return BadRequest(ApiResponse.Fail("BAD_REQUEST", $"Invalid role. Must be one of: {string.Join(", ", validRoles)}"));
 
-            // Prevent self-demotion
             // ✅ NEW: Zero DB hit - read userId directly from JWT claim
-            var currentUserId = User.GetSovvaUserId();
-            if (currentUserId.HasValue && currentUserId.Value == id && dto.Role != "Admin")
-                return BadRequest(new { message = "You cannot remove your own admin role" });
+            var currentUserId = await GetCurrentUserIdAsync();
+            if (currentUserId.HasValue && currentUserId.Value == id && dto.Role != RoleConstants.Admin)
+                return BadRequest(ApiResponse.Fail("BAD_REQUEST", "You cannot remove your own admin role"));
 
             var result = await _userService.UpdateUserRoleAsync(id, dto.Role);
             if (!result)
-                return NotFound(new { message = "User not found" });
+                return NotFound(ApiResponse.Fail("NOT_FOUND", "User not found"));
 
-            return Ok(new { message = $"User {id} role updated to {dto.Role}" });
+            return Ok(ApiResponse.Ok(new { message = $"User {id} role updated to {dto.Role}" }));
         }
 
         // Helper to extract user ID from JWT claims (fast path + fallback for old tokens)
         private async Task<int?> GetCurrentUserIdAsync(CancellationToken ct = default)
         {
             // ✅ Fast path — JWT claim, zero DB
-            var claim = User.FindFirst("sovva_user_id")?.Value;
+            var claim = User.FindFirst(RoleConstants.SovvaUserId)?.Value;
             if (int.TryParse(claim, out var userId))
                 return userId;
 

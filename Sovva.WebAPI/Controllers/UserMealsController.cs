@@ -2,13 +2,12 @@ using Sovva.Application.DTOs;
 using Sovva.Application.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System.Security.Claims;
-using System.Linq;
 
 namespace Sovva.WebAPI.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
+    [Microsoft.AspNetCore.RateLimiting.EnableRateLimiting("default")]
     [Authorize]
     public class UserMealsController : ControllerBase
     {
@@ -30,165 +29,58 @@ namespace Sovva.WebAPI.Controllers
         }
 
         /// <summary>
-        /// ✅ SECURE: Creates a new UserMeal (userId from JWT token)
+        /// Creates a new UserMeal — userId read from JWT via AuthMiddleware.
+        /// Prerequisite for creating a subscription.
         /// </summary>
         [HttpPost]
         public async Task<IActionResult> Create([FromBody] CreateUserMealDto dto)
         {
+            if (!HttpContext.Items.ContainsKey("UserId"))
+            {
+                _logger.LogWarning("UserId not found in HttpContext — user not authenticated");
+                return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
+            }
+
+            var userId = (int)HttpContext.Items["UserId"]!;
+
+            _logger.LogInformation("Creating UserMeal for UserId: {UserId}, MealName: {MealName}, Ingredients: {Count}",
+                userId, dto.MealName, dto.SelectedIngredients?.Count ?? 0);
+
+            var userMealId = await _userMealService.CreateUserMealAsync(dto, userId);
+
+            // After meal builder completes, generate tomorrow's scheduled order if subscription exists
             try
             {
-                // ✅ Get UserId from HttpContext (set by AuthMiddleware)
-                if (!HttpContext.Items.ContainsKey("UserId"))
+                var authIdStr = HttpContext.Items["auth_id"]?.ToString();
+                if (!string.IsNullOrEmpty(authIdStr) && Guid.TryParse(authIdStr, out var authGuid))
                 {
-                    _logger.LogWarning("❌ UserId not found in HttpContext. User not authenticated.");
-                    return Unauthorized(new { message = "User not authenticated" });
-                }
+                    var subscription = await _subscriptionRepository
+                        .GetActiveSubscriptionByUserMealIdAsync(userId, userMealId);
 
-                var userId = (int)HttpContext.Items["UserId"]!;
-                _logger.LogInformation($"✅ Creating UserMeal for UserId: {userId}");
-
-                // ✅ ADD THIS DEBUG LOGGING HERE:
-                Console.WriteLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-                Console.WriteLine($"🔵 CONTROLLER: CreateUserMeal called");
-                Console.WriteLine($"🔵 UserId: {userId}");
-                Console.WriteLine($"🔵 MealName: {dto.MealName}");
-                Console.WriteLine($"🔵 SelectedIngredients count: {dto.SelectedIngredients?.Count ?? 0}");
-                
-                if (dto.SelectedIngredients != null && dto.SelectedIngredients.Any())
-                {
-                    Console.WriteLine($"🔵 Ingredients received in controller:");
-                    foreach (var ing in dto.SelectedIngredients)
+                    if (subscription != null)
                     {
-                        Console.WriteLine($"    ✅ IngredientId: {ing.IngredientId}, Qty: {ing.Quantity}");
+                        _logger.LogInformation(
+                            "Meal builder complete — triggering scheduled order for subscription #{SubId}",
+                            subscription.SubscriptionId);
+
+                        await _subscriptionSchedulingService.GenerateOrderForSubscriptionAsync(
+                            subscription.SubscriptionId, userId, authGuid);
+
+                        _logger.LogInformation("Scheduled order generated after meal builder");
+                    }
+                    else
+                    {
+                        _logger.LogInformation("No active subscription found for UserMeal #{UserMealId} — skipping scheduling", userMealId);
                     }
                 }
-                else
-                {
-                    Console.WriteLine($"❌ NO INGREDIENTS RECEIVED IN CONTROLLER!");
-                }
-                Console.WriteLine("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-
-                // ✅ Pass userId as separate parameter (not trusting client input)
-                var userMealId = await _userMealService.CreateUserMealAsync(dto, userId);
-
-                // ✅ THE FIX: After meal builder completes, generate tomorrow's scheduled order
-                try
-                {
-                    var authIdStr = HttpContext.Items["auth_id"]?.ToString();
-                    if (!string.IsNullOrEmpty(authIdStr) && Guid.TryParse(authIdStr, out var authGuid))
-                    {
-                        // Get user's active subscription for this meal
-                        var subscription = await _subscriptionRepository
-                            .GetActiveSubscriptionByUserMealIdAsync(userId, userMealId);
-
-                        if (subscription != null)
-                        {
-                            _logger.LogInformation(
-                                "🔄 Meal builder complete — triggering scheduled order for subscription #{SubId}",
-                                subscription.SubscriptionId);
-
-                            await _subscriptionSchedulingService.GenerateOrderForSubscriptionAsync(
-                                subscription.SubscriptionId, userId, authGuid);
-
-                            _logger.LogInformation("✅ Scheduled order generated after meal builder");
-                        }
-                        else
-                        {
-                            _logger.LogInformation("ℹ️ No active subscription found for UserMeal #{UserMealId} — skipping scheduling", userMealId);
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    // ✅ Don't fail meal builder if scheduling fails — just log it
-                    _logger.LogWarning(ex, "⚠️ Meal builder succeeded but scheduling failed for userId {UserId}", userId);
-                }
-
-                return Ok(new { userMealId, message = "UserMeal created successfully" });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ Error creating UserMeal");
-                return StatusCode(500, new { message = ex.Message });
+                // Don't fail meal builder if scheduling fails — just log it
+                _logger.LogWarning(ex, "Meal builder succeeded but scheduling failed for userId {UserId}", userId);
             }
-        }
 
-        /// <summary>
-        /// Gets a specific UserMeal by ID
-        /// </summary>
-        [HttpGet("{id}")]
-        public async Task<IActionResult> GetById(int id)
-        {
-            try
-            {
-                var userMeal = await _userMealService.GetUserMealByIdAsync(id);
-                if (userMeal == null)
-                {
-                    return NotFound();
-                }
-                return Ok(userMeal);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, $"❌ Error fetching UserMeal {id}");
-                return StatusCode(500, new { message = ex.Message });
-            }
-        }
-
-        /// <summary>
-        /// ✅ SECURE: Gets all UserMeals for the authenticated user (uses JWT)
-        /// </summary>
-        [HttpGet("my-meals")]
-        public async Task<IActionResult> GetMyUserMeals()
-        {
-            try
-            {
-                var userId = await GetCurrentUserIdAsync();
-                if (userId == null)
-                {
-                    return Unauthorized(new { message = "User not authenticated" });
-                }
-
-                var userMeals = await _userMealService.GetUserMealsByUserIdAsync(userId.Value);
-                return Ok(userMeals);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, $"❌ Error fetching UserMeals for authenticated user");
-                return StatusCode(500, new { message = ex.Message });
-            }
-        }
-
-        /// <summary>
-        /// ✅ Extract user ID from JWT token
-        /// </summary>
-        private Task<int?> GetCurrentUserIdAsync()
-        {
-            try
-            {
-                var authId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value 
-                             ?? User.FindFirst("sub")?.Value;
-
-                if (string.IsNullOrEmpty(authId) || !Guid.TryParse(authId, out var authGuid))
-                {
-                    _logger.LogWarning("❌ No valid auth ID found in token");
-                    return Task.FromResult<int?>(null);
-                }
-
-                // This would need IUserService injected - for simplicity, we'll use HttpContext
-                if (HttpContext.Items.TryGetValue("UserId", out var userIdObj) && userIdObj is int userId)
-                {
-                    return Task.FromResult<int?>(userId);
-                }
-
-                _logger.LogWarning("❌ UserId not found in HttpContext");
-                return Task.FromResult<int?>(null);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "❌ Error extracting user ID from token");
-                return Task.FromResult<int?>(null);
-            }
+            return Ok(ApiResponse.Ok(new { userMealId, message = "UserMeal created successfully" }));
         }
     }
 }

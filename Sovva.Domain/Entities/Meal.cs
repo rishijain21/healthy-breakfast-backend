@@ -1,10 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations.Schema;
+using Sovva.Domain.Interfaces;
 
 namespace Sovva.Domain.Entities
 {
-    public class Meal
+    public class Meal : BaseEntity, ISoftDeletable
     {
         public int MealId { get; set; }
         public string MealName { get; set; } = null!;
@@ -25,14 +26,11 @@ namespace Sovva.Domain.Entities
         [Column(TypeName = "decimal(5,1)")]
         public decimal? ApproxFats { get; set; }
         
-        public DateTime CreatedAt { get; set; }
-        public DateTime UpdatedAt { get; set; }
-        
         // Active/Complete status - true means meal is available/complete
         public bool IsComplete { get; set; } = true;
         
-        // ✅ Soft delete flag - true means meal is deleted
-        public bool IsDeleted { get; set; } = false;
+        /// <summary>Soft delete. Null = active. Has value = deleted. Replaces the old IsDeleted bool.</summary>
+        public DateTime? DeletedAt { get; set; }
         
         // Image URL for meal photos (stored in Supabase)
         public string? ImageUrl { get; set; }

@@ -11,11 +11,6 @@ public class RegisterUserRequestValidator : AbstractValidator<RegisterUserReques
             .NotEmpty().WithMessage("Name is required")
             .MaximumLength(100).WithMessage("Name cannot exceed 100 characters");
 
-        RuleFor(x => x.Email)
-            .NotEmpty().WithMessage("Email is required")
-            .EmailAddress().WithMessage("Invalid email format");
-
-        RuleFor(x => x.AuthId)
-            .NotEmpty().WithMessage("AuthId is required");
+        // AuthId and Email are populated server-side from JWT — not validated here
     }
 }

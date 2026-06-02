@@ -1,10 +1,9 @@
 namespace Sovva.Application.Interfaces
 {
-    public interface IUnitOfWork
+    public interface IUnitOfWork : IAsyncDisposable
     {
         Task<int> SaveChangesAsync();
-        Task BeginTransactionAsync();
-        Task CommitAsync();
-        Task RollbackAsync();
+        Task ExecuteInTransactionAsync(Func<Task> action);
+        Task<T> ExecuteInTransactionAsync<T>(Func<Task<T>> action);
     }
 }

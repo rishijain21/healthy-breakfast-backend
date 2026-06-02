@@ -7,22 +7,24 @@ namespace Sovva.Application.Interfaces
         // ✅ EXISTING METHODS
         Task<User?> GetByIdAsync(int id);
         Task<User?> GetByEmailAsync(string email);
-        Task<List<User>> GetAllAsync();
+        Task<IEnumerable<User>> GetAllAsync(int page = 1, int pageSize = 50);
         Task AddUserAsync(User user);
         Task SaveChangesAsync();
 
-        // ✅ ADD THESE TWO NEW METHODS
-        Task<User?> GetByAuthIdAsync(Guid authId);
+        // Auth-based lookups (single canonical method — GetByAuthIdAsync removed as duplicate)
+        Task<(int UserId, string Role, string AccountStatus)?> GetAuthInfoByAuthIdAsync(Guid authId);
         Task<User?> GetUserByAuthIdAsync(Guid authId);
+        Task<User?> GetUserByAuthIdIncludingDeletedAsync(Guid authId);
         Task<List<User>> GetByAuthIdsAsync(List<Guid> authIds);
         Task UpdateUserAsync(User user);
 
         Task<User> CreateUserWithAuthMappingAsync(User user, Guid authId);
 
-        // ✅ NEW: Batch get users with AuthMapping by user IDs (for generation job optimization)
+        // Batch get users with AuthMapping by user IDs (for generation job optimization)
         Task<List<User>> GetByIdsWithAuthMappingAsync(List<int> userIds);
 
-        // ✅ NEW: Atomic wallet deduction with balance check (prevents race conditions)
-        Task<bool> DeductWalletBalanceAtomicAsync(int userId, decimal amount);
+        // Wallet operations moved to IWalletTransactionRepository (AtomicDebitAsync / AtomicCreditAsync)
+
+        Task<int> CountAsync();
     }
 }

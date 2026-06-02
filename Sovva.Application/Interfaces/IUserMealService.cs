@@ -10,5 +10,6 @@ namespace Sovva.Application.Interfaces
         Task<int> CreateUserMealAsync(CreateUserMealDto dto, int userId);
         Task<UserMealDto?> GetUserMealByIdAsync(int id);
         Task<IEnumerable<UserMealDto>> GetUserMealsByUserIdAsync(int userId);
+        Task<UserMealDto?> GetByIdForUserAsync(int id, int userId);
     }
 }

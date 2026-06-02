@@ -4,7 +4,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace Sovva.Domain.Entities
 {
-    public class Ingredient
+    public class Ingredient : BaseEntity
     {
         [Key]
         public int IngredientId { get; set; }
@@ -14,9 +14,7 @@ namespace Sovva.Domain.Entities
 
         public string IngredientName { get; set; } = null!;
         public decimal Price { get; set; }
-        public bool Available { get; set; }
-        public DateTime CreatedAt { get; set; }
-        public DateTime UpdatedAt { get; set; }
+        public bool IsAvailable { get; set; }
 
         // Nutritional properties - These are what your Angular UI needs
         public int Calories { get; set; }

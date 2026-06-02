@@ -2,8 +2,11 @@ using System;
 using System.Threading.Tasks;
 using Sovva.Application.DTOs;
 using Sovva.Application.Interfaces;
+using Sovva.Application.Exceptions;
+using Sovva.Application.Helpers;
 using Sovva.Domain.Entities;
 using Sovva.Domain.Enums;
+using Microsoft.Extensions.Logging;
 
 namespace Sovva.Application.Services
 {
@@ -16,6 +19,8 @@ namespace Sovva.Application.Services
         private readonly IUserMealIngredientService _userMealIngredientService;
         private readonly IUserAddressRepository _userAddressRepository;
         private readonly IUnitOfWork _unitOfWork;
+        private readonly IAppTimeProvider _time;
+        private readonly ILogger<OrderService> _logger;
 
         public OrderService(
             IOrderRepository orderRepository,
@@ -24,7 +29,9 @@ namespace Sovva.Application.Services
             IUserMealService userMealService,
             IUserMealIngredientService userMealIngredientService,
             IUserAddressRepository userAddressRepository,
-            IUnitOfWork unitOfWork) // ✅ ADDED
+            IUnitOfWork unitOfWork,
+            IAppTimeProvider time,
+            ILogger<OrderService> logger) // ✅ ADDED
         {
             _orderRepository = orderRepository;
             _mealService = mealService;
@@ -33,6 +40,8 @@ namespace Sovva.Application.Services
             _userMealIngredientService = userMealIngredientService;
             _userAddressRepository = userAddressRepository;
             _unitOfWork = unitOfWork;
+            _time = time;
+            _logger = logger;
         }
 
         // ✅ SECURE: Create order with userId from JWT token
@@ -43,10 +52,10 @@ namespace Sovva.Application.Services
                 UserId = userId,
                 OrderStatus = OrderStatus.Pending,
                 TotalPrice = dto.TotalPrice,
-                OrderDate = DateTime.UtcNow,
-                ScheduledFor = DateTime.UtcNow.AddHours(2),
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
+                OrderDate = _time.UtcNow,
+                ScheduledFor = _time.UtcNow.AddHours(2),
+                CreatedAt = _time.UtcNow,
+                UpdatedAt = _time.UtcNow
             };
 
             await _orderRepository.AddAsync(entity);
@@ -72,11 +81,12 @@ namespace Sovva.Application.Services
         }
 
         // ✅ EXISTING: Simple methods for backward compatibility
-        public async Task<IEnumerable<OrderDto>> GetAllOrderHistoryAsync()
+        public async Task<PagedResult<OrderDto>> GetAllOrderHistoryAsync(int page = 1, int pageSize = 50)
         {
-            var orders = await _orderRepository.GetAllAsync();
+            var orders = await _orderRepository.GetAllAsync(page, pageSize);
+            var totalCount = await _orderRepository.CountAsync(); // Assuming CountAsync exists or use a workaround
             
-            return orders.Select(order => new OrderDto
+            var items = orders.Select(order => new OrderDto
             {
                 OrderId = order.OrderId,
                 UserId = order.UserId,
@@ -84,7 +94,39 @@ namespace Sovva.Application.Services
                 TotalPrice = order.TotalPrice,
                 CreatedAt = order.CreatedAt,
                 UpdatedAt = order.UpdatedAt
-            }).OrderByDescending(o => o.CreatedAt);
+            }).ToList();
+
+            return new PagedResult<OrderDto>
+            {
+                Items = items,
+                TotalCount = totalCount,
+                Page = page,
+                PageSize = pageSize
+            };
+        }
+
+        public async Task<PagedResult<OrderDto>> GetOrdersByStatusAsync(OrderStatus status, int page = 1, int pageSize = 50)
+        {
+            var orders = await _orderRepository.GetByStatusAsync(status, page, pageSize);
+            var totalCount = await _orderRepository.CountByStatusAsync(status);
+            
+            var items = orders.Select(order => new OrderDto
+            {
+                OrderId = order.OrderId,
+                UserId = order.UserId,
+                OrderStatus = order.OrderStatus,
+                TotalPrice = order.TotalPrice,
+                CreatedAt = order.CreatedAt,
+                UpdatedAt = order.UpdatedAt
+            }).ToList();
+
+            return new PagedResult<OrderDto>
+            {
+                Items = items,
+                TotalCount = totalCount,
+                Page = page,
+                PageSize = pageSize
+            };
         }
 
         public async Task<IEnumerable<OrderDto>> GetUserOrdersAsync(int userId)
@@ -109,10 +151,18 @@ namespace Sovva.Application.Services
             return MapToEnhancedDto(orders);
         }
 
-        public async Task<IEnumerable<EnhancedOrderHistoryDto>> GetAllOrderHistoryWithDetailsAsync()
+        public async Task<PagedResult<EnhancedOrderHistoryDto>> GetAllOrderHistoryWithDetailsAsync(int page = 1, int pageSize = 50)
         {
-            var orders = await _orderRepository.GetAllOrdersWithDetailsAsync();
-            return MapToEnhancedDto(orders);
+            var orders = await _orderRepository.GetAllOrdersWithDetailsAsync(page, pageSize);
+            var totalCount = await _orderRepository.CountAsync();
+            
+            return new PagedResult<EnhancedOrderHistoryDto>
+            {
+                Items = MapToEnhancedDto(orders).ToList(),
+                TotalCount = totalCount,
+                Page = page,
+                PageSize = pageSize
+            };
         }
 
         // ✅ ENHANCED: Map complex entities to DTOs with better legacy handling
@@ -197,12 +247,12 @@ namespace Sovva.Application.Services
             });
         }
 
-        // ✅ SECURE: Create order from meal builder using userId from JWT token
+        // ✅ UNCHANGED: First overload - uses primary address
         public async Task<OrderCreationResponseDto> CreateOrderFromMealBuilderAsync(CreateOrderFromMealBuilderDto dto, int userId)
         {
             // ✅ FIX 6: Guard against soft-deleted meals
             // Check this before the address validation so we fail fast on invalid meal
-            if (dto.MealId > 0)  // MealId = 0 means custom meal with no catalogue entry
+            if (dto.MealId > 0)
             {
                 var meal = await _mealService.GetMealByIdAsync(dto.MealId);
                 if (meal == null)
@@ -212,12 +262,10 @@ namespace Sovva.Application.Services
 
             // ✅ STEP 0: Validate Primary Address (using userId from token)
             var primaryAddress = await _userAddressRepository.GetPrimaryAddressByUserIdAsync(userId);
-            
+
             if (primaryAddress == null)
             {
-                throw new InvalidOperationException(
-                    "Please add a delivery address before placing an order. Go to Profile → Manage Addresses."
-                );
+                throw new AddressNotFoundException(userId);
             }
 
             // ✅ Validate location is serviceable
@@ -229,150 +277,25 @@ namespace Sovva.Application.Services
                 );
             }
 
-            // ✅ STEP 1: Calculate meal price and validate ingredients
-            // ✅ Use override price from scheduled order, or recalculate
-            MealPriceResponseDto priceCalculation;
-            if (dto.OverrideTotalPrice.HasValue)
-            {
-                // Use the price agreed at order creation time (from scheduled order snapshot)
-                priceCalculation = new MealPriceResponseDto
-                {
-                    // ✅ Use meal name from scheduled order snapshot, or fallback
-                    MealName = dto.MealName ?? "Scheduled Order",
-                    TotalPrice = dto.OverrideTotalPrice.Value,
-                    IngredientBreakdown = dto.SelectedIngredients.Select(i => new IngredientBreakdownDto
-                    {
-                        IngredientId = i.IngredientId,
-                        Quantity = i.Quantity,
-                        // ✅ Use snapshot prices from scheduled order, or fallback to 0
-                        UnitPrice = i.UnitPrice ?? 0,
-                        TotalPrice = i.TotalPrice ?? 0
-                    }).ToList()
-                };
-            }
-            else
-            {
-                priceCalculation = await _mealService.CalculateMealPriceAsync(new MealPriceCalculationDto
-                {
-                    MealId = dto.MealId,
-                    SelectedIngredients = dto.SelectedIngredients
-                });
-            }
-
-            // ✅ STEP 2: Check wallet balance
-            var walletBalanceBefore = await _walletService.GetUserBalanceAsync(userId);
-            var hasSufficientBalance = await _walletService.HasSufficientBalanceAsync(userId, priceCalculation.TotalPrice);
-            
-            if (!hasSufficientBalance)
-            {
-                throw new InvalidOperationException(
-                    $"Insufficient wallet balance. Required: ₹{priceCalculation.TotalPrice}, Available: ₹{walletBalanceBefore}"
-                );
-            }
-
-            // ✅ All writes inside a single transaction
-            await _unitOfWork.BeginTransactionAsync();
-            try
-            {
-                // ✅ STEP 3: Create UserMeal record (UserId passed separately, not in DTO)
-                var userMealDto = new CreateUserMealDto
-                {
-                    MealId = dto.MealId,
-                    MealName = priceCalculation.MealName,
-                    TotalPrice = priceCalculation.TotalPrice,
-                    CreatedAt = DateTime.UtcNow
-                };
-
-                var createdUserMealId = await _userMealService.CreateUserMealAsync(userMealDto, userId);
-
-                // ✅ STEP 4: Create UserMealIngredient records for each selected ingredient
-                foreach (var selectedIngredient in dto.SelectedIngredients)
-                {
-                    var ingredientDetail = priceCalculation.IngredientBreakdown
-                        .FirstOrDefault(i => i.IngredientId == selectedIngredient.IngredientId);
-                    
-                    if (ingredientDetail != null)
-                    {
-                        var userMealIngredient = new CreateUserMealIngredientDto
-                        {
-                            UserMealId = createdUserMealId,
-                            IngredientId = selectedIngredient.IngredientId,
-                            Quantity = selectedIngredient.Quantity,
-                            UnitPrice = ingredientDetail.UnitPrice,
-                            TotalPrice = ingredientDetail.TotalPrice
-                        };
-
-                        await _userMealIngredientService.CreateUserMealIngredientAsync(userMealIngredient);
-                    }
-                }
-
-                // ✅ STEP 5: Create Order with UserMeal link AND DeliveryAddressId
-                var order = new Order
-                {
-                    UserId = userId,
-                    UserMealId = createdUserMealId,
-                    DeliveryAddressId = primaryAddress.Id,
-                    OrderStatus = OrderStatus.Pending,
-                    TotalPrice = priceCalculation.TotalPrice,
-                    OrderDate = DateTime.UtcNow,
-                    ScheduledFor = dto.ScheduledFor ?? DateTime.UtcNow.AddHours(2),
-                    CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow
-                };
-
-                await _orderRepository.AddAsync(order);
-                await _unitOfWork.SaveChangesAsync();
-
-                // ✅ STEP 6: Process payment via wallet
-                var walletTransaction = await _walletService.DebitWalletAsync(
-                    userId,
-                    priceCalculation.TotalPrice,
-                    $"Order #{order.OrderId} - {priceCalculation.MealName}"
-                );
-
-                // ✅ STEP 7: Confirm order after successful payment
-                order.OrderStatus = OrderStatus.Confirmed;
-                order.UpdatedAt = DateTime.UtcNow;
-                _orderRepository.Update(order);
-                await _unitOfWork.SaveChangesAsync();
-
-                await _unitOfWork.CommitAsync();   // ✅ All or nothing
-
-                var walletBalanceAfter = await _walletService.GetUserBalanceAsync(userId);
-
-                // ✅ STEP 8: Return comprehensive order creation response
-                return new OrderCreationResponseDto
-                {
-                    OrderId = order.OrderId,
-                    UserMealId = createdUserMealId,
-                    MealName = priceCalculation.MealName,
-                    TotalPrice = priceCalculation.TotalPrice,
-                    WalletBalanceBefore = walletBalanceBefore,
-                    WalletBalanceAfter = walletBalanceAfter,
-                    OrderStatus = order.OrderStatus.ToString(),
-                    TransactionId = walletTransaction.TransactionId,
-                    OrderDate = order.OrderDate,
-                    ScheduledFor = order.ScheduledFor,
-                    IngredientBreakdown = priceCalculation.IngredientBreakdown
-                };
-            }
-            catch
-            {
-                await _unitOfWork.RollbackAsync();  // ✅ Undo everything on failure
-                throw;
-            }
+            // ✅ EXTRACTED: Call shared core logic with individual params
+            return await ExecuteOrderCreationAsync(
+                userId: userId,
+                mealId: dto.MealId,
+                ingredients: dto.SelectedIngredients,
+                deliveryAddressId: primaryAddress.Id,
+                overrideTotalPrice: null,
+                scheduledFor: dto.ScheduledFor,
+                mealName: dto.MealName);
         }
 
-        // ✅ NEW: Overload with explicit DeliveryAddressId (for scheduled order confirmation)
+        // ✅ UNCHANGED: Second overload - validates provided address
         public async Task<OrderCreationResponseDto> CreateOrderFromMealBuilderAsync(
-            CreateOrderFromMealBuilderDto dto, 
-            int userId, 
+            CreateOrderFromMealBuilderDto dto,
+            int userId,
             int? deliveryAddressId)
         {
-            // ✅ If deliveryAddressId is provided, use it directly
-            // Otherwise, fall back to getting primary address
             int? addressIdToUse = deliveryAddressId;
-            
+
             if (addressIdToUse.HasValue)
             {
                 // Validate the provided address exists and is serviceable
@@ -381,7 +304,7 @@ namespace Sovva.Application.Services
                 {
                     throw new InvalidOperationException("Invalid delivery address");
                 }
-                
+
                 if (address.ServiceableLocation == null || !address.ServiceableLocation.IsActive)
                 {
                     throw new InvalidOperationException(
@@ -396,11 +319,9 @@ namespace Sovva.Application.Services
                 var primaryAddress = await _userAddressRepository.GetPrimaryAddressByUserIdAsync(userId);
                 if (primaryAddress == null)
                 {
-                    throw new InvalidOperationException(
-                        "Please add a delivery address before placing an order. Go to Profile → Manage Addresses."
-                    );
+                    throw new AddressNotFoundException(userId);
                 }
-                
+
                 if (primaryAddress.ServiceableLocation == null || !primaryAddress.ServiceableLocation.IsActive)
                 {
                     throw new InvalidOperationException(
@@ -408,22 +329,47 @@ namespace Sovva.Application.Services
                         "Please update your delivery address."
                     );
                 }
-                
+
                 addressIdToUse = primaryAddress.Id;
             }
+
+            // ✅ EXTRACTED: Call shared core logic with individual params
+            return await ExecuteOrderCreationAsync(
+                userId: userId,
+                mealId: dto.MealId,
+                ingredients: dto.SelectedIngredients,
+                deliveryAddressId: addressIdToUse!.Value,
+                overrideTotalPrice: null,
+                scheduledFor: dto.ScheduledFor,
+                mealName: dto.MealName);
+        }
+
+        // ✅ EXTRACTED: Core order creation logic with UnitOfWork transaction
+        private async Task<OrderCreationResponseDto> ExecuteOrderCreationAsync(
+            int userId, 
+            int mealId,
+            List<SelectedIngredientDto> ingredients,
+            int deliveryAddressId,
+            decimal? overrideTotalPrice,
+            DateTime? scheduledFor,
+            string? mealName = null)
+        {
+            // ✅ O5 FIX: Guard against empty ingredients
+            if (ingredients == null || !ingredients.Any())
+                throw new ArgumentException("At least one ingredient must be selected to place an order.");
 
             // ✅ STEP 1: Calculate meal price and validate ingredients
             // ✅ Use override price from scheduled order, or recalculate
             MealPriceResponseDto priceCalculation;
-            if (dto.OverrideTotalPrice.HasValue)
+            if (overrideTotalPrice.HasValue)
             {
                 // Use the price agreed at order creation time (from scheduled order snapshot)
                 priceCalculation = new MealPriceResponseDto
                 {
                     // ✅ Use meal name from scheduled order snapshot, or fallback
-                    MealName = dto.MealName ?? "Scheduled Order",
-                    TotalPrice = dto.OverrideTotalPrice.Value,
-                    IngredientBreakdown = dto.SelectedIngredients.Select(i => new IngredientBreakdownDto
+                    MealName = mealName ?? "Scheduled Order",
+                    TotalPrice = overrideTotalPrice.Value,
+                    IngredientBreakdown = ingredients.Select(i => new IngredientBreakdownDto
                     {
                         IngredientId = i.IngredientId,
                         Quantity = i.Quantity,
@@ -437,64 +383,90 @@ namespace Sovva.Application.Services
             {
                 priceCalculation = await _mealService.CalculateMealPriceAsync(new MealPriceCalculationDto
                 {
-                    MealId = dto.MealId,
-                    SelectedIngredients = dto.SelectedIngredients
+                    MealId = mealId,
+                    SelectedIngredients = ingredients
                 });
             }
 
             // ✅ STEP 2: Check wallet balance
             var walletBalanceBefore = await _walletService.GetUserBalanceAsync(userId);
             var hasSufficientBalance = await _walletService.HasSufficientBalanceAsync(userId, priceCalculation.TotalPrice);
-            
+
             if (!hasSufficientBalance)
             {
-                throw new InvalidOperationException(
-                    $"Insufficient wallet balance. Required: ₹{priceCalculation.TotalPrice}, Available: ₹{walletBalanceBefore}"
-                );
+                throw new InsufficientBalanceException(priceCalculation.TotalPrice, walletBalanceBefore);
             }
 
-            // ✅ All writes inside a single transaction
-            await _unitOfWork.BeginTransactionAsync();
-            try
+            // ✅ All writes inside a single transaction (UnitOfWork)
+            OrderCreationResponseDto response = null;
+            await _unitOfWork.ExecuteInTransactionAsync(async () =>
             {
                 // ✅ STEP 3: Create UserMeal record
                 var userMealDto = new CreateUserMealDto
                 {
-                    MealId = dto.MealId,
+                    MealId = mealId,
                     MealName = priceCalculation.MealName,
                     TotalPrice = priceCalculation.TotalPrice,
-                    CreatedAt = DateTime.UtcNow
+                    CreatedAt = _time.UtcNow
                 };
 
                 var createdUserMealId = await _userMealService.CreateUserMealAsync(userMealDto, userId);
 
                 // ✅ STEP 4: Create UserMealIngredient records for each selected ingredient
-                // Note: DB schema has no UnitPrice/TotalPrice on UserMealIngredients —
-                // only UserMealId, IngredientId, Quantity. We save what the schema supports.
-                foreach (var selectedIngredient in dto.SelectedIngredients)
+                var ingredientDtos = new List<CreateUserMealIngredientDto>();
+                
+                if (overrideTotalPrice.HasValue)
                 {
-                    await _userMealIngredientService.CreateUserMealIngredientAsync(
-                        new CreateUserMealIngredientDto
+                    // Variant used by first overload (stores UnitPrice/TotalPrice when available)
+                    foreach (var selectedIngredient in ingredients)
+                    {
+                        var ingredientDetail = priceCalculation.IngredientBreakdown
+                            .FirstOrDefault(i => i.IngredientId == selectedIngredient.IngredientId);
+
+                        if (ingredientDetail != null)
                         {
-                            UserMealId   = createdUserMealId,
+                            ingredientDtos.Add(new CreateUserMealIngredientDto
+                            {
+                                UserMealId = createdUserMealId,
+                                IngredientId = selectedIngredient.IngredientId,
+                                Quantity = selectedIngredient.Quantity,
+                                UnitPrice = ingredientDetail.UnitPrice,
+                                TotalPrice = ingredientDetail.TotalPrice
+                            });
+                        }
+                    }
+                }
+                else
+                {
+                    // Variant used by second overload (omits UnitPrice/TotalPrice)
+                    foreach (var selectedIngredient in ingredients)
+                    {
+                        ingredientDtos.Add(new CreateUserMealIngredientDto
+                        {
+                            UserMealId = createdUserMealId,
                             IngredientId = selectedIngredient.IngredientId,
-                            Quantity     = selectedIngredient.Quantity
-                            // UnitPrice/TotalPrice omitted — not in DB schema
+                            Quantity = selectedIngredient.Quantity
                         });
+                    }
                 }
 
-                // ✅ STEP 5: Create Order with explicit DeliveryAddressId
+                if (ingredientDtos.Any())
+                {
+                    await _userMealIngredientService.CreateUserMealIngredientsAsync(ingredientDtos);
+                }
+
+                // ✅ STEP 5: Create Order with DeliveryAddressId
                 var order = new Order
                 {
                     UserId = userId,
                     UserMealId = createdUserMealId,
-                    DeliveryAddressId = addressIdToUse.Value,
+                    DeliveryAddressId = deliveryAddressId,
                     OrderStatus = OrderStatus.Pending,
                     TotalPrice = priceCalculation.TotalPrice,
-                    OrderDate = DateTime.UtcNow,
-                    ScheduledFor = dto.ScheduledFor ?? DateTime.UtcNow.AddHours(2),
-                    CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow
+                    OrderDate = _time.UtcNow,
+                    ScheduledFor = scheduledFor ?? _time.UtcNow.AddHours(2),
+                    CreatedAt = _time.UtcNow,
+                    UpdatedAt = _time.UtcNow
                 };
 
                 await _orderRepository.AddAsync(order);
@@ -507,18 +479,16 @@ namespace Sovva.Application.Services
                     $"Order #{order.OrderId} - {priceCalculation.MealName}"
                 );
 
-                // ✅ STEP 7: Confirm order after successful payment
-                order.OrderStatus = OrderStatus.Confirmed;
-                order.UpdatedAt = DateTime.UtcNow;
+                // ✅ STEP 7: Confirm order after successful payment (SP-1: uses state transition guard)
+                order.TransitionTo(OrderStatus.Confirmed);
+                order.UpdatedAt = _time.UtcNow;
                 _orderRepository.Update(order);
                 await _unitOfWork.SaveChangesAsync();
-
-                await _unitOfWork.CommitAsync();   // ✅ All or nothing
 
                 var walletBalanceAfter = await _walletService.GetUserBalanceAsync(userId);
 
                 // ✅ STEP 8: Return comprehensive order creation response
-                return new OrderCreationResponseDto
+                response = new OrderCreationResponseDto
                 {
                     OrderId = order.OrderId,
                     UserMealId = createdUserMealId,
@@ -532,12 +502,9 @@ namespace Sovva.Application.Services
                     ScheduledFor = order.ScheduledFor,
                     IngredientBreakdown = priceCalculation.IngredientBreakdown
                 };
-            }
-            catch
-            {
-                await _unitOfWork.RollbackAsync();  // ✅ Undo everything on failure
-                throw;
-            }
+            });
+
+            return response;
         }
 
         // ✅ NEW: Dedicated method for confirming scheduled orders
@@ -558,6 +525,16 @@ namespace Sovva.Application.Services
                 return existingOrder.OrderId;
             }
 
+            // ✅ FIX [O3]: Guard against null DeliveryAddressId — prevents NRE crash
+            // Callers (ConfirmSingleOrderAsync, ProcessOrdersForDate) catch this,
+            // mark the order as Failed, and continue processing remaining orders.
+            if (scheduledOrder.DeliveryAddressId == null)
+            {
+                throw new InvalidOperationException(
+                    $"ScheduledOrder #{scheduledOrder.ScheduledOrderId} has no DeliveryAddressId. " +
+                    "Cannot create Order without a delivery address.");
+            }
+
             // ✅ Single INSERT — atomic by itself, no manual transaction needed
             // (NpgsqlRetryingExecutionStrategy blocks manual transactions)
             var order = new Order
@@ -565,31 +542,22 @@ namespace Sovva.Application.Services
                 UserId            = scheduledOrder.UserId,
                 UserMealId        = null,
                 ScheduledOrderId  = scheduledOrder.ScheduledOrderId,
-                DeliveryAddressId = scheduledOrder.DeliveryAddressId!.Value,
+                DeliveryAddressId = scheduledOrder.DeliveryAddressId.Value,
                 OrderStatus       = OrderStatus.Confirmed,
                 TotalPrice        = scheduledOrder.TotalPrice,
 
                 // ✅ ScheduledFor comes from DATE column → DateOnly → convert to UTC midnight
-                ScheduledFor = DateTime.SpecifyKind(
-                    scheduledOrder.ScheduledFor.ToDateTime(TimeOnly.MinValue), 
-                    DateTimeKind.Utc),
+                ScheduledFor = _time.ToUtc(scheduledOrder.ScheduledFor.ToDateTime(TimeOnly.MinValue)),
 
-                OrderDate = DateTime.UtcNow,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
+                OrderDate = _time.UtcNow,
+                CreatedAt = _time.UtcNow,
+                UpdatedAt = _time.UtcNow
             };
 
             await _orderRepository.AddAsync(order);
             await _orderRepository.SaveChangesAsync();
 
-            // ✅ Write the wallet transaction record so the ledger matches the balance deduction
-            // that was already applied atomically in ConfirmAllScheduledOrdersAsync
-            await _walletService.WriteTransactionRecordAsync(
-                scheduledOrder.UserId,
-                scheduledOrder.TotalPrice,
-                "Debit",
-                $"Order #{order.OrderId} - {scheduledOrder.MealName}"
-            );
+
 
             return order.OrderId;
         }
@@ -600,6 +568,117 @@ namespace Sovva.Application.Services
         public async Task<Order?> GetByScheduledOrderIdAsync(int scheduledOrderId)
         {
             return await _orderRepository.GetByScheduledOrderIdAsync(scheduledOrderId);
+        }
+
+        // ==================== POST-DELIVERY ACTIONS ====================
+
+        public async Task<bool> RateOrderAsync(long orderId, int userId, int rating, string? review)
+        {
+            var order = await _orderRepository.GetByIdAsync(orderId);
+            if (order == null || order.UserId != userId)
+                throw new InvalidOperationException("Order not found or access denied.");
+
+            if (!order.IsPrepared)
+                throw new InvalidOperationException("Cannot rate an order that hasn't been prepared/delivered yet.");
+
+            order.Rating = rating;
+            order.Review = review;
+            order.UpdatedAt = _time.UtcNow;
+
+            _orderRepository.Update(order);
+            await _orderRepository.SaveChangesAsync();
+
+            return true;
+        }
+
+        public async Task<OrderCreationResponseDto> ReorderAsync(long orderId, int userId)
+        {
+            // 1. Fetch past order
+            var pastOrder = await _orderRepository.GetByIdAsync(orderId);
+            if (pastOrder == null || pastOrder.UserId != userId)
+                throw new InvalidOperationException("Order not found or access denied.");
+
+            if (pastOrder.UserMealId == null)
+                throw new InvalidOperationException("Cannot reorder this meal as its components are no longer available.");
+
+            // 2. Determine price and check wallet balance
+            var price = pastOrder.TotalPrice;
+            var currentBalance = await _walletService.GetUserBalanceAsync(userId);
+
+            // ✅ Idempotency check (C-1): Prevent double-clicks within 30 seconds
+            var recentOrder = await _orderRepository.GetRecentOrderByUserMealIdAsync(pastOrder.UserMealId.Value, userId, 30);
+            if (recentOrder != null)
+            {
+                _logger.LogInformation("Reorder duplicate detected for User {UserId}, returning existing Order {OrderId}", userId, recentOrder.OrderId);
+                return new OrderCreationResponseDto
+                {
+                    OrderId = recentOrder.OrderId,
+                    MealName = "Reorder (Duplicate Prevention)",
+                    OrderStatus = recentOrder.OrderStatus.ToString(),
+                    UserMealId = recentOrder.UserMealId ?? 0,
+                    TotalPrice = recentOrder.TotalPrice,
+                    WalletBalanceBefore = currentBalance,
+                    WalletBalanceAfter = currentBalance,
+                    OrderDate = recentOrder.OrderDate,
+                    ScheduledFor = recentOrder.ScheduledFor
+                };
+            }
+
+            if (currentBalance < price)
+                throw new InsufficientBalanceException(price, currentBalance);
+
+            // ✅ All writes inside a single transaction (UnitOfWork)
+            OrderCreationResponseDto response = null;
+            await _unitOfWork.ExecuteInTransactionAsync(async () =>
+            {
+                // 3. Deduct balance via the dedicated transaction method
+                var transaction = await _walletService.DebitWalletAsync(
+                    userId, 
+                    price, 
+                    $"Reorder of past order #{orderId}"
+                );
+
+                // 4. Create new order scheduled for tomorrow
+                // Tomorrow 7:00 AM IST. Note: Storing as Unspecified kind to match existing behavior, 
+                // or just DateTime.UtcNow for creation.
+                var tomorrowIst = _time.TomorrowIst;
+                var localDeliveryTime = tomorrowIst.ToDateTime(new TimeOnly(7, 0));
+                var scheduledDeliveryTime = _time.ToUtc(localDeliveryTime);
+
+                var newOrder = new Order
+                {
+                    UserId = userId,
+                    UserMealId = pastOrder.UserMealId,
+                    DeliveryAddressId = pastOrder.DeliveryAddressId,
+                    IsPrepared = false,
+                    OrderStatus = OrderStatus.Confirmed,
+                    TotalPrice = price,
+                    OrderDate = _time.UtcNow,
+                    ScheduledFor = scheduledDeliveryTime,
+                    CreatedAt = _time.UtcNow,
+                    UpdatedAt = _time.UtcNow
+                };
+
+                await _orderRepository.AddAsync(newOrder);
+                await _unitOfWork.SaveChangesAsync();
+
+                var walletBalanceAfter = await _walletService.GetUserBalanceAsync(userId);
+
+                response = new OrderCreationResponseDto
+                {
+                    OrderId = newOrder.OrderId,
+                    MealName = "Reorder",
+                    OrderStatus = "Confirmed",
+                    UserMealId = newOrder.UserMealId ?? 0,
+                    TotalPrice = price,
+                    WalletBalanceBefore = currentBalance,
+                    WalletBalanceAfter = walletBalanceAfter,
+                    OrderDate = newOrder.OrderDate,
+                    ScheduledFor = newOrder.ScheduledFor
+                };
+            });
+
+            return response;
         }
     }
 }

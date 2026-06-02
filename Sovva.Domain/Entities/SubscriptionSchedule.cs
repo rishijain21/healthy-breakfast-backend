@@ -10,7 +10,7 @@ namespace Sovva.Domain.Entities
     /// Stores weekly delivery schedule for subscriptions
     /// Example: Mon=2, Wed=1, Fri=2 (2 bottles Monday, 1 Wednesday, 2 Friday)
     /// </summary>
-    public class SubscriptionSchedule
+    public class SubscriptionSchedule : BaseEntity
     {
         [Key]
         public int ScheduleId { get; set; }
@@ -23,9 +23,6 @@ namespace Sovva.Domain.Entities
 
         // Quantity for this day (e.g., 2 bottles)
         public int Quantity { get; set; }
-
-        public DateTime CreatedAt { get; set; }
-        public DateTime UpdatedAt { get; set; }
 
         // Navigation
         public Subscription Subscription { get; set; } = null!;

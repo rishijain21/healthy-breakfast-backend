@@ -32,7 +32,7 @@ namespace Sovva.WebAPI.Controllers
         public async Task<ActionResult<IEnumerable<ServiceableLocationDto>>> GetAll()
         {
             var locations = await _service.GetActiveLocationsAsync();
-            return Ok(locations);
+            return Ok(ApiResponse.Ok(locations));
         }
 
         /// <summary>
@@ -44,9 +44,9 @@ namespace Sovva.WebAPI.Controllers
         {
             var location = await _service.GetByIdAsync(id);
             if (location == null)
-                return NotFound(new { message = "Serviceable location not found" });
+                return NotFound(ApiResponse.Fail("NOT_FOUND", "Serviceable location not found"));
 
-            return Ok(location);
+            return Ok(ApiResponse.Ok(location));
         }
 
         /// <summary>
@@ -57,7 +57,7 @@ namespace Sovva.WebAPI.Controllers
         public async Task<ActionResult<IEnumerable<ServiceableLocationDto>>> SearchByPincode(string pincode)
         {
             var locations = await _service.SearchByPincodeAsync(pincode);
-            return Ok(locations);
+            return Ok(ApiResponse.Ok(locations));
         }
 
         /// <summary>
@@ -68,7 +68,7 @@ namespace Sovva.WebAPI.Controllers
         public async Task<ActionResult<IEnumerable<ServiceableLocationDto>>> SearchByCity(string city)
         {
             var locations = await _service.SearchByCityAsync(city);
-            return Ok(locations);
+            return Ok(ApiResponse.Ok(locations));
         }
 
         /// <summary>
@@ -86,19 +86,19 @@ namespace Sovva.WebAPI.Controllers
             if (!string.IsNullOrWhiteSpace(query))
             {
                 var results = await _service.SearchByQueryAsync(query);
-                return Ok(results);
+                return Ok(ApiResponse.Ok(results));
             }
 
             // Legacy city+area search (keep for backwards compatibility)
             if (!string.IsNullOrWhiteSpace(city) && !string.IsNullOrWhiteSpace(area))
             {
                 var results = await _service.SearchByAreaAsync(city, area);
-                return Ok(results);
+                return Ok(ApiResponse.Ok(results));
             }
 
             // No params — return all active
             var all = await _service.GetActiveLocationsAsync();
-            return Ok(all);
+            return Ok(ApiResponse.Ok(all));
         }
 
         /// <summary>
@@ -109,7 +109,7 @@ namespace Sovva.WebAPI.Controllers
         public async Task<ActionResult<ValidateAddressDto>> ValidateLocation(int locationId)
         {
             var result = await _service.ValidateLocationAsync(locationId);
-            return Ok(result);
+            return Ok(ApiResponse.Ok(result));
         }
 
         // ══════════════════════════════════════════════════════
@@ -129,7 +129,7 @@ namespace Sovva.WebAPI.Controllers
         public async Task<ActionResult<IEnumerable<ServiceableLocationDto>>> GetAllForAdmin()
         {
             var locations = await _service.GetAllAsync();
-            return Ok(locations);
+            return Ok(ApiResponse.Ok(locations));
         }
 
         /// <summary>
@@ -140,19 +140,11 @@ namespace Sovva.WebAPI.Controllers
         public async Task<ActionResult<ServiceableLocationDto>> Create(
             [FromBody] CreateServiceableLocationDto dto)
         {
-            try
-            {
-                _logger.LogInformation(
-                    "Admin creating serviceable location: {City} {Pincode}", dto.City, dto.Pincode);
+            _logger.LogInformation(
+                "Admin creating serviceable location: {City} {Pincode}", dto.City, dto.Pincode);
 
-                var created = await _service.CreateAsync(dto);
-                return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error creating serviceable location");
-                return BadRequest(new { message = ex.Message });
-            }
+            var created = await _service.CreateAsync(dto);
+            return CreatedAtAction(nameof(GetById), new { id = created.Id }, ApiResponse.Ok(created));
         }
 
         /// <summary>
@@ -168,16 +160,11 @@ namespace Sovva.WebAPI.Controllers
             try
             {
                 var updated = await _service.UpdateAsync(id, dto);
-                return Ok(updated);
+                return Ok(ApiResponse.Ok(updated));
             }
             catch (KeyNotFoundException ex)
             {
-                return NotFound(new { message = ex.Message });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error updating serviceable location {Id}", id);
-                return BadRequest(new { message = ex.Message });
+                return NotFound(ApiResponse.Fail("NOT_FOUND", ex.Message));
             }
         }
 
@@ -191,10 +178,10 @@ namespace Sovva.WebAPI.Controllers
         {
             var result = await _service.DeleteAsync(id);
             if (!result)
-                return NotFound(new { message = "Serviceable location not found" });
+                return NotFound(ApiResponse.Fail("NOT_FOUND", "Serviceable location not found"));
 
             _logger.LogWarning("Admin deleted serviceable location: {Id}", id);
-            return Ok(new { message = "Serviceable location deleted successfully" });
+            return Ok(ApiResponse.Ok(new { message = "Serviceable location deleted successfully" }));
         }
     }
 }

@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Sovva.Infrastructure.Repositories
 {
-    public class SubscriptionRepository : ISubscriptionRepository
+    internal class SubscriptionRepository : ISubscriptionRepository
     {
         private readonly AppDbContext _context;
         private readonly IAppTimeProvider _time;
@@ -19,15 +19,38 @@ namespace Sovva.Infrastructure.Repositories
             _time = time;
         }
 
-        public async Task<IEnumerable<Subscription>> GetAllAsync()
+        public async Task<IEnumerable<Subscription>> GetAllAsync(int page = 1, int pageSize = 50)
         {
             return await _context.Subscriptions
                 .AsNoTracking()
                 .Include(s => s.User)
                 .Include(s => s.UserMeal)
                     .ThenInclude(um => um.Meal)
+                .Include(s => s.Meal) // ✅ ADDED
                 .Include(s => s.WeeklySchedule)  // ✅ NEW
+                .OrderByDescending(s => s.SubscriptionId)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
                 .ToListAsync();
+        }
+
+        public async Task<(IEnumerable<Subscription> Items, int TotalCount)> GetAllWithCountAsync(int page = 1, int pageSize = 50)
+        {
+            var query = _context.Subscriptions.AsNoTracking();
+
+            var totalCount = await query.CountAsync();
+            var items = await query
+                .Include(s => s.User)
+                .Include(s => s.UserMeal)
+                    .ThenInclude(um => um.Meal)
+                .Include(s => s.Meal)
+                .Include(s => s.WeeklySchedule)
+                .OrderByDescending(s => s.SubscriptionId)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync();
+
+            return (items, totalCount);
         }
 
         public async Task<Subscription?> GetByIdAsync(int subscriptionId)
@@ -37,6 +60,7 @@ namespace Sovva.Infrastructure.Repositories
                 .Include(s => s.User)
                 .Include(s => s.UserMeal)
                     .ThenInclude(um => um.Meal)
+                .Include(s => s.Meal) // ✅ ADDED
                 .Include(s => s.WeeklySchedule)  // ✅ NEW
                 .FirstOrDefaultAsync(s => s.SubscriptionId == subscriptionId);
         }
@@ -48,6 +72,7 @@ namespace Sovva.Infrastructure.Repositories
                 .Include(s => s.User)
                 .Include(s => s.UserMeal)
                     .ThenInclude(um => um.Meal)
+                .Include(s => s.Meal) // ✅ ADDED
                 .Include(s => s.WeeklySchedule)  // ✅ NEW
                 .Where(s => s.UserId == userId)
                 .ToListAsync();
@@ -62,18 +87,27 @@ namespace Sovva.Infrastructure.Repositories
                     .ThenInclude(u => u.AuthMapping)  // ✅ Important for scheduling
                 .Include(s => s.UserMeal)
                     .ThenInclude(um => um.Meal)
+                .Include(s => s.Meal) // ✅ ADDED
                 .Include(s => s.WeeklySchedule)  // ✅ NEW
-                .Where(s => s.Active && s.StartDate <= today && s.EndDate >= today)
+                .Where(s => s.IsActive && s.StartDate <= today && s.EndDate >= today)
                 .ToListAsync();
         }
 
         public async Task<Subscription> CreateAsync(Subscription subscription)
         {
             // CreatedAt/UpdatedAt handled by TimestampInterceptor
-
-            _context.Subscriptions.Add(subscription);
-            await _context.SaveChangesAsync();
-            return subscription;
+            try
+            {
+                _context.Subscriptions.Add(subscription);
+                await _context.SaveChangesAsync();
+                return subscription;
+            }
+            catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException pgEx && pgEx.SqlState == "23505")
+            {
+                // ✅ SOLID-2 FIX: Catch infrastructure-specific duplicate key violation here (Infrastructure layer)
+                // and translate to a domain exception that the Application layer understands.
+                throw new Sovva.Application.Exceptions.DuplicateSubscriptionException();
+            }
         }
 
 public async Task<Subscription> UpdateAsync(Subscription subscription)
@@ -107,16 +141,37 @@ public async Task<Subscription> UpdateAsync(Subscription subscription)
 
         public async Task<bool> DeleteAsync(int subscriptionId)
         {
+            // Note: No Include(WeeklySchedule) — child schedule rows are kept as
+            // historical data for analytics. They are orphaned but harmless.
             var subscription = await _context.Subscriptions
-                .Include(s => s.WeeklySchedule)
                 .FirstOrDefaultAsync(s => s.SubscriptionId == subscriptionId);
-                
+
             if (subscription == null)
                 return false;
 
+            // The TimestampInterceptor intercepts this Remove() call and converts it
+            // to: subscription.DeletedAt = now (soft delete). No physical row is deleted.
             _context.Subscriptions.Remove(subscription);
             await _context.SaveChangesAsync();
             return true;
+        }
+
+        /// <summary>
+        /// Admin/analytics method to query soft-deleted subscriptions.
+        /// Uses IgnoreQueryFilters() to bypass the DeletedAt filter.
+        /// </summary>
+        public async Task<IEnumerable<Subscription>> GetCancelledSubscriptionsAsync(int daysAgo = 30)
+        {
+            var cutoff = _time.UtcNow.AddDays(-daysAgo);
+            return await _context.Subscriptions
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .Include(s => s.User)
+                .Include(s => s.Meal)
+                .Include(s => s.UserMeal)
+                .Where(s => s.DeletedAt != null && s.DeletedAt >= cutoff)
+                .OrderByDescending(s => s.DeletedAt)
+                .ToListAsync();
         }
 
         // ✅ NEW: Schedule management methods
@@ -143,11 +198,25 @@ public async Task<Subscription> UpdateAsync(Subscription subscription)
 
         public async Task RemoveSchedulesAsync(int subscriptionId)
         {
+            // ✅ FIX: Avoid AsNoTracking + RemoveRange on detached entities.
+            // Prefer a direct SQL DELETE for reliability and performance.
+            try
+            {
+                await _context.Set<SubscriptionSchedule>()
+                    .Where(s => s.SubscriptionId == subscriptionId)
+                    .ExecuteDeleteAsync();
+
+                return;
+            }
+            catch (NotSupportedException)
+            {
+                // Fallback for providers/versions that don't support ExecuteDeleteAsync
+            }
+
             var schedules = await _context.Set<SubscriptionSchedule>()
-                .AsNoTracking()
                 .Where(s => s.SubscriptionId == subscriptionId)
                 .ToListAsync();
-                
+
             _context.Set<SubscriptionSchedule>().RemoveRange(schedules);
             await _context.SaveChangesAsync();
         }
@@ -158,11 +227,14 @@ public async Task<Subscription> UpdateAsync(Subscription subscription)
             var today = _time.TodayIst;
             return await _context.Subscriptions
                 .AsNoTracking()
+                .Include(s => s.UserMeal)
+                    .ThenInclude(um => um.Meal)
+                .Include(s => s.Meal) // ✅ ADDED
                 .Include(s => s.WeeklySchedule)
                 .FirstOrDefaultAsync(s => 
                     s.UserId == userId && 
                     s.UserMealId == userMealId && 
-                    s.Active == true &&
+                    s.IsActive == true &&
                     s.StartDate <= today && 
                     s.EndDate >= today
                 );
@@ -173,10 +245,12 @@ public async Task<Subscription> UpdateAsync(Subscription subscription)
         {
             return await _context.Subscriptions
                 .AsNoTracking()
+                .Include(s => s.UserMeal)
+                    .ThenInclude(um => um.Meal) // ADDED
                 .FirstOrDefaultAsync(s =>
                     s.UserId     == userId     &&
                     s.UserMealId == userMealId &&
-                    s.Active     == true       &&
+                    s.IsActive     == true       &&
                     s.EndDate    >= _time.TodayIst
                 );
         }
@@ -186,16 +260,19 @@ public async Task<Subscription> UpdateAsync(Subscription subscription)
         {
             return await _context.Subscriptions
                 .AsNoTracking()
+                .Include(s => s.UserMeal)
+                    .ThenInclude(um => um.Meal)
+                .Include(s => s.Meal) // ✅ ADDED
                 .Include(s => s.WeeklySchedule)
-                .Where(s => s.UserId == userId && s.Active == true)
-                .Join(
-                    _context.UserMeals,
-                    s => s.UserMealId,
-                    um => um.UserMealId,
-                    (s, um) => new { Subscription = s, UserMeal = um })
-                .Where(x => x.UserMeal.MealId == mealId)
-                .Select(x => x.Subscription)
-                .FirstOrDefaultAsync();
+                .FirstOrDefaultAsync(s => 
+                    s.UserId == userId && 
+                    s.IsActive == true &&
+                    (s.MealId == mealId || (s.UserMeal != null && s.UserMeal.MealId == mealId))
+                );
+        }
+        public async Task<int> CountAsync()
+        {
+            return await _context.Subscriptions.CountAsync();
         }
     }
 }

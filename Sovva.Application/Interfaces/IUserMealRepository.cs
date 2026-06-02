@@ -14,5 +14,8 @@ namespace Sovva.Application.Interfaces
         
         // ✅ NEW: Get UserMeal by UserId and MealId (for auto-find-or-create logic)
         Task<UserMeal?> GetByUserIdAndMealIdAsync(int userId, int mealId);
+
+        // ✅ NEW: Get UserMeal by Id and verify it belongs to User
+        Task<UserMeal?> GetByIdForUserAsync(int id, int userId);
     }
 }

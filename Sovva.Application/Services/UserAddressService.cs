@@ -57,12 +57,12 @@ namespace Sovva.Application.Services
                 Floor = dto.Floor,
                 AdditionalInstructions = dto.AdditionalInstructions,
                 Label = dto.Label,
-                IsPrimary = dto.SetAsPrimary,
+                IsPrimary = dto.IsPrimary,
                 IsActive = true,
                 CreatedAt = DateTime.UtcNow
             };
 
-            if (dto.SetAsPrimary)
+            if (dto.IsPrimary)
             {
                 var existingAddresses = await _addressRepository.GetByUserIdAsync(userId);
                 foreach (var existing in existingAddresses)

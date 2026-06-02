@@ -26,6 +26,9 @@ namespace Sovva.Infrastructure.Data.Configurations
 
                 t.HasCheckConstraint("CK_Orders_TotalPrice",
                     "\"TotalPrice\" >= 0");
+
+                t.HasCheckConstraint("CK_Orders_Rating",
+                    "\"Rating\" IS NULL OR (\"Rating\" >= 1 AND \"Rating\" <= 5)");
             });
 
             // Relationships
@@ -49,6 +52,11 @@ namespace Sovva.Infrastructure.Data.Configurations
 
             builder.HasIndex(e => new { e.UserId, e.OrderStatus })
                 .HasDatabaseName("IX_Orders_UserId_Status");
+
+            // ✅ FIX 12: Partial index for Idempotency check
+            builder.HasIndex(e => e.ScheduledOrderId)
+                .HasDatabaseName("IX_Orders_ScheduledOrderId")
+                .HasFilter("\"ScheduledOrderId\" IS NOT NULL");
         }
     }
 }

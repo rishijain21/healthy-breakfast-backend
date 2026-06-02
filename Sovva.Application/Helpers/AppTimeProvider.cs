@@ -14,6 +14,8 @@ public sealed class AppTimeProvider : IAppTimeProvider
 
     public DateOnly TomorrowIst => TodayIst.AddDays(1);
 
+    public DateTime NowIst => TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, Ist);
+
     public DateTime ToUtc(DateTime istDateTime) =>
         TimeZoneInfo.ConvertTimeToUtc(
             DateTime.SpecifyKind(istDateTime, DateTimeKind.Unspecified), Ist);

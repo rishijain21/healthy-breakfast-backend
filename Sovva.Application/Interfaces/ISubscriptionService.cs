@@ -6,7 +6,7 @@ namespace Sovva.Application.Interfaces
 {
     public interface ISubscriptionService
     {
-        Task<IEnumerable<SubscriptionDto>> GetAllSubscriptionsAsync();
+        Task<PagedResult<SubscriptionDto>> GetAllSubscriptionsAsync(int page = 1, int pageSize = 50);
         Task<SubscriptionDto?> GetSubscriptionByIdAsync(int subscriptionId);
         Task<IEnumerable<SubscriptionDto>> GetSubscriptionsByUserIdAsync(int userId);
         Task<IEnumerable<SubscriptionDto>> GetActiveSubscriptionsAsync();

@@ -1,10 +1,11 @@
 using System;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using Sovva.Domain.Interfaces;
 
 namespace Sovva.Domain.Entities
 {
-    public class UserMeal
+    public class UserMeal : BaseEntity, ISoftDeletable
     {
         [Key]
         public int UserMealId { get; set; }
@@ -17,8 +18,9 @@ namespace Sovva.Domain.Entities
 
         public string MealName { get; set; } = null!;
         public decimal TotalPrice { get; set; }
-        public DateTime CreatedAt { get; set; }
-        public DateTime UpdatedAt { get; set; }
+
+        /// <summary>Soft delete. Null = active. Has value = deleted.</summary>
+        public DateTime? DeletedAt { get; set; }
 
         // Navigation properties
         public User User { get; set; } = null!;

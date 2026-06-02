@@ -2,7 +2,7 @@ using System.ComponentModel.DataAnnotations;
 
 namespace Sovva.Domain.Entities
 {
-    public class UserAddress
+    public class UserAddress : BaseEntity
     {
         public int Id { get; set; }
         
@@ -36,9 +36,6 @@ namespace Sovva.Domain.Entities
         
         public bool IsPrimary { get; set; } = false;
         public bool IsActive { get; set; } = true;
-        
-        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-        public DateTime? UpdatedAt { get; set; }
         
         // Navigation Properties
         public User User { get; set; } = null!;

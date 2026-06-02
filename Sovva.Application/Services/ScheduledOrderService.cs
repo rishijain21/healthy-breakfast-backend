@@ -5,8 +5,10 @@ using System.Threading.Tasks;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Sovva.Application.Interfaces;
+using Sovva.Application.Exceptions;
 using Sovva.Application.Helpers;
 using Sovva.Application.DTOs;
+using Sovva.Domain.Constants;
 using Sovva.Domain.Entities;
 using Sovva.Domain.Enums;
 
@@ -23,6 +25,10 @@ namespace Sovva.Application.Services
         private readonly IAppTimeProvider _time;
         private readonly ILogger<ScheduledOrderService> _logger;
         private readonly IUserAddressRepository _userAddressRepository;
+        private readonly IUnitOfWork _unitOfWork;
+        private readonly IMealRepository _mealRepository;
+        private readonly IOrderRepository _orderRepository;
+        private readonly IWalletTransactionRepository _walletTransactionRepository;
 
 
         public ScheduledOrderService(
@@ -33,7 +39,11 @@ namespace Sovva.Application.Services
             IOrderService orderService,
             IAppTimeProvider time,
             ILogger<ScheduledOrderService> logger,
-            IUserAddressRepository userAddressRepository)
+            IUserAddressRepository userAddressRepository,
+            IUnitOfWork unitOfWork,
+            IMealRepository mealRepository,
+            IOrderRepository orderRepository,
+            IWalletTransactionRepository walletTransactionRepository)
         {
             _scheduledOrderRepository = scheduledOrderRepository;
             _userRepository = userRepository;
@@ -43,6 +53,10 @@ namespace Sovva.Application.Services
             _time = time;
             _logger = logger;
             _userAddressRepository = userAddressRepository;
+            _unitOfWork = unitOfWork;
+            _mealRepository = mealRepository;
+            _orderRepository = orderRepository;
+            _walletTransactionRepository = walletTransactionRepository;
         }
 
 
@@ -55,7 +69,7 @@ namespace Sovva.Application.Services
             // AuthId still needed for logging/audit, but userId is already known from JWT
             var user = await _userRepository.GetByIdAsync(userId);
             if (user == null)
-                throw new InvalidOperationException("User not found");
+                throw new UserNotFoundException(userId);
 
             // ✅ Determine delivery address: use DTO's address or fall back to primary
             int? deliveryAddressId = dto.DeliveryAddressId;
@@ -67,9 +81,7 @@ namespace Sovva.Application.Services
                 
                 if (primaryAddress == null)
                 {
-                    throw new InvalidOperationException(
-                        "Please add a delivery address before scheduling an order. Go to Profile → Manage Addresses."
-                    );
+                    throw new AddressNotFoundException(user.UserId);
                 }
                 deliveryAddressId = primaryAddress.Id;
             }
@@ -79,19 +91,18 @@ namespace Sovva.Application.Services
                 primaryAddress = await _userAddressRepository.GetByIdWithDetailsAsync(deliveryAddressId.Value);
                 if (primaryAddress == null || primaryAddress.UserId != user.UserId)
                 {
-                    throw new InvalidOperationException("Invalid delivery address");
+                    throw new AddressNotFoundException(user.UserId);
                 }
             }
 
             if (primaryAddress.ServiceableLocation == null || !primaryAddress.ServiceableLocation.IsActive)
             {
-                throw new InvalidOperationException(
+                throw new AddressNotFoundException(user.UserId, 
                     $"Sorry, we don't deliver to {primaryAddress.ServiceableLocation?.Area ?? "your location"} currently. " +
-                    "Please update your delivery address."
-                );
+                    "Please update your delivery address.");
             }
 
-            _logger.LogInformation($"✅ Delivery address validated: {primaryAddress.ServiceableLocation.Area}, {primaryAddress.ServiceableLocation.City}");
+            _logger.LogInformation("Delivery address validated: {Area}, {City}", primaryAddress.ServiceableLocation.Area, primaryAddress.ServiceableLocation.City);
 
             // ✅ FIXED: Handle ScheduledFor as DateOnly (IST calendar date)
             DateOnly deliveryDate;
@@ -119,7 +130,7 @@ namespace Sovva.Application.Services
                 deliveryDate = todayIst.AddDays(1);
             }
             
-            _logger.LogInformation("[ScheduledOrder] Order placed at: {Ist:yyyy-MM-dd HH:mm:ss} IST");
+            _logger.LogInformation("[ScheduledOrder] Order placed at: {Ist:yyyy-MM-dd HH:mm:ss} IST", _time.NowIst);
             _logger.LogInformation("[ScheduledOrder] Delivery scheduled for: {Date}", deliveryDate);
 
             // ✅ Price calculation logic
@@ -128,15 +139,12 @@ namespace Sovva.Application.Services
 
             // ✅ OPTIMIZED: Batch load all ingredients in single query to kill N+1
             var ingredientIds = dto.SelectedIngredients.Select(i => i.IngredientId).ToList();
-            var allIngredients = await _ingredientRepository.GetByIdsAsync(ingredientIds);
-            var ingredientMap = allIngredients
-                .GroupBy(i => i.IngredientId)
-                .ToDictionary(g => g.Key, g => g.First());
+            var ingredientMap = await _ingredientRepository.GetByIdsAsync(ingredientIds);
 
             foreach (var ingredientDto in dto.SelectedIngredients)
             {
                 if (!ingredientMap.TryGetValue(ingredientDto.IngredientId, out var ingredient))
-                    throw new InvalidOperationException($"Ingredient {ingredientDto.IngredientId} not found");
+                    throw new Sovva.Domain.Exceptions.BusinessRuleException($"Ingredient {ingredientDto.IngredientId} not found");
 
                 ingredients.Add((ingredient, ingredientDto.Quantity));
             }
@@ -145,30 +153,40 @@ namespace Sovva.Application.Services
             if (dto.MealPrice.HasValue && dto.MealPrice.Value > 0)
             {
                 totalPrice = dto.MealPrice.Value;
-                _logger.LogInformation($"💰 Using featured meal fixed price: ₹{totalPrice}");
+                _logger.LogInformation("Using featured meal fixed price: {TotalPrice}", totalPrice);
             }
             else
             {
-                // ✅ CUSTOM MEAL: Calculate from ingredients
-                totalPrice = ingredients.Sum(i => i.ingredient.Price * i.quantity);
-                _logger.LogInformation($"💰 Calculated price from ingredients: ₹{totalPrice}");
+                // ✅ CUSTOM MEAL: Calculate from ingredients + BasePrice
+                if (!dto.MealId.HasValue)
+                    throw new Sovva.Domain.Exceptions.BusinessRuleException("MealId is required for custom meal calculation");
+
+                var meal = await _mealRepository.GetByIdAsync(dto.MealId.Value);
+                if (meal == null)
+                    throw new Sovva.Domain.Exceptions.BusinessRuleException($"Meal {dto.MealId} not found");
+
+                totalPrice = meal.BasePrice + ingredients.Sum(i => i.ingredient.Price * i.quantity);
+                _logger.LogInformation("Calculated price from ingredients + BasePrice ({BasePrice}): {TotalPrice}", meal.BasePrice, totalPrice);
             }
 
             // Check wallet balance (now uses userId - PK lookup)
             // skipWalletCheck: bypass for subscription generation (wallet enforced at 11:59 PM confirmation)
             if (!skipWalletCheck && !await CheckWalletBalanceAsync(userId, totalPrice))
-                throw new InvalidOperationException("Insufficient wallet balance");
+            {
+                var currentBalance = await _walletService.GetUserBalanceAsync(userId);
+                throw new InsufficientBalanceException(totalPrice, currentBalance);
+            }
 
             // Create ScheduledOrder
             var scheduledOrder = new ScheduledOrder
             {
                 UserId = userId,
                 AuthId = authId,
-                MealName = dto.MealName ?? "Custom Overnight Oats",
+                MealName = dto.MealName ?? DeliveryConstants.DefaultMealName,
                 MealId = dto.MealId,               // ✅ ADD: Soft reference for traceability
                 MealImageUrl = dto.MealImageUrl,   // ✅ ADD: Snapshot for display
                 ScheduledFor = deliveryDate,       // ← DateOnly directly
-                DeliveryTimeSlot = dto.DeliveryTimeSlot ?? "8:00 AM",
+                DeliveryTimeSlot = dto.DeliveryTimeSlot ?? DeliveryConstants.DefaultTimeSlot,
                 TotalPrice = totalPrice,
                 NutritionalSummary = dto.NutritionalSummary != null
                     ? JsonSerializer.Serialize(dto.NutritionalSummary)
@@ -196,8 +214,7 @@ namespace Sovva.Application.Services
 
             var createdOrder = await _scheduledOrderRepository.CreateAsync(scheduledOrder);
             
-            _logger.LogInformation($"✅ Order #{createdOrder.ScheduledOrderId} created for {deliveryDate:yyyy-MM-dd} delivery");
-            _logger.LogInformation($"   💳 Total price: ₹{totalPrice}");
+            _logger.LogInformation("Order {OrderId} created for {DeliveryDate} delivery, total: {TotalPrice}", createdOrder.ScheduledOrderId, deliveryDate, totalPrice);
             
             return MapToResponseDto(createdOrder);
         }
@@ -211,65 +228,66 @@ namespace Sovva.Application.Services
         {
             try
             {
-                _logger.LogInformation($"🔄 Duplicating order #{scheduledOrderId} for user {userId}");
+                _logger.LogInformation("Duplicating order {OrderId} for user {UserId}", scheduledOrderId, userId);
 
                 // 1. Find original order
                 var originalOrder = await _scheduledOrderRepository.GetByIdAndAuthIdAsync(scheduledOrderId, authId);
                 if (originalOrder == null)
                 {
-                    _logger.LogWarning($"❌ Order #{scheduledOrderId} not found");
-                    throw new InvalidOperationException("Scheduled order not found");
+                    _logger.LogWarning("Order {OrderId} not found for duplication", scheduledOrderId);
+                    throw new ScheduledOrderNotFoundException(scheduledOrderId);
                 }
 
-                _logger.LogInformation($"✅ Found original order: {originalOrder.MealName}");
+                _logger.LogInformation("Found original order {OrderId}: {MealName}", scheduledOrderId, originalOrder.MealName);
 
                 // 2. Validate order can be duplicated
                 if (originalOrder.OrderStatus != ScheduledOrderStatus.Scheduled)
                 {
-                    _logger.LogWarning($"❌ Cannot duplicate order with status: {originalOrder.OrderStatus}");
-                    throw new InvalidOperationException($"Cannot duplicate order with status '{originalOrder.OrderStatus}'");
+                    _logger.LogWarning("Cannot duplicate order {OrderId} with status {OrderStatus}", scheduledOrderId, originalOrder.OrderStatus);
+                    throw new Sovva.Domain.Exceptions.BusinessRuleException($"Cannot duplicate order with status '{originalOrder.OrderStatus}'");
                 }
 
                 // 3. Check wallet balance (now uses userId - PK lookup instead of authId join)
                 if (!await CheckWalletBalanceAsync(userId, originalOrder.TotalPrice))
                 {
-                    _logger.LogWarning($"❌ Insufficient balance for duplication");
-                    throw new InvalidOperationException("Insufficient wallet balance");
+                    _logger.LogWarning("Insufficient balance for duplication of order {OrderId}", scheduledOrderId);
+                    var currentBalance = await _walletService.GetUserBalanceAsync(userId);
+                    throw new InsufficientBalanceException(originalOrder.TotalPrice, currentBalance);
                 }
 
                 // ✅ Validate primary address (userId already known from JWT)
                 var primaryAddress = await _userAddressRepository.GetPrimaryAddressByUserIdAsync(userId);
                 if (primaryAddress == null)
                 {
-                    _logger.LogWarning($"❌ No primary address for user");
-                    throw new InvalidOperationException("Please add a delivery address before duplicating order");
+                    _logger.LogWarning("No primary address for user {UserId}", userId);
+                    throw new AddressNotFoundException(originalOrder.UserId);
                 }
 
                 if (primaryAddress.ServiceableLocation == null || !primaryAddress.ServiceableLocation.IsActive)
                 {
-                    _logger.LogWarning($"❌ Location inactive");
-                    throw new InvalidOperationException($"We don't deliver to {primaryAddress.ServiceableLocation?.Area ?? "your location"} currently");
+                    _logger.LogWarning("Location inactive for user {UserId}", userId);
+                    throw new AddressNotFoundException(originalOrder.UserId);
                 }
 
                 // 5. Validate all ingredients still exist
                 if (originalOrder.Ingredients == null || originalOrder.Ingredients.Count == 0)
                 {
-                    _logger.LogWarning($"❌ Original order has no ingredients");
-                    throw new InvalidOperationException("Original order has no ingredients");
+                    _logger.LogWarning("Original order {OrderId} has no ingredients", scheduledOrderId);
+                    throw new Sovva.Domain.Exceptions.BusinessRuleException("Original order has no ingredients");
                 }
 
                 // ✅ OPTIMIZED: Batch load all ingredients in single query to kill N+1
                 var ingredientIds = originalOrder.Ingredients.Select(i => i.IngredientId).ToList();
                 var existingIngredients = await _ingredientRepository.GetByIdsAsync(ingredientIds);
-                var existingIds = existingIngredients.Select(i => i.IngredientId).ToHashSet();
+                var existingIds = existingIngredients.Keys.ToHashSet();
 
                 if (ingredientIds.Any(id => !existingIds.Contains(id)))
                 {
-                    _logger.LogWarning($"❌ Some ingredients no longer available");
-                    throw new InvalidOperationException("Some ingredients are no longer available");
+                    _logger.LogWarning("Some ingredients no longer available for order {OrderId}", scheduledOrderId);
+                    throw new Sovva.Domain.Exceptions.BusinessRuleException("Some ingredients are no longer available");
                 }
 
-                _logger.LogInformation($"✅ All validations passed, creating duplicate...");
+                _logger.LogInformation("All validations passed for order {OrderId}, creating duplicate", scheduledOrderId);
 
                 // 6. Create duplicate order with UTC DateTimes
                 var duplicateOrder = new ScheduledOrder
@@ -285,7 +303,7 @@ namespace Sovva.Application.Services
                     NutritionalSummary = originalOrder.NutritionalSummary,
                     OrderStatus = ScheduledOrderStatus.Scheduled,
                     CanModify = true,
-                    // ExpiresAt already UTC
+                    ExpiresAt = _time.ToUtc(originalOrder.ScheduledFor.AddDays(1).ToDateTime(TimeOnly.MinValue)),
                     // CreatedAt/UpdatedAt handled by TimestampInterceptor
                     DeliveryAddressId = originalOrder.DeliveryAddressId
                 };
@@ -303,7 +321,7 @@ namespace Sovva.Application.Services
                     });
                 }
 
-                _logger.LogInformation($"✅ Duplicate prepared with {duplicateOrder.Ingredients.Count} ingredients");
+                _logger.LogInformation("Duplicate prepared with {IngredientCount} ingredients", duplicateOrder.Ingredients.Count);
 
                 // 8. Save to database
                 var createdOrder = await _scheduledOrderRepository.CreateAsync(duplicateOrder);
@@ -316,7 +334,7 @@ namespace Sovva.Application.Services
             }
             catch (InvalidOperationException ex)
             {
-                _logger.LogWarning($"⚠️ Duplication validation failed: {ex.Message}");
+                _logger.LogWarning("Duplication validation failed for order {OrderId}: {ErrorMessage}", scheduledOrderId, ex.Message);
                 throw;
             }
             catch (Exception ex)
@@ -353,33 +371,37 @@ namespace Sovva.Application.Services
         {
             var scheduledOrder = await _scheduledOrderRepository.GetByIdAndAuthIdAsync(scheduledOrderId, authId);
             if (scheduledOrder == null)
-                throw new InvalidOperationException("Scheduled order not found");
+                throw new ScheduledOrderNotFoundException(scheduledOrderId);
+
+            // P1-3 FIX: Explicit userId ownership check — defense-in-depth beyond authId
+            if (scheduledOrder.UserId != userId)
+                throw new UnauthorizedAccessException("Order does not belong to this user");
 
             // Check if still editable
             if (!scheduledOrder.CanModify || scheduledOrder.OrderStatus != ScheduledOrderStatus.Scheduled)
-                throw new InvalidOperationException("Order can no longer be modified");
+                throw new Sovva.Domain.Exceptions.BusinessRuleException("Order can no longer be modified");
 
             var ingredients = new List<(Ingredient ingredient, int quantity)>();
             decimal newTotalPrice = 0;
 
             // ✅ OPTIMIZED: Batch load all ingredients in single query to kill N+1
             var ingredientIds = dto.SelectedIngredients.Select(i => i.IngredientId).ToList();
-            var allIngredients = await _ingredientRepository.GetByIdsAsync(ingredientIds);
-            var ingredientMap = allIngredients
-                .GroupBy(i => i.IngredientId)
-                .ToDictionary(g => g.Key, g => g.First());
+            var ingredientMap = await _ingredientRepository.GetByIdsAsync(ingredientIds);
 
             foreach (var ingredientDto in dto.SelectedIngredients)
             {
                 if (!ingredientMap.TryGetValue(ingredientDto.IngredientId, out var ingredient))
-                    throw new InvalidOperationException($"Ingredient {ingredientDto.IngredientId} not found");
+                    throw new Sovva.Domain.Exceptions.BusinessRuleException($"Ingredient {ingredientDto.IngredientId} not found");
 
                 ingredients.Add((ingredient, ingredientDto.Quantity));
                 newTotalPrice += ingredient.Price * ingredientDto.Quantity;
             }
 
             if (!await CheckWalletBalanceAsync(userId, newTotalPrice))
-                throw new InvalidOperationException("Insufficient wallet balance for modified order");
+            {
+                var currentBalance = await _walletService.GetUserBalanceAsync(userId);
+                throw new InsufficientBalanceException(newTotalPrice, currentBalance);
+            }
 
             // Reset ingredients
             scheduledOrder.Ingredients.Clear();
@@ -405,7 +427,7 @@ namespace Sovva.Application.Services
 
             await _scheduledOrderRepository.UpdateAsync(scheduledOrder);
             
-            _logger.LogInformation($"✏️ Order #{scheduledOrderId} modified - New total: ₹{newTotalPrice}");
+            _logger.LogInformation("Order {OrderId} modified - New total: {NewTotalPrice}", scheduledOrderId, newTotalPrice);
         }
 
 
@@ -417,27 +439,33 @@ namespace Sovva.Application.Services
         {
             var scheduledOrder = await _scheduledOrderRepository.GetByIdAndAuthIdAsync(scheduledOrderId, authId);
             if (scheduledOrder == null)
-                throw new InvalidOperationException("Scheduled order not found");
+                throw new ScheduledOrderNotFoundException(scheduledOrderId);
+
+            // P1-3 FIX: Explicit userId ownership check — defense-in-depth beyond authId
+            if (scheduledOrder.UserId != userId)
+                throw new UnauthorizedAccessException("Order does not belong to this user");
 
             if (!scheduledOrder.CanModify || scheduledOrder.OrderStatus != ScheduledOrderStatus.Scheduled)
-                throw new InvalidOperationException("Order can no longer be cancelled");
+                throw new Sovva.Domain.Exceptions.BusinessRuleException("Order can no longer be cancelled");
 
-            _logger.LogInformation($"🗑️ User cancelled order #{scheduledOrderId} - deleting from cart");
+            _logger.LogInformation("User cancelled order {OrderId} - deleting from cart", scheduledOrderId);
             
             await _scheduledOrderRepository.DeleteAsync(scheduledOrderId);
             
-            _logger.LogInformation($"✅ Order #{scheduledOrderId} successfully removed from cart");
+            _logger.LogInformation("Order {OrderId} successfully removed from cart", scheduledOrderId);
         }
 
 
         // ----------------------------------------------------------------------------------------
         // BALANCE CHECK
         // ----------------------------------------------------------------------------------------
-        // ✅ UPDATED: Uses userId directly - PK lookup instead of authId join
+        // P0-4 FIX: Uses the WalletTransaction ledger (single source of truth) instead of
+        // the stale User.WalletBalance computed property. HasSufficientBalanceAsync queries:
+        //   SUM(CASE WHEN Type='Credit' THEN Amount ELSE -Amount END) >= amount
+        // directly against the WalletTransactions table.
         public async Task<bool> CheckWalletBalanceAsync(int userId, decimal amount)
         {
-            var user = await _userRepository.GetByIdAsync(userId);
-            return user != null && user.WalletBalance >= amount;
+            return await _walletService.HasSufficientBalanceAsync(userId, amount);
         }
 
 
@@ -445,22 +473,25 @@ namespace Sovva.Application.Services
         // ✅ MIDNIGHT JOB – CONFIRM SCHEDULED ORDERS FOR TODAY (MILKBASKET LOGIC)
         // This runs at 12:00 AM every night to confirm orders for TODAY's delivery
         // ----------------------------------------------------------------------------------------
-        public async Task ConfirmAllScheduledOrdersAsync()
+        public async Task<ProcessOrdersResponseDto> ConfirmAllScheduledOrdersAsync(DateOnly? targetDate = null)
         {
+            // ✅ FIX [D-1]: When targetDate is null (called from Hangfire), default to TomorrowIst.
+            // This ensures if the job runs at 11:59:59 PM IST, it correctly confirms for the next calendar day.
+            // If called from manual admin trigger, targetDate will be provided.
+            var deliveryDate = targetDate ?? _time.TomorrowIst;
             var istNow = _time.ToIst(_time.UtcNow);
             
-            // ✅ Job runs at 12:00 AM IST — TodayIst IS the delivery day
-            // No AddDays(1) needed — today = the day users receive their breakfast
-            var deliveryDate = _time.TodayIst;
+            _logger.LogInformation("[MIDNIGHT JOB] Starting confirmation for Date: {Date} IST (System Today: {Today} IST)", 
+                deliveryDate, _time.TodayIst);
             
-            _logger.LogInformation($"🌙 [MIDNIGHT JOB] Started at {istNow:yyyy-MM-dd HH:mm:ss} IST");
-            _logger.LogInformation($"🚚 Confirming orders for delivery on: {deliveryDate:yyyy-MM-dd}");
-            _logger.LogInformation($"⏰ UTC: {_time.UtcNow:yyyy-MM-dd HH:mm:ss} | IST: {istNow:yyyy-MM-dd HH:mm:ss}");
+            _logger.LogInformation("[MIDNIGHT JOB] Started at {IstNow} IST", istNow.ToString("yyyy-MM-dd HH:mm:ss"));
+            _logger.LogInformation("Confirming orders for delivery on: {DeliveryDate}", deliveryDate);
+            _logger.LogInformation("UTC: {UtcNow} | IST: {IstNow}", _time.UtcNow.ToString("yyyy-MM-dd HH:mm:ss"), istNow.ToString("yyyy-MM-dd HH:mm:ss"));
             
             // ✅ Pass DateOnly directly — no UTC range conversion needed
             var scheduledOrders = await _scheduledOrderRepository.GetScheduledOrdersForDateAsync(deliveryDate);
 
-            _logger.LogInformation($"📦 Found {scheduledOrders.Count} total orders for {deliveryDate:yyyy-MM-dd}");
+            _logger.LogInformation("Found {TotalOrders} total orders for {DeliveryDate}", scheduledOrders.Count, deliveryDate);
 
             // ✅ IDEMPOTENCY: Skip orders already "scheduled" or "processing" to prevent double-run on retry
             // Also include "failed" to allow retry on failed orders
@@ -470,7 +501,25 @@ namespace Sovva.Application.Services
                          || o.OrderStatus == ScheduledOrderStatus.Failed)
                 .ToList();
 
-            _logger.LogInformation($"📋 {pendingOrders.Count} orders pending confirmation");
+            _logger.LogInformation("{PendingCount} orders pending confirmation", pendingOrders.Count);
+
+            if (pendingOrders.Count == 0)
+            {
+                var alreadyProcessed = scheduledOrders.Count(o => o.OrderStatus == ScheduledOrderStatus.Processed);
+                return new ProcessOrdersResponseDto
+                {
+                    Success               = true,
+                    Message               = $"No pending orders for {deliveryDate:yyyy-MM-dd}",
+                    DeliveryDate          = deliveryDate.ToDateTime(TimeOnly.MinValue),
+                    OrdersFound           = scheduledOrders.Count,
+                    OrdersPending         = 0,
+                    OrdersAlreadyConfirmed = alreadyProcessed,
+                    OrdersConfirmed       = 0,
+                    OrdersFailed          = 0,
+                    Timestamp             = _time.UtcNow,
+                    Note                  = "Safe to call multiple times — idempotent"
+                };
+            }
 
             // ✅ OPTIMIZED: Batch load all users and addresses in single queries to kill N+1
             var authIds = pendingOrders.Select(o => o.AuthId).Distinct().ToList();
@@ -479,6 +528,11 @@ namespace Sovva.Application.Services
                 .Where(u => u.AuthMapping != null)
                 .ToDictionary(u => u.AuthMapping!.AuthId);
 
+            // ✅ FIX 13: Batch load idempotency data
+            var scheduledOrderIds = pendingOrders.Select(o => o.ScheduledOrderId).ToList();
+            var existingOrdersByScheduledOrderId = await _orderRepository.GetByScheduledOrderIdsAsync(scheduledOrderIds);
+            var existingTransactionsByScheduledOrderId = await _walletTransactionRepository.GetByScheduledOrderIdsAsync(scheduledOrderIds);
+
             int confirmedCount = 0;
             int failedCount = 0;
 
@@ -486,15 +540,13 @@ namespace Sovva.Application.Services
             {
                 // ✅ INDUSTRY PATTERN: Each order fully isolated
                 // One failure never affects the next order
-                var success = await ConfirmSingleOrderAsync(scheduledOrder, usersByAuthId);
+                var success = await ConfirmSingleOrderAsync(scheduledOrder, usersByAuthId, existingOrdersByScheduledOrderId, existingTransactionsByScheduledOrderId);
                 if (success) confirmedCount++;
                 else failedCount++;
             }
 
-            _logger.LogInformation($"🎉 [MIDNIGHT JOB] Complete!");
-            _logger.LogInformation($"   ✅ Confirmed: {confirmedCount}");
-            _logger.LogInformation($"   ❌ Failed: {failedCount}");
-            _logger.LogInformation($"   ⏭️  Already processed: {scheduledOrders.Count - pendingOrders.Count}");
+            _logger.LogInformation("[MIDNIGHT JOB] Complete! Confirmed: {Confirmed}, Failed: {Failed}, Already processed: {AlreadyProcessed}",
+                confirmedCount, failedCount, scheduledOrders.Count - pendingOrders.Count);
 
             // ✅ FIX: If EVERY order failed, throw so Hangfire records a job failure.
             //    This triggers Hangfire's retry policy and surfaces the problem in the dashboard.
@@ -506,6 +558,20 @@ namespace Sovva.Application.Services
                     $"Check logs for {deliveryDate:yyyy-MM-dd}. " +
                     $"Common causes: wallet balance, inactive delivery location, missing address.");
             }
+
+            return new ProcessOrdersResponseDto
+            {
+                Success               = confirmedCount > 0 || failedCount == 0,
+                Message               = $"Processed {confirmedCount} orders for {deliveryDate:yyyy-MM-dd}",
+                DeliveryDate          = deliveryDate.ToDateTime(TimeOnly.MinValue),
+                OrdersFound           = scheduledOrders.Count,
+                OrdersPending         = pendingOrders.Count,
+                OrdersAlreadyConfirmed = scheduledOrders.Count - pendingOrders.Count,
+                OrdersConfirmed       = confirmedCount,
+                OrdersFailed          = failedCount,
+                Timestamp             = _time.UtcNow,
+                Note                  = "Safe to call multiple times — idempotent"
+            };
         }
 
 
@@ -588,21 +654,23 @@ namespace Sovva.Application.Services
         // ----------------------------------------------------------------------------------------
         private async Task<bool> ConfirmSingleOrderAsync(
             ScheduledOrder scheduledOrder,
-            Dictionary<Guid, User> usersByAuthId)
+            Dictionary<Guid, User> usersByAuthId,
+            Dictionary<int, Order> existingOrders,
+            Dictionary<int, WalletTransaction> existingTransactions)
         {
             try
             {
                 _logger.LogInformation(
-                    "🔄 Processing order #{Id}", scheduledOrder.ScheduledOrderId);
+                    "Processing order #{Id}", scheduledOrder.ScheduledOrderId);
 
                 // ── STEP 1: Validate user ────────────────────────────────────────
                 if (!usersByAuthId.TryGetValue(scheduledOrder.AuthId, out var user))
                 {
                     _logger.LogWarning(
-                        "❌ User not found for order #{Id}",
+                        "User not found for order #{Id}",
                         scheduledOrder.ScheduledOrderId);
                     await _scheduledOrderRepository.MarkAsAsync(
-                        scheduledOrder.ScheduledOrderId, "failed");
+                        scheduledOrder.ScheduledOrderId, "Failed");
                     return false;
                 }
 
@@ -610,10 +678,10 @@ namespace Sovva.Application.Services
                 if (scheduledOrder.DeliveryAddressId == null)
                 {
                     _logger.LogWarning(
-                        "❌ No delivery address for order #{Id}",
+                        "No delivery address for order #{Id}",
                         scheduledOrder.ScheduledOrderId);
                     await _scheduledOrderRepository.MarkAsAsync(
-                        scheduledOrder.ScheduledOrderId, "failed");
+                        scheduledOrder.ScheduledOrderId, "Failed");
                     return false;
                 }
 
@@ -624,71 +692,115 @@ namespace Sovva.Application.Services
                     || !address.ServiceableLocation.IsActive)
                 {
                     _logger.LogWarning(
-                        "❌ Invalid/inactive address for order #{Id}",
+                        "Invalid/inactive address for order #{Id}",
                         scheduledOrder.ScheduledOrderId);
                     await _scheduledOrderRepository.MarkAsAsync(
-                        scheduledOrder.ScheduledOrderId, "failed");
+                        scheduledOrder.ScheduledOrderId, "Failed");
                     return false;
                 }
 
                 _logger.LogInformation(
-                    "📍 Address validated: {Area} — active: {Active}",
+                    "Address validated: {Area} — active: {Active}",
                     address.ServiceableLocation.Area,
                     address.ServiceableLocation.IsActive);
 
                 // ── STEP 3: IDEMPOTENCY — did a previous attempt create the Order? ──
-                var existingOrder = await _orderService
-                    .GetByScheduledOrderIdAsync(scheduledOrder.ScheduledOrderId);
+                // ✅ FIX 13: Look up from batch dictionary instead of DB
+                existingOrders.TryGetValue(scheduledOrder.ScheduledOrderId, out var existingOrder);
 
                 if (existingOrder != null)
                 {
-                    _logger.LogInformation(
-                        "♻️ Order #{OrderId} already exists — marking processed",
-                        existingOrder.OrderId);
+                    // ✅ FIX 13: Look up from batch dictionary instead of DB
+                    var walletTxExists = existingTransactions.ContainsKey(scheduledOrder.ScheduledOrderId);
+
+                    if (walletTxExists)
+                    {
+                        _logger.LogInformation(
+                            "Order #{OrderId} exists + wallet debited — marking processed",
+                            existingOrder.OrderId);
+                        await _scheduledOrderRepository.MarkAsProcessedAsync(
+                            scheduledOrder.ScheduledOrderId,
+                            existingOrder.OrderId,
+                            _time.UtcNow);
+                        return true;
+                    }
+                    else
+                    {
+                        // Order row exists but wallet was NOT debited (partial failure in prior run)
+                        // Use AtomicDebitAsync — single SQL that checks balance + inserts debit record
+                        _logger.LogWarning(
+                            "Order #{OrderId} exists but no wallet transaction found - completing payment now",
+                            existingOrder.OrderId);
+
+                        bool paymentSucceeded = await _walletService.AtomicDebitAsync(
+                            user.UserId,
+                            scheduledOrder.TotalPrice,
+                            $"Order #{existingOrder.OrderId} - {scheduledOrder.MealName}",
+                            scheduledOrder.ScheduledOrderId);
+
+                        if (!paymentSucceeded)
+                        {
+                            await _scheduledOrderRepository.MarkAsAsync(
+                                scheduledOrder.ScheduledOrderId, ScheduledOrderStatus.Cancelled.ToString());
+                            return false;
+                        }
+
+                        await _scheduledOrderRepository.MarkAsProcessedAsync(
+                            scheduledOrder.ScheduledOrderId,
+                            existingOrder.OrderId,
+                            _time.UtcNow);
+                        return true;
+                    }
+                }
+
+                // ── STEPS 4-6: Atomic Transaction ────────────────────────────────
+                // P0-1/P0-2 FIX: AtomicDebitAsync replaces the broken two-step flow.
+                // It does balance check + debit record insertion in a SINGLE SQL INSERT.
+                // The Order creation and status update still need a transaction wrapper
+                // for consistency — if Order creation fails, we need rollback.
+                await _unitOfWork.ExecuteInTransactionAsync(async () =>
+                {
+                    // ── STEP 4: Atomic wallet deduction + ledger write (single SQL) ──
+                    bool deducted = await _walletService.AtomicDebitAsync(
+                        user.UserId,
+                        scheduledOrder.TotalPrice,
+                        $"Scheduled Order #{scheduledOrder.ScheduledOrderId} - {scheduledOrder.MealName}",
+                        scheduledOrder.ScheduledOrderId);
+
+                    if (!deducted)
+                    {
+                        var currentBalance = await _walletService.GetUserBalanceAsync(user.UserId);
+                        throw new InsufficientBalanceException(scheduledOrder.TotalPrice, currentBalance);
+                    }
+
+                    // ── STEP 5: Create Order row ──
+                    var orderId = await _orderService.ConfirmScheduledOrderAsync(scheduledOrder);
+
+                    // ── STEP 6: Mark scheduled order processed ──
                     await _scheduledOrderRepository.MarkAsProcessedAsync(
                         scheduledOrder.ScheduledOrderId,
-                        existingOrder.OrderId,
+                        orderId,
                         _time.UtcNow);
-                    return true;
-                }
 
-                // ── STEP 4: Atomic wallet deduction ──────────────────────────────
-                bool deducted = await _userRepository
-                    .DeductWalletBalanceAtomicAsync(user.UserId, scheduledOrder.TotalPrice);
-
-                if (!deducted)
-                {
-                    _logger.LogWarning(
-                        "❌ Insufficient balance for order #{Id}. Required: ₹{Price}",
-                        scheduledOrder.ScheduledOrderId, scheduledOrder.TotalPrice);
-                    await _scheduledOrderRepository.MarkAsAsync(
-                        scheduledOrder.ScheduledOrderId, "cancelled");
-                    return false;
-                }
-
-                // ── STEP 5: Create Order row ──────────────────────────────────────
-                var orderId = await _orderService
-                    .ConfirmScheduledOrderAsync(scheduledOrder);
-
-                // ── STEP 6: Mark scheduled order processed — raw SQL, no EF tracker
-                await _scheduledOrderRepository.MarkAsProcessedAsync(
-                    scheduledOrder.ScheduledOrderId,
-                    orderId,
-                    _time.UtcNow);
-
-                _logger.LogInformation(
-                    "✅ Confirmed! Order #{OrderId} ← ScheduledOrder #{Id} — ₹{Price}",
-                    orderId, scheduledOrder.ScheduledOrderId, scheduledOrder.TotalPrice);
+                    _logger.LogInformation(
+                        "Confirmed Order #{OrderId} from ScheduledOrder #{Id} - {Price}",
+                        orderId, scheduledOrder.ScheduledOrderId, scheduledOrder.TotalPrice);
+                });
 
                 return true;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex,
-                    "❌ Exception confirming order #{Id}",
+                    "Exception confirming order #{Id}",
                     scheduledOrder.ScheduledOrderId);
-                await _scheduledOrderRepository.MarkAsAsync(
-                    scheduledOrder.ScheduledOrderId, "failed");
+
+                // For validation-like errors (e.g. insufficient balance), mark as failed so we don't keep retrying
+                if (ex is InsufficientBalanceException)
+                {
+                    await _scheduledOrderRepository.MarkAsAsync(scheduledOrder.ScheduledOrderId, "Failed");
+                }
+                
                 return false;
             }
         }

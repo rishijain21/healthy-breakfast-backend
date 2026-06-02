@@ -1,3 +1,5 @@
+using Sovva.Application.DTOs;
+using Sovva.Application.Helpers;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
 using Sovva.Application.Interfaces;
@@ -12,13 +14,16 @@ namespace Sovva.WebAPI.Controllers
     public class KitchenController : ControllerBase
     {
         private readonly IKitchenService _kitchenService;
+        private readonly IAppTimeProvider _time;
         private readonly ILogger<KitchenController> _logger;
 
         public KitchenController(
             IKitchenService kitchenService,
+            IAppTimeProvider time,
             ILogger<KitchenController> logger)
         {
             _kitchenService = kitchenService;
+            _time = time;
             _logger = logger;
         }
 
@@ -29,16 +34,8 @@ namespace Sovva.WebAPI.Controllers
         [HttpGet("today")]
         public async Task<IActionResult> GetTodaysOrders()
         {
-            try
-            {
-                var orders = await _kitchenService.GetOrdersForPreparationAsync();
-                return Ok(orders);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error fetching today's kitchen orders");
-                return StatusCode(500, "Error loading kitchen orders");
-            }
+            var orders = await _kitchenService.GetOrdersForPreparationAsync();
+            return Ok(ApiResponse.Ok(orders));
         }
 
         /// <summary>
@@ -48,50 +45,31 @@ namespace Sovva.WebAPI.Controllers
         [HttpGet("tomorrow")]
         public async Task<IActionResult> GetTomorrowOrders()
         {
-            try
-            {
-                var orders = await _kitchenService.GetOrdersForTomorrowAsync();
-                return Ok(orders);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error fetching tomorrow's kitchen orders");
-                return StatusCode(500, "Error loading kitchen orders");
-            }
+            var orders = await _kitchenService.GetOrdersForTomorrowAsync();
+            return Ok(ApiResponse.Ok(orders));
         }
 
         /// <summary>
-        /// Get orders for a specific date (for planning)
-        /// Format: YYYY-MM-DD (e.g., 2026-01-10)
+        /// Get orders for a specific date (Admin — kitchen planning)
         /// </summary>
+        /// <param name="dateString">Date in YYYY-MM-DD format, e.g. 2026-04-22</param>
         [HttpGet("date/{dateString}")]
         public async Task<IActionResult> GetOrdersByDate(string dateString)
         {
-            try
+            if (!DateTime.TryParseExact(dateString, "yyyy-MM-dd",
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out DateTime date))
             {
-                if (!DateTime.TryParse(dateString, out DateTime date))
-                {
-                    return BadRequest(new 
-                    { 
-                        success = false, 
-                        message = "Invalid date format. Please use YYYY-MM-DD format (e.g., 2026-01-10)" 
-                    });
-                }
-
-                _logger.LogInformation($"📅 Fetching kitchen orders for date: {date:yyyy-MM-dd}");
-
-                var orders = await _kitchenService.GetOrdersForDateAsync(date);
-                return Ok(orders);
+                return BadRequest(ApiResponse.Fail("BAD_REQUEST", "Invalid date format. Use YYYY-MM-DD (e.g. 2026-04-22)"));
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error fetching orders for date: {Date}", dateString);
-                return StatusCode(500, "Error loading orders");
-            }
+
+            _logger.LogInformation("Fetching kitchen orders for date: {Date:yyyy-MM-dd}", date);
+            var orders = await _kitchenService.GetOrdersForDateAsync(date);
+            return Ok(ApiResponse.Ok(orders));
         }
 
         /// <summary>
-        /// Mark order as prepared by kitchen
+        /// Mark an order as prepared (today's orders only)
         /// </summary>
         [HttpPut("{orderId}/mark-prepared")]
         public async Task<IActionResult> MarkOrderPrepared(int orderId)
@@ -99,26 +77,25 @@ namespace Sovva.WebAPI.Controllers
             try
             {
                 await _kitchenService.MarkOrderAsPreparedAsync(orderId);
-                
-                _logger.LogInformation($"✅ Order #{orderId} marked as prepared");
-                
-                return Ok(new 
-                { 
-                    success = true, 
-                    message = $"Order #{orderId} marked as prepared",
-                    orderId = orderId,
-                    timestamp = DateTime.UtcNow
-                });
+                _logger.LogInformation("Order #{OrderId} marked as prepared", orderId);
+                return Ok(ApiResponse.Ok(new
+                {
+                    orderId,
+                    isPrepared = true,
+                    preparedAt = _time.UtcNow
+                }));
+            }
+            catch (Sovva.Application.Exceptions.OrderNotFoundException ex)
+            {
+                return NotFound(ApiResponse.Fail("NOT_FOUND", ex.Message));
+            }
+            catch (Sovva.Application.Exceptions.OrderAlreadyPreparedException ex)
+            {
+                return Conflict(ApiResponse.Fail("CONFLICT", ex.Message));
             }
             catch (InvalidOperationException ex)
             {
-                _logger.LogWarning(ex, "Invalid operation for order {OrderId}", orderId);
-                return BadRequest(new { success = false, message = ex.Message });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error marking order {OrderId} as prepared", orderId);
-                return StatusCode(500, new { success = false, message = "Error updating order status" });
+                return BadRequest(ApiResponse.Fail("BAD_REQUEST", ex.Message));
             }
         }
 
@@ -129,16 +106,8 @@ namespace Sovva.WebAPI.Controllers
         [HttpGet("stats/today")]
         public async Task<IActionResult> GetTodayStats()
         {
-            try
-            {
-                var stats = await _kitchenService.GetTodayStatsAsync();
-                return Ok(stats);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error fetching kitchen stats");
-                return StatusCode(500, "Error loading stats");
-            }
+            var stats = await _kitchenService.GetTodayStatsAsync();
+            return Ok(ApiResponse.Ok(stats));
         }
 
         /// <summary>
@@ -147,16 +116,8 @@ namespace Sovva.WebAPI.Controllers
         [HttpGet("stats/tomorrow")]
         public async Task<IActionResult> GetTomorrowStats()
         {
-            try
-            {
-                var stats = await _kitchenService.GetTomorrowStatsAsync();
-                return Ok(stats);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error fetching tomorrow's kitchen stats");
-                return StatusCode(500, "Error loading stats");
-            }
+            var stats = await _kitchenService.GetTomorrowStatsAsync();
+            return Ok(ApiResponse.Ok(stats));
         }
     }
 }

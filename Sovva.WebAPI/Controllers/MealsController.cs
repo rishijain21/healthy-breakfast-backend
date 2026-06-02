@@ -11,6 +11,7 @@ namespace Sovva.WebAPI.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
+    [Microsoft.AspNetCore.RateLimiting.EnableRateLimiting("default")]
     public class MealsController : ControllerBase
     {
         private readonly IMealService _mealService;
@@ -29,12 +30,33 @@ namespace Sovva.WebAPI.Controllers
         // ✅ Public endpoint — no [Authorize] needed
         [HttpGet("public")]
         [AllowAnonymous]
-        [ProducesResponseType(typeof(List<MealDto>), 200)]
-        public async Task<IActionResult> GetPublicMeals()
+        [ProducesResponseType(typeof(PagedResult<MealDto>), 200)]
+        [ProducesResponseType(400)]
+        public async Task<IActionResult> GetPublicMeals(
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 20)
         {
-            var meals = await _mealService.GetActiveMealsAsync();
-            return Ok(meals);
+            if (pageSize > 50)
+                return BadRequest(ApiResponse.Fail("BAD_REQUEST", "Maximum page size is 50"));
+
+            var result = await _mealService.GetActiveMealsAsync(page, pageSize);
+            return Ok(ApiResponse.Ok(result));
         }
+
+        /// <summary>
+        /// Returns ALL active meals as a flat array (no pagination wrapper).
+        /// Used by the Angular menu component to avoid having to unwrap a paginated response.
+        /// </summary>
+        [HttpGet("public/all")]
+        [AllowAnonymous]
+        [ProducesResponseType(typeof(List<MealDto>), 200)]
+        public async Task<IActionResult> GetAllPublicMeals()
+        {
+            // Fetch up to 200 meals in one shot — menu never has more than that
+            var result = await _mealService.GetActiveMealsAsync(1, 200);
+            return Ok(ApiResponse.Ok(result.Items));
+        }
+
 
         // ✅ ADD THIS — meal details for logged-in users (meal builder)
         // ✅ FIX: Use user-facing method that returns MealWithDetailsDto (not AdminMealDetailDto)
@@ -50,9 +72,9 @@ namespace Sovva.WebAPI.Controllers
             var meal = meals.FirstOrDefault();
             
             if (meal == null)
-                return NotFound(new { message = $"Meal with ID {id} not found or not available" });
+                return NotFound(ApiResponse.Fail("NOT_FOUND", $"Meal with ID {id} not found or not available"));
 
-            return Ok(meal);
+            return Ok(ApiResponse.Ok(meal));
         }
 
         // ✅ ADD after GetMealDetails — batch meal details for logged-in users
@@ -61,99 +83,21 @@ namespace Sovva.WebAPI.Controllers
         [Authorize]
         public async Task<IActionResult> GetMealsBatchDetails([FromBody] BatchMealRequestDto request)
         {
-            if (request.MealIds == null || request.MealIds.Count == 0)
-                return BadRequest(new { message = "No meal IDs provided" });
+            if (request == null || request.MealIds == null || request.MealIds.Count == 0)
+                return BadRequest(ApiResponse.Fail("BAD_REQUEST", "No meal IDs provided"));
 
             if (request.MealIds.Count > 20)
-                return BadRequest(new { message = "Maximum 20 meals per batch request" });
+                return BadRequest(ApiResponse.Fail("BAD_REQUEST", "Maximum 20 meals per batch request"));
 
             // ✅ FIX 1: Use user-facing method that returns MealWithDetailsDto (not AdminMealDetailDto)
             // ✅ FIX 2: Single DB query (N+1 fixed via WHERE IN)
             // ✅ FIX 3: Duplicates removed and order preserved in service method
             // ✅ FIX 4: Removed redundant catch - GlobalExceptionMiddleware handles errors
             var meals = await _mealService.GetMealsBatchDetailsForUsersAsync(request.MealIds);
-            return Ok(meals);
+            return Ok(ApiResponse.Ok(meals));
         }
 
-        // ✅ FIX 9: Add authorization to legacy endpoints (or remove if not needed)
-        // These appear to be legacy endpoints - prefer the admin versions below
-        [HttpPost]
-        [Authorize(Roles = "Admin")]
-        public async Task<IActionResult> CreateMeal([FromBody] CreateMealDto dto)
-        {
-            var mealId = await _mealService.CreateMealAsync(dto);
-            return CreatedAtAction(nameof(GetMealById), new { id = mealId }, null);
-        }
-
-        [HttpGet("{id}")]
-        [Authorize(Roles = "Admin")]
-        public async Task<IActionResult> GetMealById(int id)
-        {
-            var meal = await _mealService.GetMealByIdAsync(id);
-            if (meal == null) return NotFound();
-            return Ok(meal);
-        }
-
-        [HttpPost("calculate-price")]
-        [Authorize]
-        public async Task<ActionResult<MealPriceResponseDto>> CalculateMealPrice([FromBody] MealPriceCalculationDto calculationDto)
-        {
-            try
-            {
-                var priceResponse = await _mealService.CalculateMealPriceAsync(calculationDto);
-                return Ok(priceResponse);
-            }
-            catch (ArgumentException ex)
-            {
-                return BadRequest(ex.Message);
-            }
-            catch (InvalidOperationException ex)
-            {
-                return BadRequest(ex.Message);
-            }
-        }
-
-        [HttpPost("validate-selection")]
-        [Authorize]
-        public async Task<ActionResult<bool>> ValidateIngredientSelection([FromBody] MealPriceCalculationDto calculationDto)
-        {
-            try
-            {
-                var isValid = await _mealService.ValidateIngredientSelectionAsync(
-                    calculationDto.MealId, 
-                    calculationDto.SelectedIngredients);
-                
-                return Ok(new { isValid, message = isValid ? "Selection is valid" : "Invalid ingredient selection" });
-            }
-            catch (ArgumentException ex)
-            {
-                return BadRequest(ex.Message);
-            }
-        }
-
-        [HttpPost("nutritional-summary")]
-        [Authorize]
-        public async Task<ActionResult> GetNutritionalSummary([FromBody] List<SelectedIngredientDto> ingredients)
-        {
-            try
-            {
-                var (calories, protein, fiber) = await _mealService.GetNutritionalSummaryAsync(ingredients);
-                
-                return Ok(new 
-                { 
-                    totalCalories = calories, 
-                    totalProtein = protein, 
-                    totalFiber = fiber,
-                    ingredientCount = ingredients.Count
-                });
-            }
-            catch (Exception ex)
-            {
-                return BadRequest(ex.Message);
-            }
-        }
-
-        // ========== NEW ADMIN ENDPOINTS ==========
+        // ========== ADMIN ENDPOINTS ==========
 
         /// <summary>
         /// Get paginated meals for admin dashboard
@@ -169,7 +113,7 @@ namespace Sovva.WebAPI.Controllers
             [FromQuery] int pageSize = 20)
         {
             var result = await _mealService.GetAllMealsForAdminPagedAsync(page, pageSize);
-            return Ok(result);
+            return Ok(ApiResponse.Ok(result));
         }
 
         /// <summary>
@@ -185,9 +129,21 @@ namespace Sovva.WebAPI.Controllers
         {
             var meal = await _mealService.GetMealDetailForAdminAsync(id);
             if (meal == null) 
-                return NotFound(new { message = $"Meal with ID {id} not found" });
+                return NotFound(ApiResponse.Fail("NOT_FOUND", $"Meal with ID {id} not found"));
             
-            return Ok(meal);
+            return Ok(ApiResponse.Ok(meal));
+        }
+
+        /// <summary>
+        /// Get categories with ingredients (Admin only)
+        /// </summary>
+        [HttpGet("admin/categories-with-ingredients")]
+        [Authorize(Roles = "Admin")]
+        [ProducesResponseType(typeof(List<CategoryWithIngredientsDto>), 200)]
+        public async Task<IActionResult> GetCategoriesWithIngredients()
+        {
+            var result = await _mealService.GetCategoriesWithIngredientsAsync();
+            return Ok(ApiResponse.Ok(result));
         }
 
         /// <summary>
@@ -202,7 +158,7 @@ namespace Sovva.WebAPI.Controllers
         public async Task<IActionResult> CreateMealWithOptions([FromBody] AdminCreateMealDto dto)
         {
             var mealId = await _mealService.CreateMealWithOptionsAsync(dto);
-            return CreatedAtAction(nameof(GetMealDetailForAdmin), new { id = mealId }, new { mealId, message = "Meal created successfully" });
+            return CreatedAtAction(nameof(GetMealDetailForAdmin), new { id = mealId }, ApiResponse.Ok(new { mealId, message = "Meal created successfully" }));
         }
 
         /// <summary>
@@ -214,9 +170,9 @@ namespace Sovva.WebAPI.Controllers
         {
             var success = await _mealService.UpdateMealAsync(id, dto);
             if (!success) 
-                return NotFound(new { message = $"Meal with ID {id} not found" });
+                return NotFound(ApiResponse.Fail("NOT_FOUND", $"Meal with ID {id} not found"));
             
-            return Ok(new { message = "Meal updated successfully" });
+            return Ok(ApiResponse.Ok(new { message = "Meal updated successfully" }));
         }
 
         /// <summary>
@@ -228,78 +184,38 @@ namespace Sovva.WebAPI.Controllers
         {
             var success = await _mealService.DeleteMealAsync(id);
             if (!success) 
-                return NotFound(new { message = $"Meal with ID {id} not found" });
+                return NotFound(ApiResponse.Fail("NOT_FOUND", $"Meal with ID {id} not found"));
             
-            return Ok(new { message = "Meal deleted successfully" });
+            return Ok(ApiResponse.Ok(new { message = "Meal deleted successfully" }));
         }
 
-        /// <summary>
-        /// Update meal completion status (Admin only) - PATCH endpoint
-        /// </summary>
-        [HttpPatch("admin/{id}/status")]
-        [Authorize(Roles = "Admin")]
-        public async Task<IActionResult> UpdateMealStatus(int id, [FromBody] UpdateMealStatusDto dto)
-        {
-            var updated = await _mealService.UpdateMealStatusAsync(id, dto.IsComplete);
 
-            if (!updated)
-                return NotFound(new { message = $"Meal with ID {id} not found." });
-
-            return Ok(new { id, isComplete = dto.IsComplete, message = "Meal status updated successfully." });
-        }
-
-        /// <summary>
-        /// Get all categories with their available ingredients (for meal builder UI)
-        /// </summary>
-        [HttpGet("admin/categories-with-ingredients")]
-        [Authorize(Roles = "Admin")]
-        public async Task<ActionResult<List<CategoryWithIngredientsDto>>> GetCategoriesWithIngredients()
-        {
-            var categories = await _mealService.GetCategoriesWithIngredientsAsync();
-            return Ok(categories);
-        }
-
-        /// <summary>
-        /// Get all meals with details (bulk endpoint for admin)
-        /// </summary>
-        [HttpGet("admin/all-with-details")]
-        [Authorize]
-        public async Task<ActionResult<List<AdminMealListDto>>> GetAllMealsWithDetails()
-        {
-            // ✅ Use existing service method — no direct DB access
-            var meals = await _mealService.GetAllMealsForAdminAsync();
-            return Ok(meals);
-        }
-
-        /// <summary>
-        /// Upload image for a meal (Admin only)
-        /// </summary>
         [HttpPost("admin/{id}/image")]
         [Authorize(Roles = "Admin")]
         public async Task<IActionResult> UploadMealImage(int id, IFormFile image)
         {
             if (image == null || image.Length == 0)
-                return BadRequest(new { message = "No image provided" });
+                return BadRequest(ApiResponse.Fail("BAD_REQUEST", "No image provided"));
 
             // ✅ FIX 8: Validate file type and size
             var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".webp" };
             var ext = Path.GetExtension(image.FileName).ToLower();
             
             if (!allowedExtensions.Contains(ext))
-                return BadRequest(new { message = "Only JPG, PNG, and WebP images are allowed" });
+                return BadRequest(ApiResponse.Fail("BAD_REQUEST", "Only JPG, PNG, and WebP images are allowed"));
             
             if (image.Length > 10 * 1024 * 1024) // 10MB limit
-                return BadRequest(new { message = "Image size cannot exceed 10MB" });
+                return BadRequest(ApiResponse.Fail("BAD_REQUEST", "Image size cannot exceed 10MB"));
 
             var fileName = $"meal-{id}/{Guid.NewGuid():N}{ext}";
             var imageUrl = await _storageService.UploadImageAsync(image, fileName);
 
             // ✅ Use service method instead of direct DB access
             var success = await _mealService.UpdateMealImageAsync(id, imageUrl);
-            if (!success) return NotFound(new { message = $"Meal {id} not found" });
+            if (!success) return NotFound(ApiResponse.Fail("NOT_FOUND", $"Meal {id} not found"));
 
             _logger.LogInformation("Image uploaded for meal {MealId}: {Url}", id, imageUrl);
-            return Ok(new { imageUrl, message = "Image uploaded successfully" });
+            return Ok(ApiResponse.Ok(new { imageUrl, message = "Image uploaded successfully" }));
         }
 
         /// <summary>
@@ -312,15 +228,15 @@ namespace Sovva.WebAPI.Controllers
             // ✅ Use service method to get existing URL and clear it
             var existingUrl = await _mealService.DeleteMealImageAsync(id);
             if (existingUrl == null)
-                return NotFound(new { message = $"Meal {id} not found" });
+                return NotFound(ApiResponse.Fail("NOT_FOUND", $"Meal {id} not found"));
             if (string.IsNullOrEmpty(existingUrl))
-                return Ok(new { message = "No image to delete" });
+                return Ok(ApiResponse.Ok(new { message = "No image to delete" }));
 
             // Delete from storage
             await _storageService.DeleteImageAsync(existingUrl);
 
             _logger.LogInformation("Image deleted for meal {MealId}", id);
-            return Ok(new { message = "Image deleted successfully" });
+            return Ok(ApiResponse.Ok(new { message = "Image deleted successfully" }));
         }
     }
 }

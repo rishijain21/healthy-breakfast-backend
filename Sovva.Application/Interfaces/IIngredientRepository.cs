@@ -11,7 +11,7 @@ namespace Sovva.Application.Interfaces
         Task<IEnumerable<Ingredient>> GetByCategoryIdAsync(int categoryId);
         Task<Ingredient?> GetByIdAsync(int id);
         Task<Ingredient?> GetByIdWithCategoryAsync(int id);
-        Task<List<Ingredient>> GetByIdsAsync(List<int> ids);
+        Task<Dictionary<int, Ingredient>> GetByIdsAsync(IEnumerable<int> ids);
         
         // Create operations
         Task AddIngredientAsync(Ingredient ingredient);

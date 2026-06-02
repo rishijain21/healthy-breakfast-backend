@@ -14,10 +14,12 @@ namespace Sovva.Infrastructure.Data.Configurations
             builder.Property(e => e.Name).IsRequired().HasMaxLength(200);
             builder.Property(e => e.Email).IsRequired().HasMaxLength(300);
             builder.Property(e => e.Phone).IsRequired().HasMaxLength(20);
-            builder.Property(e => e.AccountStatus).IsRequired().HasMaxLength(50);
+            builder.Property(e => e.AccountStatus)
+                .HasConversion<string>()
+                .IsRequired()
+                .HasMaxLength(50);
             builder.Property(e => e.WalletBalance)
-                .HasColumnType("decimal(12,2)")
-                .IsConcurrencyToken();
+                .HasColumnType("decimal(12,2)");
 
             builder.Property(e => e.Role)
                 .HasConversion<string>()

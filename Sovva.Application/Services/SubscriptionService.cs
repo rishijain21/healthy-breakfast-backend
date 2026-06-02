@@ -2,10 +2,10 @@
 
 using System;
 using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations;
-using System.ComponentModel.DataAnnotations.Schema;
 using System.Linq;
 using System.Threading.Tasks;
+using Sovva.Application.Exceptions;
+using Sovva.Domain.Constants;
 using Sovva.Application.DTOs;
 using Sovva.Application.Helpers;
 using Sovva.Application.Interfaces;
@@ -18,47 +18,57 @@ namespace Sovva.Application.Services
     public class SubscriptionService : ISubscriptionService
     {
         private readonly ISubscriptionRepository _subscriptionRepository;
-        private readonly IUserRepository _userRepository;
         private readonly IUserMealRepository _userMealRepository;
-        private readonly IMealRepository _mealRepository;  // ✅ ADD: For auto-find-or-create
+        private readonly IMealRepository _mealRepository;
         private readonly IUserAddressRepository _userAddressRepository;
         private readonly IScheduledOrderRepository _scheduledOrderRepository;
         private readonly IIngredientRepository _ingredientRepository;
         private readonly IUserMealIngredientRepository _userMealIngredientRepository;
+        private readonly IWalletTransactionService _walletTransactionService;
         private readonly IAppTimeProvider _time;
         private readonly ILogger<SubscriptionService> _logger;
         private readonly IUserLoader _userLoader;
+        private readonly IUnitOfWork _unitOfWork;
 
         public SubscriptionService(
             ISubscriptionRepository subscriptionRepository,
-            IUserRepository userRepository,
             IUserMealRepository userMealRepository,
-            IMealRepository mealRepository,  // ✅ ADD: For auto-find-or-create
+            IMealRepository mealRepository,
             IUserAddressRepository userAddressRepository,
             IScheduledOrderRepository scheduledOrderRepository,
             IIngredientRepository ingredientRepository,
             IUserMealIngredientRepository userMealIngredientRepository,
+            IWalletTransactionService walletTransactionService,
             IAppTimeProvider time,
             ILogger<SubscriptionService> logger,
-            IUserLoader userLoader)
+            IUserLoader userLoader,
+            IUnitOfWork unitOfWork)
         {
             _subscriptionRepository = subscriptionRepository;
-            _userRepository = userRepository;
             _userMealRepository = userMealRepository;
-            _mealRepository = mealRepository;  // ✅ ADD
+            _mealRepository = mealRepository;
             _userAddressRepository = userAddressRepository;
             _scheduledOrderRepository = scheduledOrderRepository;
             _ingredientRepository = ingredientRepository;
             _userMealIngredientRepository = userMealIngredientRepository;
+            _walletTransactionService = walletTransactionService;
             _time = time;
             _logger = logger;
             _userLoader = userLoader;
+            _unitOfWork = unitOfWork;
         }
 
-        public async Task<IEnumerable<SubscriptionDto>> GetAllSubscriptionsAsync()
+        public async Task<PagedResult<SubscriptionDto>> GetAllSubscriptionsAsync(int page = 1, int pageSize = 50)
         {
-            var subscriptions = await _subscriptionRepository.GetAllAsync();
-            return subscriptions.Select(MapToDto);
+            var (subscriptions, totalCount) = await _subscriptionRepository.GetAllWithCountAsync(page, pageSize);
+            
+            return new PagedResult<SubscriptionDto>
+            {
+                Items = subscriptions.Select(MapToDto).ToList(),
+                TotalCount = totalCount,
+                Page = page,
+                PageSize = pageSize
+            };
         }
 
         public async Task<SubscriptionDto?> GetSubscriptionByIdAsync(int subscriptionId)
@@ -81,238 +91,246 @@ namespace Sovva.Application.Services
 
         public async Task<SubscriptionDto> CreateSubscriptionAsync(CreateSubscriptionInternalDto dto)
         {
-            // ✅ FIXED: Load user WITH AuthMapping eagerly
             var user = await _userLoader.GetUserWithAuthMappingAsync(dto.UserId);
             if (user == null)
-                throw new ArgumentException("User not found");
+                throw new UserNotFoundException(dto.UserId);
 
-            // ✅ FIX BUG 5: Security check - validate user owns their account (fail fast)
             if (user.UserId != dto.UserId)
             {
-                _logger.LogWarning(
-                    "❌ Security violation: User {UserId} attempted to subscribe with invalid user account",
-                    dto.UserId);
-                
-                throw new UnauthorizedAccessException(
-                    "Invalid user account");
+                _logger.LogWarning("Security violation: User {UserId} attempted to subscribe with invalid user account", dto.UserId);
+                throw new UnauthorizedAccessException("Invalid user account");
             }
 
-            // ✅ FIX BUG 2: Validate meal exists BEFORE duplicate check (fail fast)
-            var meal = await _mealRepository.GetByIdAsync(dto.MealId);
-            if (meal == null)
-                throw new ArgumentException("Meal not found");
+            if (!dto.MealId.HasValue && !dto.UserMealId.HasValue)
+                throw new ArgumentException("Either MealId or UserMealId must be provided");
+            if (dto.MealId.HasValue && dto.UserMealId.HasValue)
+                throw new ArgumentException("Cannot provide both MealId and UserMealId");
 
-            // ✅ FIX BUG 1: Check for duplicate subscription BEFORE creating UserMeal
-            // Uses MealId to check any active subscription for this meal (not just current date range)
-            _logger.LogInformation("🔍 Checking for existing subscription: UserId={UserId}, MealId={MealId}", dto.UserId, dto.MealId);
-            
-            var existingSubscription = await _subscriptionRepository.GetAnyActiveSubscriptionByMealIdAsync(
-                dto.UserId, 
-                dto.MealId
-            );
-            
-            if (existingSubscription != null)
+            Meal? meal = null;
+            UserMeal? userMeal = null;
+
+            if (dto.MealId.HasValue)
             {
-                _logger.LogWarning(
-                    "❌ Duplicate subscription attempt: User {UserId} tried to subscribe to Meal {MealId} again. Existing subscription ID: {ExistingSubId}",
-                    dto.UserId, dto.MealId, existingSubscription.SubscriptionId);
-                
-                throw new InvalidOperationException(
-                    $"You already have an active subscription for '{meal.MealName}'. " +
-                    "Please edit your existing subscription instead of creating a new one."
-                );
+                meal = await _mealRepository.GetByIdAsync(dto.MealId.Value);
+                if (meal == null) throw new ArgumentException("Meal not found");
+            }
+            else
+            {
+                userMeal = await _userMealRepository.GetByIdAsync(dto.UserMealId!.Value);
+                if (userMeal == null || userMeal.UserId != dto.UserId) 
+                    throw new ArgumentException("Custom meal not found or unauthorized");
+                meal = await _mealRepository.GetByIdAsync(userMeal.MealId);
+                if (meal == null) throw new ArgumentException("Base meal not found for custom meal");
             }
 
-            // ✅ FIX BUG 1: Now safe to look up or create UserMeal AFTER duplicate check passes
-            var userMeal = await _userMealRepository.GetByUserIdAndMealIdAsync(dto.UserId, dto.MealId);
-
-            if (userMeal == null)
+            var finalSubscription = await _unitOfWork.ExecuteInTransactionAsync(async () =>
             {
-                userMeal = new UserMeal
+                try
                 {
-                    UserId = dto.UserId,
-                    MealId = dto.MealId,
-                    MealName = meal.MealName,
-                    TotalPrice = meal.BasePrice,
-                    CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow
-                };
-                await _userMealRepository.AddAsync(userMeal);
-                await _userMealRepository.SaveChangesAsync();
-            }
-
-            // Update the UserMealId in the DTO for downstream usage
-            dto.UserMealId = userMeal.UserMealId;
-
-            // ✅ Check for existing active subscription using the new simpler method (already validated but safe to check)
-            _logger.LogInformation("🔍 Final check: UserId={UserId}, UserMealId={UserMealId}", dto.UserId, dto.UserMealId);
-            
-            var checkSubscription = await _subscriptionRepository.GetAnyActiveSubscriptionByUserMealIdAsync(
-                dto.UserId, 
-                dto.UserMealId
-            );
-            
-            if (checkSubscription != null)
-            {
-                _logger.LogWarning(
-                    "❌ Duplicate subscription attempt: User {UserId} tried to subscribe to UserMeal {UserMealId} again. Existing subscription ID: {ExistingSubId}",
-                    dto.UserId, dto.UserMealId, checkSubscription.SubscriptionId);
+                    // 1. Check for duplicate subscription
+                    Subscription? existingSubscription = null;
+                    if (dto.MealId.HasValue)
+                    {
+                        existingSubscription = await _subscriptionRepository.GetAnyActiveSubscriptionByMealIdAsync(dto.UserId, dto.MealId.Value);
+                    }
+                    else
+                    {
+                        existingSubscription = await _subscriptionRepository.GetAnyActiveSubscriptionByUserMealIdAsync(dto.UserId, dto.UserMealId!.Value);
+                    }
                     
-                throw new InvalidOperationException(
-                    $"You already have an active subscription for '{userMeal.MealName}'. " +
-                    "Please edit your existing subscription instead of creating a new one."
-                );
-            }
+                    if (existingSubscription != null)
+                    {
+                        throw new DuplicateSubscriptionException();
+                    }
 
-            // ✅ ADD: Security check - ensure user owns this meal
-            if (userMeal.UserId != dto.UserId)
-            {
-                _logger.LogWarning(
-                    "❌ Security violation: User {UserId} attempted to subscribe to UserMeal {UserMealId} owned by {OwnerId}",
-                    dto.UserId, dto.UserMealId, userMeal.UserId);
+                    // 2. Get primary address
+                    var primaryAddress = await _userAddressRepository.GetPrimaryAddressAsync(dto.UserId);
+                    if (primaryAddress == null)
+                    {
+                        throw new AddressNotFoundException(dto.UserId, "Please set a default delivery address before creating a subscription");
+                    }
+
+                    // 4. Validate dates
+                    if (dto.StartDate >= dto.EndDate)
+                        throw new ArgumentException("Start date must be before end date");
+
+                    // 5. Frequency validation
+                    if (dto.Frequency == SubscriptionFrequency.Weekly)
+                    {
+                        if (dto.WeeklySchedule == null || !dto.WeeklySchedule.Any())
+                            throw new ArgumentException("Weekly schedule is required for Weekly subscriptions");
+                    }
+
+                    // 6. Create Subscription
+                    var subscription = new Subscription
+                    {
+                        UserId = dto.UserId,
+                        MealId = dto.MealId,
+                        UserMealId = dto.UserMealId,
+                        AgreedPrice = dto.MealId.HasValue ? meal.BasePrice : userMeal!.TotalPrice,
+                        Frequency = dto.Frequency,
+                        StartDate = dto.StartDate,
+                        EndDate = dto.EndDate,
+                        IsActive = dto.IsActive,
+                        DeliveryAddressId = primaryAddress.Id,
+                        NextScheduledDate = CalculateInitialNextDeliveryDate(dto.StartDate, dto.Frequency, dto.WeeklySchedule)
+                    };
+
+                    var createdSubscription = await _subscriptionRepository.CreateAsync(subscription);
+
+                    // 7. Add Schedules
+                    if (dto.Frequency == SubscriptionFrequency.Weekly && dto.WeeklySchedule != null)
+                    {
+                        var schedules = dto.WeeklySchedule.Select(s => new SubscriptionSchedule
+                        {
+                            SubscriptionId = createdSubscription.SubscriptionId,
+                            DayOfWeek = s.DayOfWeek,
+                            Quantity = s.Quantity
+                        });
+
+                        await _subscriptionRepository.AddSchedulesAsync(createdSubscription.SubscriptionId, schedules);
+                    }
+
+                    // 8. Create first scheduled order
+                    var firstOrderResult = await CreateFirstScheduledOrderAsync(
+                        createdSubscription, 
+                        user, 
+                        userMeal, 
+                        meal,
+                        primaryAddress
+                    );
+
+                    string? firstOrderWarning = null;
+                    if (!firstOrderResult.Success)
+                    {
+                        _logger.LogWarning("Subscription created but first order failed: {Error}", firstOrderResult.Error);
+                        if (firstOrderResult.Error?.Contains("No ingredients") == true)
+                        {
+                            firstOrderWarning = "Subscription created. First delivery will be scheduled once meal ingredients are configured by admin.";
+                        }
+                    }
                     
-                throw new UnauthorizedAccessException(
-                    "You can only subscribe to your own meals"
-                );
-            }
+                    // ✅ FIX: Attach navigation properties so MapToDto has data to populate MealName, MealPrice, etc.
+                    createdSubscription.User = user;
+                    createdSubscription.Meal = meal;
+                    createdSubscription.UserMeal = userMeal;
 
-            _logger.LogInformation($"✅ Validation passed. Creating new subscription for UserMeal {dto.UserMealId}");
-
-            // ✅ ADD: Get user's primary address
-            var primaryAddress = await _userAddressRepository.GetPrimaryAddressAsync(dto.UserId);
-            if (primaryAddress == null)
-            {
-                throw new InvalidOperationException(
-                    "Please set a default delivery address before creating a subscription"
-                );
-            }
-
-            if (dto.StartDate >= dto.EndDate)
-                throw new ArgumentException("Start date must be before end date");
-
-            if (dto.Frequency == SubscriptionFrequency.Weekly)
-            {
-                if (dto.WeeklySchedule == null || !dto.WeeklySchedule.Any())
-                {
-                    throw new ArgumentException("Weekly schedule is required for Weekly subscriptions");
+                    var dtoResult = MapToDto(createdSubscription);
+                    dtoResult.Warning = firstOrderWarning;
+                    return dtoResult;
                 }
-
-                if (dto.WeeklySchedule.Any(s => s.DayOfWeek < 0 || s.DayOfWeek > 6))
+                catch (DuplicateSubscriptionException)
                 {
-                    throw new ArgumentException("DayOfWeek must be between 0 (Sunday) and 6 (Saturday)");
+                    // ✅ SOLID-2 FIX: Re-throw domain exception from Infrastructure layer
+                    // The duplicate key catch now lives in SubscriptionRepository.CreateAsync
+                    throw;
                 }
+            });
 
-                if (dto.WeeklySchedule.Any(s => s.Quantity <= 0))
-                {
-                    throw new ArgumentException("Quantity must be greater than 0");
-                }
-
-                var duplicateDays = dto.WeeklySchedule
-                    .GroupBy(s => s.DayOfWeek)
-                    .Where(g => g.Count() > 1)
-                    .Select(g => ((DayOfWeek)g.Key).ToString());
-                    
-                if (duplicateDays.Any())
-                {
-                    throw new ArgumentException($"Duplicate days found: {string.Join(", ", duplicateDays)}");
-                }
-            }
-
-            var subscription = new Subscription
-            {
-                UserId = dto.UserId,
-                UserMealId = dto.UserMealId,
-                Frequency = dto.Frequency,
-                StartDate = dto.StartDate,
-                EndDate = dto.EndDate,
-                Active = dto.Active,
-                DeliveryAddressId = primaryAddress.Id, // ✅ ADD: Link to primary address
-                NextScheduledDate = CalculateInitialNextDeliveryDate(dto.StartDate, dto.Frequency, dto.WeeklySchedule)
-            };
-
-            var createdSubscription = await _subscriptionRepository.CreateAsync(subscription);
-
-            if (dto.Frequency == SubscriptionFrequency.Weekly && dto.WeeklySchedule != null)
-            {
-                var now = DateTime.UtcNow;
-                var schedules = dto.WeeklySchedule.Select(s => new SubscriptionSchedule
-                {
-                    SubscriptionId = createdSubscription.SubscriptionId,
-                    DayOfWeek = s.DayOfWeek,
-                    Quantity = s.Quantity,
-                    CreatedAt = now,
-                    UpdatedAt = now
-                });
-
-                await _subscriptionRepository.AddSchedulesAsync(createdSubscription.SubscriptionId, schedules);
-            }
-
-            // ✅ NEW: Create first scheduled order for immediate visibility
-            _logger.LogInformation("Creating first scheduled order - Subscription: {SubscriptionId}, User: {UserId}, UserMeal: {UserMealId}",
-                createdSubscription.SubscriptionId, user.UserId, userMeal.UserMealId);
-
-            var firstOrderResult = await CreateFirstScheduledOrderAsync(
-                createdSubscription, 
-                user,              // ✅ Pass explicitly
-                userMeal,          // ✅ Pass explicitly
-                primaryAddress     // ✅ Pass explicitly
-            );
-
-            _logger.LogInformation("First scheduled order created - Success: {Success}, Error: {Error}",
-                firstOrderResult.Success, firstOrderResult.Error ?? "null");
-
-            // ✅ Log result but don't fail subscription creation
-            if (!firstOrderResult.Success)
-            {
-                _logger.LogWarning($"⚠️ Subscription created but first order failed: {firstOrderResult.Error}");
-            }
-
-            var result = await _subscriptionRepository.GetByIdAsync(createdSubscription.SubscriptionId);
-            return MapToDto(result!);
+            return finalSubscription;
         }
 
         // ✅ Return result object instead of throwing
         private async Task<(bool Success, string? Error)> CreateFirstScheduledOrderAsync(
             Subscription subscription,
             User user,
-            UserMeal userMeal,
+            UserMeal? userMeal,
+            Meal meal,
             UserAddress deliveryAddress)
         {
-            // ✅ FIX 10: Remove debug logging - use proper logging
-            _logger.LogInformation("CreateFirstScheduledOrderAsync called - SubscriptionId: {SubscriptionId}, UserId: {UserId}, UserMealId: {UserMealId}, MealName: {MealName}",
-                subscription.SubscriptionId, user.UserId, userMeal.UserMealId, userMeal.MealName);
+            // FIX Bug 1: userMeal is null for fixed-meal subscriptions — guard against NullReferenceException
+            _logger.LogInformation(
+                "CreateFirstScheduledOrderAsync called - SubscriptionId: {SubscriptionId}, UserId: {UserId}, UserMealId: {UserMealId}, MealName: {MealName}",
+                subscription.SubscriptionId,
+                user.UserId,
+                subscription.UserMealId?.ToString() ?? "(fixed meal)",
+                subscription.MealId.HasValue ? meal.MealName : userMeal?.MealName ?? "(unknown)");
             
             try
             {
-                _logger.LogInformation($"📦 Creating first order for subscription #{subscription.SubscriptionId}");
+                _logger.LogInformation($"Creating first order for subscription #{subscription.SubscriptionId}");
 
-                // Load ingredients from UserMeal
-                var ingredients = await _userMealIngredientRepository.GetByUserMealIdAsync(userMeal.UserMealId);
-                
-                _logger.LogInformation("Loaded {IngredientCount} ingredients from UserMeal #{UserMealId}", ingredients.Count(), userMeal.UserMealId);
-                
-                if (!ingredients.Any())
+                var scheduledOrderIngredients = new List<ScheduledOrderIngredient>();
+                decimal totalPrice = subscription.AgreedPrice; // Base price
+
+                if (subscription.UserMealId.HasValue)
                 {
-                    var error = $"No ingredients found for UserMeal #{userMeal.UserMealId}";
-                    _logger.LogWarning("Error in CreateFirstScheduledOrderAsync for subscription {SubscriptionId}: {Error}", subscription.SubscriptionId, error);
-                    return (false, error);
-                }
+                    var ingredients = await _userMealIngredientRepository.GetByUserMealIdAsync(subscription.UserMealId.Value);
+                    if (!ingredients.Any()) return (false, $"No ingredients found for UserMeal #{subscription.UserMealId.Value}");
+                    
+                    var ingredientIds = ingredients.Select(i => i.IngredientId).ToList();
+                    var ingredientMap = await _ingredientRepository.GetByIdsAsync(ingredientIds);
 
-                _logger.LogInformation($"✅ Found {ingredients.Count()} ingredients");
+                    foreach (var umi in ingredients)
+                    {
+                        if (ingredientMap.TryGetValue(umi.IngredientId, out var ing))
+                        {
+                            var itemTotal = ing.Price * umi.Quantity;
+                            totalPrice += itemTotal;
+                            scheduledOrderIngredients.Add(new ScheduledOrderIngredient
+                            {
+                                IngredientId = ing.IngredientId,
+                                Quantity = umi.Quantity,
+                                UnitPrice = ing.Price,
+                                TotalPrice = itemTotal
+                            });
+                        }
+                    }
+                }
+                else
+                {
+                    // Fixed meal
+                    var mealWithDetails = await _mealRepository.GetByIdWithOptionsAsync(subscription.MealId!.Value);
+                    var defaultOption = mealWithDetails?.MealOptions?.FirstOrDefault();
+                    if (defaultOption != null && defaultOption.MealOptionIngredients.Any())
+                    {
+                        var ingredientIds = defaultOption.MealOptionIngredients.Select(i => i.IngredientId).ToList();
+                        var ingredientMap = await _ingredientRepository.GetByIdsAsync(ingredientIds);
+
+                        foreach (var moi in defaultOption.MealOptionIngredients)
+                        {
+                            if (ingredientMap.TryGetValue(moi.IngredientId, out var ing))
+                            {
+                                var itemTotal = ing.Price * 1;
+                                totalPrice += itemTotal;
+                                scheduledOrderIngredients.Add(new ScheduledOrderIngredient
+                                {
+                                    IngredientId = ing.IngredientId,
+                                    Quantity = 1,
+                                    UnitPrice = ing.Price,
+                                    TotalPrice = itemTotal
+                                });
+                            }
+                        }
+                    }
+                    else
+                    {
+                        return (false, $"No ingredients configured for master meal #{subscription.MealId.Value}");
+                    }
+                }
 
                 // Calculate first delivery date
                 var firstDeliveryDate = CalculateFirstDeliveryDate(subscription);
-                _logger.LogInformation($"📅 First delivery: {firstDeliveryDate:yyyy-MM-dd}");
+                _logger.LogInformation($"First delivery: {firstDeliveryDate:yyyy-MM-dd}");
 
-                // Build scheduled order (async)
-                var scheduledOrder = await BuildScheduledOrder(
-                    subscription, 
-                    user, 
-                    userMeal, 
-                    deliveryAddress, 
-                    ingredients,
-                    firstDeliveryDate
-                );
+                // Build scheduled order
+                var deliveryDateTimeUtc = _time.ToUtc(firstDeliveryDate.ToDateTime(TimeOnly.MinValue));
+                
+                var scheduledOrder = new ScheduledOrder
+                {
+                    UserId = subscription.UserId,
+                    AuthId = user.AuthMapping?.AuthId ?? throw new Sovva.Domain.Exceptions.BusinessRuleException("User has no AuthMapping"),
+                    MealName = subscription.MealId.HasValue ? meal.MealName : userMeal!.MealName,
+                    ScheduledFor = DateOnly.FromDateTime(deliveryDateTimeUtc),
+                    DeliveryTimeSlot = DeliveryConstants.DefaultTimeSlot,
+                    TotalPrice = totalPrice,
+                    OrderStatus = ScheduledOrderStatus.Scheduled,
+                    CanModify = true,
+                    ExpiresAt = deliveryDateTimeUtc.AddDays(1),
+                    DeliveryAddressId = deliveryAddress.Id,
+                    SubscriptionId = subscription.SubscriptionId,
+                    Ingredients = scheduledOrderIngredients
+                };
 
                 // Save to database
                 var created = await _scheduledOrderRepository.CreateAsync(scheduledOrder);
@@ -349,7 +367,7 @@ namespace Sovva.Application.Services
                 
                 if (!isScheduledDay)
                 {
-                    _logger.LogInformation($"⏭️ Tomorrow is not a scheduled day, finding next delivery date");
+                    _logger.LogInformation($"Tomorrow is not a scheduled day, finding next delivery date");
                     
                     // Find next scheduled day
                     var scheduledDays = subscription.WeeklySchedule.Select(s => s.DayOfWeek).ToList();
@@ -360,154 +378,132 @@ namespace Sovva.Application.Services
             return firstDeliveryDate;
         }
 
-        // ✅ Helper method to build scheduled order
-        private async Task<ScheduledOrder> BuildScheduledOrder(
-            Subscription subscription,
-            User user,
-            UserMeal userMeal,
-            UserAddress deliveryAddress,
-            IEnumerable<UserMealIngredient> ingredients,
-            DateOnly firstDeliveryDate)
-        {
-            // Calculate total price
-            decimal totalPrice = 0;
-            var scheduledOrderIngredients = new List<ScheduledOrderIngredient>();
 
-            // ✅ OPTIMIZED: Batch load all ingredients in single query to kill N+1
-            var ingredientList = ingredients.ToList();
-            var ingredientIds = ingredientList.Select(i => i.IngredientId).ToList();
-            var allIngredients = await _ingredientRepository.GetByIdsAsync(ingredientIds);
-            var ingredientMap = allIngredients.ToDictionary(i => i.IngredientId);
-
-            foreach (var userMealIngredient in ingredientList)
-            {
-                if (!ingredientMap.TryGetValue(userMealIngredient.IngredientId, out var ingredient))
-                    continue;
-
-                var quantity = userMealIngredient.Quantity;
-                var unitPrice = ingredient.Price;
-                var itemTotal = unitPrice * quantity;
-                
-                totalPrice += itemTotal;
-
-                scheduledOrderIngredients.Add(new ScheduledOrderIngredient
-                {
-                    IngredientId = ingredient.IngredientId,
-                    Quantity = quantity,
-                    UnitPrice = unitPrice,
-                    TotalPrice = itemTotal,
-                    CreatedAt = DateTime.UtcNow
-                });
-            }
-
-            var deliveryDateTime = firstDeliveryDate.ToDateTime(TimeOnly.MinValue);
-            var deliveryDateTimeUtc = DateTime.SpecifyKind(deliveryDateTime, DateTimeKind.Utc);
-
-            return new ScheduledOrder
-            {
-                UserId = subscription.UserId,
-                AuthId = user.AuthMapping?.AuthId ?? Guid.Empty, // ✅ Get AuthId from UserAuthMapping
-                MealName = userMeal.MealName,
-                ScheduledFor = DateOnly.FromDateTime(deliveryDateTimeUtc),  // DateTime → DateOnly
-                DeliveryTimeSlot = "8:00 AM",
-                TotalPrice = totalPrice,
-                OrderStatus = ScheduledOrderStatus.Scheduled,
-                CanModify = true,
-                ExpiresAt = deliveryDateTimeUtc.AddDays(1),
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow,
-                DeliveryAddressId = deliveryAddress.Id,
-                SubscriptionId = subscription.SubscriptionId, // ✅ Link to subscription
-                Ingredients = scheduledOrderIngredients
-            };
-        }
 
         public async Task<SubscriptionDto?> UpdateSubscriptionAsync(int subscriptionId, UpdateSubscriptionDto dto)
         {
-            var subscription = await _subscriptionRepository.GetByIdAsync(subscriptionId);
-            if (subscription == null)
-                return null;
-
-            if (dto.Frequency.HasValue)
-                subscription.Frequency = dto.Frequency.Value;
-
-            if (dto.StartDate.HasValue)
-                subscription.StartDate = dto.StartDate.Value;
-
-            if (dto.EndDate.HasValue)
-                subscription.EndDate = dto.EndDate.Value;
-
-            if (dto.Active.HasValue)
-                subscription.Active = dto.Active.Value;
-
-            if (subscription.StartDate >= subscription.EndDate)
-                throw new ArgumentException("Start date must be before end date");
-
-            if (dto.WeeklySchedule != null && subscription.Frequency == SubscriptionFrequency.Weekly)
+            var result = await _unitOfWork.ExecuteInTransactionAsync(async () =>
             {
-                if (dto.WeeklySchedule.Any(s => s.DayOfWeek < 0 || s.DayOfWeek > 6))
-                {
-                    throw new ArgumentException("DayOfWeek must be between 0 (Sunday) and 6 (Saturday)");
-                }
+                var subscription = await _subscriptionRepository.GetByIdAsync(subscriptionId);
+                if (subscription == null)
+                    return null;
 
-                if (dto.WeeklySchedule.Any(s => s.Quantity <= 0))
-                {
-                    throw new ArgumentException("Quantity must be greater than 0");
-                }
+                if (dto.Frequency.HasValue)
+                    subscription.Frequency = dto.Frequency.Value;
 
-                var duplicateDays = dto.WeeklySchedule
-                    .GroupBy(s => s.DayOfWeek)
-                    .Where(g => g.Count() > 1)
-                    .Select(g => ((DayOfWeek)g.Key).ToString());
-                    
-                if (duplicateDays.Any())
-                {
-                    throw new ArgumentException($"Duplicate days found: {string.Join(", ", duplicateDays)}");
-                }
+                if (dto.StartDate.HasValue)
+                    subscription.StartDate = dto.StartDate.Value;
 
-                await _subscriptionRepository.RemoveSchedulesAsync(subscriptionId);
+                if (dto.EndDate.HasValue)
+                    subscription.EndDate = dto.EndDate.Value;
 
-                if (dto.WeeklySchedule.Any())
+                if (dto.IsActive.HasValue)
+                    subscription.IsActive = dto.IsActive.Value;
+
+                if (subscription.StartDate >= subscription.EndDate)
+                    throw new ArgumentException("Start date must be before end date");
+
+                if (dto.WeeklySchedule != null && subscription.Frequency == SubscriptionFrequency.Weekly)
                 {
-                    var now = DateTime.UtcNow;
-                    var schedules = dto.WeeklySchedule.Select(s => new SubscriptionSchedule
+                    if (dto.WeeklySchedule.Any(s => s.DayOfWeek < 0 || s.DayOfWeek > 6))
+                        throw new ArgumentException("DayOfWeek must be between 0 (Sunday) and 6 (Saturday)");
+
+                    if (dto.WeeklySchedule.Any(s => s.Quantity <= 0))
+                        throw new ArgumentException("Quantity must be greater than 0");
+
+                    var duplicateDays = dto.WeeklySchedule
+                        .GroupBy(s => s.DayOfWeek)
+                        .Where(g => g.Count() > 1)
+                        .Select(g => ((DayOfWeek)g.Key).ToString());
+                        
+                    if (duplicateDays.Any())
+                        throw new ArgumentException($"Duplicate days found: {string.Join(", ", duplicateDays)}");
+
+                    await _subscriptionRepository.RemoveSchedulesAsync(subscriptionId);
+
+                    if (dto.WeeklySchedule.Any())
                     {
-                        SubscriptionId = subscriptionId,
-                        DayOfWeek = s.DayOfWeek,
-                        Quantity = s.Quantity,
-                        CreatedAt = now,
-                        UpdatedAt = now
-                    });
+                        var schedules = dto.WeeklySchedule.Select(s => new SubscriptionSchedule
+                        {
+                            SubscriptionId = subscriptionId,
+                            DayOfWeek = s.DayOfWeek,
+                            Quantity = s.Quantity
+                        });
 
-                    await _subscriptionRepository.AddSchedulesAsync(subscriptionId, schedules);
+                        await _subscriptionRepository.AddSchedulesAsync(subscriptionId, schedules);
+                    }
                 }
-            }
 
-            var today = _time.TodayIst;
-            subscription.NextScheduledDate = CalculateNextDeliveryDate(subscription, today);
+                var today = _time.TodayIst;
+                subscription.NextScheduledDate = CalculateNextDeliveryDate(subscription, today);
 
-            var updatedSubscription = await _subscriptionRepository.UpdateAsync(subscription);
-            
-            var result = await _subscriptionRepository.GetByIdAsync(subscriptionId);
-            return MapToDto(result!);
+                await _subscriptionRepository.UpdateAsync(subscription);
+
+                // FIX Bug 3: UpdateAsync already returns the saved entity.
+                // Re-fetching it from DB is a redundant round-trip.
+                return MapToDto(subscription);
+            });
+
+            return result;
         }
 
         public async Task<bool> DeleteSubscriptionAsync(int subscriptionId)
         {
-            // ✅ FIX: Only delete non-processed ScheduledOrders to prevent FK break
-            // Processed orders have IsProcessedToOrder = true and are linked to actual Orders
-            var scheduledOrders = await _scheduledOrderRepository.GetBySubscriptionIdAsync(subscriptionId);
-            
-            var pendingOrders = scheduledOrders.Where(so => !so.IsProcessedToOrder).ToList();
-            _logger.LogInformation("Deleting {PendingCount} pending ScheduledOrders (keeping {ProcessedCount} processed)",
-                pendingOrders.Count, scheduledOrders.Count - pendingOrders.Count);
-            
-            foreach (var order in pendingOrders)
+            bool success = false;
+            await _unitOfWork.ExecuteInTransactionAsync(async () =>
             {
-                await _scheduledOrderRepository.DeleteAsync(order.ScheduledOrderId);
-            }
-            
-            return await _subscriptionRepository.DeleteAsync(subscriptionId);
+                // ── Step 1: Deactivate immediately ────────────────────────────
+                // Set IsActive = false BEFORE the soft delete so the nightly
+                // Hangfire job cannot accidentally process this subscription
+                // if it runs between now and midnight.
+                var subscription = await _subscriptionRepository.GetByIdAsync(subscriptionId);
+                if (subscription == null)
+                {
+                    success = false;
+                    return;
+                }
+
+                if (subscription.IsActive)
+                {
+                    subscription.IsActive = false;
+                    await _subscriptionRepository.UpdateAsync(subscription);
+                }
+
+                // ── Step 2: Refund pending ScheduledOrders ────────────────────
+                // Only delete non-processed orders to preserve FK integrity with Orders table.
+                var scheduledOrders = await _scheduledOrderRepository.GetBySubscriptionIdAsync(subscriptionId);
+                var pendingOrders = scheduledOrders.Where(so => !so.IsProcessedToOrder).ToList();
+
+                _logger.LogInformation("Deleting {PendingCount} pending ScheduledOrders (keeping {ProcessedCount} processed)",
+                    pendingOrders.Count, scheduledOrders.Count - pendingOrders.Count);
+
+                foreach (var order in pendingOrders)
+                {
+                    bool hasDebit = await _walletTransactionService.TransactionExistsForScheduledOrderAsync(order.ScheduledOrderId);
+                    if (hasDebit)
+                    {
+                        await _walletTransactionService.WriteTransactionRecordAsync(
+                            order.UserId,
+                            order.TotalPrice,
+                            "Credit",
+                            $"Refund: Subscription cancelled for scheduled order #{order.ScheduledOrderId}",
+                            order.ScheduledOrderId);
+
+                        _logger.LogInformation("Refunded {Amount} to User {UserId} for deleted ScheduledOrder #{OrderId}",
+                            order.TotalPrice, order.UserId, order.ScheduledOrderId);
+                    }
+
+                    await _scheduledOrderRepository.DeleteAsync(order.ScheduledOrderId);
+                }
+
+                // ── Step 3: Soft delete the subscription ──────────────────────
+                // DeleteAsync calls _context.Remove() which the TimestampInterceptor
+                // converts to: subscription.DeletedAt = now (soft delete).
+                // The row is retained for win-back analytics.
+                success = await _subscriptionRepository.DeleteAsync(subscriptionId);
+            });
+
+            return success;
         }
 
         public async Task<bool> ActivateSubscriptionAsync(int subscriptionId)
@@ -517,13 +513,22 @@ namespace Sovva.Application.Services
                 return false;
 
             // ✅ FIX: Idempotency guard - prevent double activation
-            if (subscription.Active)
+            if (subscription.IsActive)
             {
                 _logger.LogInformation("Subscription #{SubscriptionId} is already active - no action needed", subscriptionId);
                 return true;
             }
 
-            subscription.Active = true;
+            // ✅ NEW: If it's a fixed meal, update the AgreedPrice to current master price
+            if (subscription.MealId.HasValue)
+            {
+                var meal = await _mealRepository.GetByIdAsync(subscription.MealId.Value);
+                if (meal != null)
+                    subscription.AgreedPrice = meal.BasePrice; // Accept new price
+            }
+
+            subscription.IsActive = true;
+            subscription.PauseReason = null; // ✅ NEW: Clear the reason
             await _subscriptionRepository.UpdateAsync(subscription);
             return true;
         }
@@ -535,13 +540,13 @@ namespace Sovva.Application.Services
                 return false;
 
             // ✅ FIX: Idempotency guard - prevent double deactivation
-            if (!subscription.Active)
+            if (!subscription.IsActive)
             {
                 _logger.LogInformation("Subscription #{SubscriptionId} is already inactive - no action needed", subscriptionId);
                 return true;
             }
 
-            subscription.Active = false;
+            subscription.IsActive = false;
             await _subscriptionRepository.UpdateAsync(subscription);
             return true;
         }
@@ -554,10 +559,7 @@ namespace Sovva.Application.Services
             var activeSubscriptions = await _subscriptionRepository.GetActiveSubscriptionsAsync();
             var today = _time.TodayIst;
             
-            var istNow = _time.ToIst(_time.UtcNow);
-            
-            _logger.LogInformation("=== Subscription date sync started - UTC: {UtcTime}, IST: {IstTime}, Today: {Today}",
-                DateTime.UtcNow, istNow, today);
+            _logger.LogInformation("=== Subscription date sync started - IST Today: {Today}", today);
             
             // ✅ NEW: Collect updates in memory, then batch update
             var subscriptionsToUpdate = new List<Subscription>();
@@ -569,19 +571,20 @@ namespace Sovva.Application.Services
                 var oldNextDate = subscription.NextScheduledDate;
                 var newNextDate = CalculateNextDeliveryDate(subscription, today);
                 
-                _logger.LogInformation("Subscription #{SubscriptionId} sync - Frequency: {Frequency}, StartDate: {StartDate}, OldNextDate: {OldNextDate}, NewNextDate: {NewNextDate}",
+                _logger.LogDebug(
+                    "Subscription #{SubscriptionId} sync - Frequency: {Frequency}, StartDate: {StartDate}, OldNextDate: {OldNextDate}, NewNextDate: {NewNextDate}",
                     subscription.SubscriptionId, subscription.Frequency, subscription.StartDate, oldNextDate, newNextDate);
 
                 if (subscription.NextScheduledDate != newNextDate)
                 {
                     subscription.NextScheduledDate = newNextDate;
                     subscriptionsToUpdate.Add(subscription);
-                    _logger.LogInformation("Subscription #{SubscriptionId} next delivery date updated to {NewDate}", subscription.SubscriptionId, newNextDate);
+                    _logger.LogDebug("Subscription #{SubscriptionId} next delivery date updated to {NewDate}", subscription.SubscriptionId, newNextDate);
                     updatedCount++;
                 }
                 else
                 {
-                    _logger.LogInformation("Subscription #{SubscriptionId} next delivery date already correct ({Date})", subscription.SubscriptionId, subscription.NextScheduledDate);
+                    _logger.LogDebug("Subscription #{SubscriptionId} next delivery date already correct ({Date})", subscription.SubscriptionId, subscription.NextScheduledDate);
                     skippedCount++;
                 }
             }
@@ -611,7 +614,7 @@ namespace Sovva.Application.Services
             switch (frequency)
             {
                 case SubscriptionFrequency.Daily:
-                    return today >= startDate ? today.AddDays(1) : startDate;
+                    return today.AddDays(1);
                 
                 case SubscriptionFrequency.Weekly:
                     if (weeklySchedule == null || !weeklySchedule.Any())
@@ -696,16 +699,21 @@ namespace Sovva.Application.Services
                 SubscriptionId = subscription.SubscriptionId,
                 UserId = subscription.UserId,
                 UserMealId = subscription.UserMealId,
+                MealId = subscription.MealId ?? subscription.UserMeal?.MealId,
+                AgreedPrice = subscription.AgreedPrice,
+                PauseReason = subscription.PauseReason,
                 Frequency = subscription.Frequency,
                 StartDate = subscription.StartDate,
                 EndDate = subscription.EndDate,
-                Active = subscription.Active,
+                IsActive = subscription.IsActive,
                 NextScheduledDate = subscription.NextScheduledDate,
                 CreatedAt = subscription.CreatedAt,
                 UpdatedAt = subscription.UpdatedAt,
                 UserName = subscription.User?.Name ?? string.Empty,
-                MealName = subscription.UserMeal?.MealName ?? string.Empty,
-                MealPrice = subscription.UserMeal?.TotalPrice ?? 0,
+                MealName = subscription.MealId.HasValue ? (subscription.Meal?.MealName ?? string.Empty) : (subscription.UserMeal?.MealName ?? string.Empty),
+                MealPrice = subscription.MealId.HasValue ? (subscription.Meal?.BasePrice ?? 0) : (subscription.UserMeal?.TotalPrice ?? 0),
+
+                MealImageUrl = subscription.MealId.HasValue ? subscription.Meal?.ImageUrl : subscription.UserMeal?.Meal?.ImageUrl,
                 
                 WeeklySchedule = subscription.WeeklySchedule
                     .Select(s => new WeeklyScheduleDto
@@ -729,7 +737,7 @@ namespace Sovva.Application.Services
             var activeSubscriptions = await _subscriptionRepository.GetActiveSubscriptionsAsync();
 
             var expired = activeSubscriptions
-                .Where(s => s.EndDate < today)
+                .Where(s => s.EndDate <= today)
                 .ToList();
 
             if (!expired.Any())
@@ -740,8 +748,8 @@ namespace Sovva.Application.Services
 
             foreach (var sub in expired)
             {
-                sub.Active = false;
-                sub.UpdatedAt = DateTime.UtcNow;
+                sub.IsActive = false;
+                // UpdatedAt is handled by TimestampInterceptor automatically
                 _logger.LogInformation(
                     "Subscription #{Id} (User {UserId}) expired on {EndDate} — deactivating",
                     sub.SubscriptionId, sub.UserId, sub.EndDate);

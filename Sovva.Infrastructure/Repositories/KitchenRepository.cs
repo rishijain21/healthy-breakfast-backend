@@ -11,7 +11,7 @@ using Sovva.Infrastructure.Data;
 
 namespace Sovva.Infrastructure.Repositories
 {
-    public class KitchenRepository : IKitchenRepository
+    internal class KitchenRepository : IKitchenRepository
     {
         private readonly AppDbContext _context;
         private readonly IAppTimeProvider _time;
@@ -24,7 +24,7 @@ namespace Sovva.Infrastructure.Repositories
             _logger = logger;
         }
 
-        public async Task<List<Order>> GetOrdersForPreparationAsync(DateTime istDate)
+        public async Task<List<Order>> GetOrdersForPreparationAsync(DateTime istDate, bool includeDetails = true)
         {
             // istDate is an IST calendar date (Kind=Unspecified, e.g. 2026-03-26 00:00:00)
             // Convert IST midnight → UTC to get the inclusive window PostgreSQL understands
@@ -35,14 +35,29 @@ namespace Sovva.Infrastructure.Repositories
                 "[KitchenRepo] IST date={IstDate:yyyy-MM-dd}  UTC window=[{Start:u}, {End:u})",
                 istDate, windowStart, windowEnd);
 
-            var orders = await _context.Orders
-                .Include(o => o.User)
-                .Include(o => o.UserMeal!)
-                    .ThenInclude(um => um.UserMealIngredients)
-                    .ThenInclude(umi => umi.Ingredient!)
-                        .ThenInclude(i => i.IngredientCategory)
-                .Include(o => o.DeliveryAddress!)
-                    .ThenInclude(da => da.ServiceableLocation)
+            var query = _context.Orders.AsQueryable();
+
+            if (includeDetails)
+            {
+                query = query
+                    .Include(o => o.User)
+                    .Include(o => o.UserMeal!)
+                        .ThenInclude(um => um.UserMealIngredients)
+                        .ThenInclude(umi => umi.Ingredient!)
+                            .ThenInclude(i => i.IngredientCategory)
+                    .Include(o => o.DeliveryAddress!)
+                        .ThenInclude(da => da.ServiceableLocation);
+            }
+            else
+            {
+                // Basic loading for stats/aggregates
+                query = query
+                    .Include(o => o.UserMeal!)
+                        .ThenInclude(um => um.UserMealIngredients)
+                        .ThenInclude(umi => umi.Ingredient!);
+            }
+
+            var orders = await query
                 .Where(o =>
                     o.ScheduledFor >= windowStart &&
                     o.ScheduledFor <  windowEnd   &&
@@ -64,14 +79,9 @@ namespace Sovva.Infrastructure.Repositories
 
         public async Task<Order?> GetOrderByIdAsync(int orderId)
         {
+            // Removed unnecessary includes for User, UserMeal, DeliveryAddress
+            // The only caller MarkOrderAsPreparedAsync only needs order status and date.
             return await _context.Orders
-                .Include(o => o.User)
-                .Include(o => o.UserMeal!)
-                    .ThenInclude(um => um.UserMealIngredients)
-                    .ThenInclude(umi => umi.Ingredient!)
-                // ✅ NEW: Include DeliveryAddress for order details
-                .Include(o => o.DeliveryAddress!)
-                    .ThenInclude(da => da.ServiceableLocation)
                 .FirstOrDefaultAsync(o => o.OrderId == orderId);
         }
 

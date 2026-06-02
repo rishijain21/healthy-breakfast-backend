@@ -46,12 +46,12 @@ namespace Sovva.Application.Services
                 CategoryId = dto.CategoryId,
                 IngredientName = dto.IngredientName,
                 Price = dto.Price,
-                Available = dto.Available,
-                Calories = 0,
-                Protein = 0,
-                Fiber = 0,
-                Description = "",
-                IconEmoji = "🥘",
+                IsAvailable = dto.Available,
+                Calories = dto.Calories,
+                Protein = dto.Protein,
+                Fiber = dto.Fiber,
+                Description = dto.Description ?? string.Empty,
+                IconEmoji = dto.IconEmoji ?? "🥘",
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
@@ -74,7 +74,7 @@ namespace Sovva.Application.Services
             ingredient.CategoryId = dto.CategoryId;
             ingredient.IngredientName = dto.IngredientName;
             ingredient.Price = dto.Price;
-            ingredient.Available = dto.Available;
+            ingredient.IsAvailable = dto.Available;
             ingredient.Calories = dto.Calories;
             ingredient.Protein = dto.Protein;
             ingredient.Fiber = dto.Fiber;
@@ -94,7 +94,7 @@ namespace Sovva.Application.Services
             if (ingredient == null)
                 return false;
 
-            ingredient.Available = !ingredient.Available;
+            ingredient.IsAvailable = !ingredient.IsAvailable;
             ingredient.UpdatedAt = DateTime.UtcNow;
 
             await _ingredientRepository.UpdateIngredientAsync(ingredient);
@@ -136,7 +136,7 @@ namespace Sovva.Application.Services
                 CategoryId = ingredient.CategoryId,
                 IngredientName = ingredient.IngredientName,
                 Price = ingredient.Price,
-                Available = ingredient.Available,
+                Available = ingredient.IsAvailable,
                 Calories = ingredient.Calories,
                 Protein = ingredient.Protein,
                 Fiber = ingredient.Fiber,

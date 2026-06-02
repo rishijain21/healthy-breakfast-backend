@@ -31,6 +31,15 @@ namespace Sovva.Infrastructure.Data.Configurations
             // Indexes
             builder.HasIndex(e => new { e.UserId, e.CreatedAt })
                 .HasDatabaseName("IX_WalletTransactions_UserId_CreatedAt");
+
+            builder.Property(e => e.ScheduledOrderId).IsRequired(false);
+            builder.HasIndex(e => e.ScheduledOrderId)
+                .HasDatabaseName("IX_WalletTransactions_ScheduledOrderId");
+
+            // ✅ FIX 12: Covering index for fast balance aggregation
+            builder.HasIndex(e => new { e.UserId, e.Type })
+                .IncludeProperties(e => e.Amount)
+                .HasDatabaseName("IX_WalletTransactions_UserId_Type_Amount");
         }
     }
 }

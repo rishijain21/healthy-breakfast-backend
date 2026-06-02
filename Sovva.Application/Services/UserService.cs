@@ -1,17 +1,29 @@
 using Sovva.Application.DTOs;
+using Sovva.Application.Helpers;
 using Sovva.Application.Interfaces;
 using Sovva.Domain.Entities;
 using Sovva.Domain.Enums;
+using Microsoft.Extensions.Logging;
 
 namespace Sovva.Application.Services
 {
     public class UserService : IUserService
     {
         private readonly IUserRepository _userRepository;
+        private readonly ICurrentUserService _currentUserService;
+        private readonly IAppTimeProvider _time;
+        private readonly ILogger<UserService> _logger;
 
-        public UserService(IUserRepository userRepository)
+        public UserService(
+            IUserRepository userRepository, 
+            ICurrentUserService currentUserService,
+            IAppTimeProvider time,
+            ILogger<UserService> logger)
         {
             _userRepository = userRepository;
+            _currentUserService = currentUserService;
+            _time = time;
+            _logger = logger;
         }
 
         // ✅ EXISTING METHODS (updated to include new fields)
@@ -23,10 +35,10 @@ namespace Sovva.Application.Services
                 Email = dto.Email,
                 Phone = dto.Phone,
                 WalletBalance = 0,
-                AccountStatus = "Active",
+                AccountStatus = AccountStatus.Active,
                 Role = UserRole.Customer,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
+                CreatedAt = _time.UtcNow,
+                UpdatedAt = _time.UtcNow
             };
 
             await _userRepository.AddUserAsync(user);
@@ -48,10 +60,18 @@ namespace Sovva.Application.Services
             return user != null;
         }
 
-        public async Task<List<UserDto>> GetAllUsersAsync()
+        public async Task<PagedResult<UserDto>> GetAllUsersAsync(int page = 1, int pageSize = 50)
         {
-            var users = await _userRepository.GetAllAsync();
-            return users.Select(MapToUserDto).ToList();
+            var users = await _userRepository.GetAllAsync(page, pageSize);
+            var totalCount = await _userRepository.CountAsync();
+            
+            return new PagedResult<UserDto>
+            {
+                Items = users.Select(MapToUserDto).ToList(),
+                TotalCount = totalCount,
+                Page = page,
+                PageSize = pageSize
+            };
         }
 
         public async Task<UserDto?> GetUserByEmailAsync(string email)
@@ -64,18 +84,41 @@ namespace Sovva.Application.Services
 
         public async Task<UserDto> RegisterUserAsync(RegisterUserRequest request)
         {
-            // Check if user already exists with this AuthId
-            var existingUser = await _userRepository.GetUserByAuthIdAsync(request.AuthId);
-            if (existingUser != null)
+            // Check if email already exists
+            var existingUserByEmail = await _userRepository.GetByEmailAsync(request.Email);
+            if (existingUserByEmail != null)
             {
-                throw new InvalidOperationException("User already registered with this authentication ID");
+                if (existingUserByEmail.AccountStatus == AccountStatus.Deleted)
+                {
+                    // Case: User was deleted, now registering again with same email
+                    // We'll re-activate them in the next step when we check AuthId
+                }
+                else
+                {
+                    throw new InvalidOperationException("Email already registered");
+                }
             }
 
-            // Check if email already exists
-            var emailExists = await _userRepository.GetByEmailAsync(request.Email);
-            if (emailExists != null)
+            // Check if user already exists with this AuthId (including deleted)
+            var existingUserByAuth = await _userRepository.GetUserByAuthIdIncludingDeletedAsync(request.AuthId);
+            if (existingUserByAuth != null)
             {
-                throw new InvalidOperationException("Email already registered");
+                if (existingUserByAuth.AccountStatus == AccountStatus.Deleted)
+                {
+                    // RE-ACTIVATE DELETED USER
+                    existingUserByAuth.AccountStatus = AccountStatus.Active;
+                    existingUserByAuth.DeletedAt = null;
+                    existingUserByAuth.Name = request.Name;
+                    existingUserByAuth.Phone = request.Phone ?? string.Empty;
+                    existingUserByAuth.UpdatedAt = _time.UtcNow;
+
+                    await _userRepository.UpdateUserAsync(existingUserByAuth);
+                    await _userRepository.SaveChangesAsync();
+
+                    return MapToUserDto(existingUserByAuth);
+                }
+
+                throw new InvalidOperationException("User already registered with this authentication ID");
             }
 
             // Create new user with auth mapping
@@ -85,10 +128,10 @@ namespace Sovva.Application.Services
                 Email = request.Email,
                 Phone = request.Phone ?? string.Empty,
                 WalletBalance = 0.00m,
-                AccountStatus = "Active",
+                AccountStatus = AccountStatus.Active,
                 Role = UserRole.Customer,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
+                CreatedAt = _time.UtcNow,
+                UpdatedAt = _time.UtcNow
             };
 
             var createdUser = await _userRepository.CreateUserWithAuthMappingAsync(user, request.AuthId);
@@ -99,6 +142,14 @@ namespace Sovva.Application.Services
         public async Task<UserDto?> GetUserByAuthIdAsync(Guid authId)
         {
             var user = await _userRepository.GetUserByAuthIdAsync(authId);
+            if (user == null) return null;
+
+            return MapToUserDto(user);
+        }
+
+        public async Task<UserDto?> GetUserByAuthIdIncludingDeletedAsync(Guid authId)
+        {
+            var user = await _userRepository.GetUserByAuthIdIncludingDeletedAsync(authId);
             if (user == null) return null;
 
             return MapToUserDto(user);
@@ -135,7 +186,7 @@ namespace Sovva.Application.Services
 
             // DeliveryAddress removed — managed via UserAddresses table
 
-            user.UpdatedAt = DateTime.UtcNow;
+            user.UpdatedAt = _time.UtcNow;
 
             await _userRepository.UpdateUserAsync(user);
             await _userRepository.SaveChangesAsync();
@@ -152,12 +203,12 @@ namespace Sovva.Application.Services
                 Name = user.Name,
                 Email = user.Email,
                 Phone = user.Phone,
-                AccountStatus = user.AccountStatus,
-                WalletBalance = user.WalletBalance,
+                AccountStatus = user.AccountStatus.ToString(),
+                // WalletBalance omitted — always use GET /api/WalletTransactions/my-balance
                 Role = user.Role.ToString(),
                 CreatedAt = user.CreatedAt,
                 UpdatedAt = user.UpdatedAt,
-                ProfileComplete = !string.IsNullOrWhiteSpace(user.Name) &&
+                IsProfileComplete = !string.IsNullOrWhiteSpace(user.Name) &&
                                 !string.IsNullOrWhiteSpace(user.Phone)
             };
         }
@@ -173,10 +224,33 @@ namespace Sovva.Application.Services
                 throw new ArgumentException($"Invalid role. Must be one of: {string.Join(", ", Enum.GetNames<UserRole>())}");
 
             user.Role = parsedRole;
-            user.UpdatedAt = DateTime.UtcNow;
+            user.UpdatedAt = _time.UtcNow;
 
             await _userRepository.UpdateUserAsync(user);
             await _userRepository.SaveChangesAsync();
+
+            await _currentUserService.InvalidateCacheAsync(userId);
+
+            return true;
+        }
+
+        public async Task<bool> DeleteAccountAsync(int userId)
+        {
+            var user = await _userRepository.GetByIdAsync(userId);
+            if (user == null) return false;
+
+            user.DeletedAt = _time.UtcNow;
+            user.AccountStatus = AccountStatus.Deleted;
+            user.UpdatedAt = _time.UtcNow;
+
+            await _userRepository.UpdateUserAsync(user);
+            await _userRepository.SaveChangesAsync();
+
+            _logger.LogWarning(
+                "Account deleted: UserId={UserId} Email={Email} DeletedAt={DeletedAt}",
+                user.UserId, user.Email, user.DeletedAt);
+
+            await _currentUserService.InvalidateCacheAsync(userId);
 
             return true;
         }

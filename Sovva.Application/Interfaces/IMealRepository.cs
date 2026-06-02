@@ -6,7 +6,7 @@ namespace Sovva.Application.Interfaces
     public interface IMealRepository
     {
         // ✅ Public method for meal builder
-        Task<IEnumerable<Meal>> GetActiveMealsAsync();
+        Task<(IEnumerable<Meal> Items, int TotalCount)> GetActiveMealsAsync(int page, int pageSize);
 
         Task AddMealAsync(Meal meal);
         Task SaveChangesAsync();
@@ -27,5 +27,8 @@ namespace Sovva.Application.Interfaces
 
         // ✅ NEW: Batch fetch for users (single query with IsComplete filter)
         Task<List<Meal>> GetByIdsForUsersAsync(List<int> ids);
+
+        // ✅ NEW: Batch fetch with options for admin (fixes N+1)
+        Task<List<Meal>> GetByIdsWithOptionsAsync(IEnumerable<int> ids);
     }
 }

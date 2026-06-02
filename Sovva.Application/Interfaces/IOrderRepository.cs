@@ -12,20 +12,29 @@ namespace Sovva.Application.Interfaces
         void Update(Order order);
         Task<IEnumerable<Order>> GetByUserIdAsync(int userId);
         
-        // ✅ FIXED: Changed from string to OrderStatus enum
-        Task<IEnumerable<Order>> GetByStatusAsync(OrderStatus status);
+        // ✅ FIXED: Changed from string to OrderStatus enum + added pagination
+        Task<IEnumerable<Order>> GetByStatusAsync(OrderStatus status, int page = 1, int pageSize = 50);
         
         // ✅ FIX 7: Added pagination parameters to prevent unbounded queries
         Task<IEnumerable<Order>> GetAllAsync(int page = 1, int pageSize = 50);
 
         // ✅ NEW: Enhanced methods with eager loading
         Task<IEnumerable<Order>> GetUserOrdersWithDetailsAsync(int userId);
-        Task<IEnumerable<Order>> GetAllOrdersWithDetailsAsync();
+        Task<IEnumerable<Order>> GetAllOrdersWithDetailsAsync(int page = 1, int pageSize = 50);
 
-        /// <summary>
-        /// ✅ NEW: Get order by ScheduledOrderId for idempotency check
-        /// Used by midnight job to check if order was already created
         /// </summary>
         Task<Order?> GetByScheduledOrderIdAsync(int scheduledOrderId);
+
+        // ✅ FIX 13: Batch idempotency check
+        Task<Dictionary<int, Order>> GetByScheduledOrderIdsAsync(IEnumerable<int> scheduledOrderIds);
+
+        /// <summary>
+        /// ✅ NEW: Get recent order by UserMealId for duplicate prevention (C-1)
+        /// </summary>
+        Task<Order?> GetRecentOrderByUserMealIdAsync(int userMealId, int userId, int withinSeconds);
+
+        // ✅ NEW: Count methods for pagination
+        Task<int> CountAsync();
+        Task<int> CountByStatusAsync(OrderStatus status);
     }
 }

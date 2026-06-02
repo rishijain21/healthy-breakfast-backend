@@ -38,4 +38,6 @@ seed_data.sql
 # Audit debug files - never commit these
 *.txt
 Sovva.WebAPI/logs/
-Sovva.WebAPI/logs/
+
+# HTTP test files (VSCode REST Client)
+*.http

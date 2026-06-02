@@ -16,7 +16,12 @@ COPY --from=build /app/publish .
 
 # Render requires port 10000
 ENV ASPNETCORE_URLS=http://+:10000
+ENV ASPNETCORE_ENVIRONMENT=Production
 
 EXPOSE 10000
+
+RUN addgroup --system --gid 1001 dotnetgroup && \
+    adduser --system --uid 1001 --ingroup dotnetgroup dotnetuser
+USER dotnetuser
 
 ENTRYPOINT ["dotnet", "Sovva.WebAPI.dll"]

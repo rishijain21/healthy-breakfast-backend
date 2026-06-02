@@ -3,19 +3,22 @@ using Sovva.Application.Helpers;
 using Sovva.Domain.Entities;
 using Sovva.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 
 namespace Sovva.Infrastructure.Repositories
 {
-    public class UserAddressRepository : IUserAddressRepository
+    internal class UserAddressRepository : IUserAddressRepository
     {
         private readonly AppDbContext _context;
         private readonly IAppTimeProvider _time;
+        private readonly ILogger<UserAddressRepository> _logger;
 
-        public UserAddressRepository(AppDbContext context, IAppTimeProvider time)
+        public UserAddressRepository(AppDbContext context, IAppTimeProvider time, ILogger<UserAddressRepository> logger)
         {
             _context = context;
             _time = time;
+            _logger = logger;
         }
 
         public async Task<UserAddress?> GetByIdAsync(int id)
@@ -49,6 +52,7 @@ namespace Sovva.Infrastructure.Repositories
         public async Task<IEnumerable<UserAddress>> GetByUserIdAsync(int userId)
         {
             return await _context.UserAddresses
+                .AsNoTracking()
                 .Include(x => x.ServiceableLocation)
                 .Where(x => x.UserId == userId)
                 .OrderByDescending(x => x.IsPrimary)
@@ -59,6 +63,7 @@ namespace Sovva.Infrastructure.Repositories
         public async Task<IEnumerable<UserAddress>> GetActiveByUserIdAsync(int userId)
         {
             return await _context.UserAddresses
+                .AsNoTracking()
                 .Include(x => x.ServiceableLocation)
                 .Where(x => x.UserId == userId && x.IsActive)
                 .OrderByDescending(x => x.IsPrimary)
@@ -114,7 +119,7 @@ namespace Sovva.Infrastructure.Repositories
         {
             try
             {
-                Console.WriteLine($"🔍 SetPrimaryAddressAsync called - UserId: {userId}, AddressId: {addressId}");
+                _logger.LogInformation("SetPrimaryAddressAsync called for user {UserId}, address {AddressId}", userId, addressId);
 
                 // ✅ Use raw SQL to avoid EF Core unique constraint issues
                 // First, clear all primary flags for this user
@@ -136,13 +141,13 @@ namespace Sovva.Infrastructure.Repositories
                     new Npgsql.NpgsqlParameter("@addressId", addressId),
                     new Npgsql.NpgsqlParameter("@userId", userId));
 
-                Console.WriteLine($"✅ SetPrimaryAddressAsync: {rowsAffected} row(s) affected");
+                _logger.LogInformation("SetPrimaryAddressAsync completed for user {UserId}: {RowsAffected} row(s) affected", userId, rowsAffected);
                 
                 return rowsAffected > 0;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ Error in SetPrimaryAddressAsync: {ex.Message}");
+                _logger.LogError(ex, "Error in SetPrimaryAddressAsync for user {UserId}, address {AddressId}", userId, addressId);
                 throw;
             }
         }
@@ -162,7 +167,7 @@ namespace Sovva.Infrastructure.Repositories
         {
             return await _context.Subscriptions
                 .AnyAsync(x => x.DeliveryAddressId == addressId 
-                            && x.Active 
+                            && x.IsActive 
                             && x.EndDate >= _time.TodayIst);
         }
 

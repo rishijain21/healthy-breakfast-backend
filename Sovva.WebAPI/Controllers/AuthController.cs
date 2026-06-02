@@ -3,6 +3,8 @@ using Sovva.Application.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using System.Collections.Generic;
+using System.Linq;
 using System.Security.Claims;
 
 namespace Sovva.WebAPI.Controllers
@@ -30,22 +32,16 @@ namespace Sovva.WebAPI.Controllers
         public async Task<ActionResult> CheckUserExists([FromQuery] string email)
         {
             if (string.IsNullOrWhiteSpace(email))
-                return BadRequest(ApiResponse<object>.Fail("Email is required"));
+                return BadRequest(ApiResponse.Fail("BAD_REQUEST", "Email is required"));
 
-            try
-            {
-                var exists = await _userService.UserExistsAsync(email);
-                return Ok(new { exists });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error checking user existence for email: {Email}", email);
-                return StatusCode(500, ApiResponse<object>.Fail("Internal server error"));
-            }
+            var exists = await _userService.UserExistsAsync(email);
+            return Ok(ApiResponse.Ok(new { exists }));
         }
 
         /// <summary>
-        /// Register a new user in the database after Supabase OTP verification
+        /// Register a new user in the database after Supabase OTP verification.
+        /// AuthId and email are read from the JWT — never trusted from client body.
+        /// Client sends only: { name, phone }
         /// </summary>
         [HttpPost("register")]
         [Authorize]
@@ -54,87 +50,76 @@ namespace Sovva.WebAPI.Controllers
         {
             if (!ModelState.IsValid)
             {
-                return BadRequest(ModelState);
+                var errors = ModelState.Values
+                    .SelectMany(v => v.Errors)
+                    .Select(e => e.ErrorMessage)
+                    .ToList();
+                return BadRequest(ApiResponse<List<string>>
+                    .Fail("VALIDATION_ERROR", string.Join("; ", errors)));
             }
 
-            // ✅ CRITICAL: Verify the AuthId matches the token — prevents registering as someone else
+            // ✅ SECURITY: Read authId exclusively from JWT — never from request body
             var tokenAuthId = User.FindFirst("sub")?.Value
                            ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
 
-            if (string.IsNullOrEmpty(tokenAuthId) || tokenAuthId != request.AuthId.ToString())
+            if (string.IsNullOrEmpty(tokenAuthId) || !Guid.TryParse(tokenAuthId, out var authId))
             {
-                _logger.LogWarning("Registration authId mismatch. Token: {TokenId}, Request: {RequestId}",
-                    tokenAuthId, request.AuthId);
-                return Forbid(); // 403
+                return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "Invalid authentication token"));
             }
 
+            // ✅ SECURITY: Read email from JWT for cross-verification
+            var tokenEmail = User.FindFirst("email")?.Value
+                          ?? User.FindFirst(ClaimTypes.Email)?.Value;
+
+            // Use JWT email as the source of truth, fall back to request email
+            var email = tokenEmail ?? request.Email;
+
             _logger.LogInformation(
-                "Registering new user - AuthId: {AuthId}, Email: {Email}, Name: {Name}",
-                request.AuthId, request.Email, request.Name
+                "Registering user - AuthId: {AuthId}, Email: {Email}, Name: {Name}",
+                authId, email, request.Name
             );
 
             try
             {
                 // ✅ Check if user already exists by AuthId
-                var existingUserByAuth = await _userService.GetUserByAuthIdAsync(request.AuthId);
+                var existingUserByAuth = await _userService.GetUserByAuthIdAsync(authId);
                 if (existingUserByAuth != null)
                 {
                     _logger.LogInformation("User already exists with AuthId, returning existing user: {UserId}", existingUserByAuth.UserId);
-                    return Ok(ApiResponse<object>.Ok(
-                        new { user = existingUserByAuth, isNewUser = false },
-                        "User already registered"));
+                    return Ok(ApiResponse.Ok(new { user = existingUserByAuth, isNewUser = false, message = "User already registered" }));
                 }
 
                 // ✅ Check if user already exists by Email
-                var existingUserByEmail = await _userService.GetUserByEmailAsync(request.Email);
+                var existingUserByEmail = await _userService.GetUserByEmailAsync(email);
                 if (existingUserByEmail != null)
                 {
-                    _logger.LogWarning("User already exists with Email: {Email}", request.Email);
-                    return Conflict(ApiResponse<object>.Fail("Email already registered. Please login instead."));
+                    _logger.LogWarning("User already exists with Email: {Email}", email);
+                    return Conflict(ApiResponse.Fail("CONFLICT", "Email already registered. Please login instead."));
                 }
 
-                // ✅ Create new user
-                var userDto = await _userService.RegisterUserAsync(request);
+                // ✅ Create new user — authId + email from JWT, name + phone from body
+                var registrationRequest = new RegisterUserRequest
+                {
+                    AuthId = authId,
+                    Email = email,
+                    Name = request.Name,
+                    Phone = request.Phone
+                };
+
+                var userDto = await _userService.RegisterUserAsync(registrationRequest);
 
                 _logger.LogInformation(
                     "✅ User registered successfully - UserId: {UserId}, Email: {Email}",
                     userDto.UserId, userDto.Email
                 );
 
-                return Ok(ApiResponse<object>.Ok(
-                    new { user = userDto, isNewUser = true },
-                    "User registered successfully"));
+                return Ok(ApiResponse.Ok(new { user = userDto, isNewUser = true, message = "User registered successfully" }));
             }
             catch (InvalidOperationException ex)
             {
-                _logger.LogWarning(ex, "Registration failed - {Message}", ex.Message);
-                return Conflict(ApiResponse<object>.Fail(ex.Message));
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error registering user");
-                return StatusCode(500, ApiResponse<object>.Fail("Internal server error"));
+                return Conflict(ApiResponse.Fail("CONFLICT", ex.Message));
             }
         }
 
-        /// <summary>
-        /// Test login endpoint (can be removed in production)
-        /// </summary>
-        [HttpPost("login")]
-        [AllowAnonymous]
-        [EnableRateLimiting("auth")]
-        public IActionResult Login([FromBody] LoginRequest request)
-        {
-            _logger.LogInformation("Login attempt for email: {Email}", request.Email);
-            
-            // This is just a test endpoint - Supabase handles real authentication
-            return Ok(ApiResponse<object>.Ok(new { message = "Use Supabase authentication for login" }));
-        }
-    }
-
-    public class LoginRequest
-    {
-        public string Email { get; set; } = "";
-        public string Password { get; set; } = "";
     }
 }

@@ -5,7 +5,7 @@ using Sovva.Domain.Enums;
 
 namespace Sovva.Domain.Entities
 {
-    public class Order
+    public class Order : BaseEntity
     {
         [Key]
         public int OrderId { get; set; }
@@ -29,8 +29,23 @@ namespace Sovva.Domain.Entities
         public DateTime OrderDate { get; set; }
         public DateTime ScheduledFor { get; set; }
         public decimal TotalPrice { get; set; }
-        public DateTime CreatedAt { get; set; }
-        public DateTime UpdatedAt { get; set; }
+
+        public int? Rating { get; set; }
+        public string? Review { get; set; }
+
+        public void TransitionTo(OrderStatus newStatus)
+        {
+            if (OrderStatus == OrderStatus.Cancelled && newStatus != OrderStatus.Cancelled)
+            {
+                throw new InvalidOperationException("Cannot transition from Cancelled state.");
+            }
+            if (OrderStatus == OrderStatus.Delivered && newStatus != OrderStatus.Delivered)
+            {
+                throw new InvalidOperationException("Cannot transition from Delivered state.");
+            }
+
+            OrderStatus = newStatus;
+        }
 
         // Navigation properties
         public User User { get; set; } = null!;

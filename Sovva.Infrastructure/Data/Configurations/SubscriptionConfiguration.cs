@@ -13,12 +13,16 @@ namespace Sovva.Infrastructure.Data.Configurations
             builder.Property(e => e.Frequency).HasConversion<int>().IsRequired();
             builder.Property(e => e.StartDate).IsRequired();
             builder.Property(e => e.EndDate).IsRequired();
+            builder.Property(e => e.AgreedPrice).HasColumnType("decimal(18,2)");
+            builder.Property(e => e.PauseReason).HasMaxLength(100);
 
             // CHECK constraints
             builder.ToTable(t =>
             {
                 t.HasCheckConstraint("CK_Subscriptions_Dates",
                     "\"EndDate\" > \"StartDate\"");
+                t.HasCheckConstraint("CK_Subscription_MealType",
+                    "(\"MealId\" IS NOT NULL AND \"UserMealId\" IS NULL) OR (\"MealId\" IS NULL AND \"UserMealId\" IS NOT NULL)");
             });
 
             // Relationships
@@ -30,6 +34,13 @@ namespace Sovva.Infrastructure.Data.Configurations
             builder.HasOne(e => e.UserMeal)
                 .WithMany()
                 .HasForeignKey(e => e.UserMealId)
+                .IsRequired(false)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            builder.HasOne(e => e.Meal)
+                .WithMany()
+                .HasForeignKey(e => e.MealId)
+                .IsRequired(false)
                 .OnDelete(DeleteBehavior.Restrict);
 
             builder.HasOne(e => e.DeliveryAddress)
@@ -39,15 +50,20 @@ namespace Sovva.Infrastructure.Data.Configurations
 
             // ✅ FIX BUG 3: Partial unique index to prevent duplicate active subscriptions
             builder.HasIndex(e => new { e.UserId, e.UserMealId })
-                .HasFilter("\"Active\" = true")
+                .HasFilter("\"IsActive\" = true AND \"UserMealId\" IS NOT NULL")
                 .IsUnique()
                 .HasDatabaseName("UX_Subscriptions_ActiveUserMeal");
 
+            builder.HasIndex(e => new { e.UserId, e.MealId })
+                .HasFilter("\"IsActive\" = true AND \"MealId\" IS NOT NULL")
+                .IsUnique()
+                .HasDatabaseName("UX_Subscriptions_ActiveMeal");
+
             // Indexes
-            builder.HasIndex(e => new { e.UserId, e.Active })
+            builder.HasIndex(e => new { e.UserId, e.IsActive })
                 .HasDatabaseName("IX_Subscriptions_UserId_Active");
 
-            builder.HasIndex(e => new { e.Active, e.NextScheduledDate })
+            builder.HasIndex(e => new { e.IsActive, e.NextScheduledDate })
                 .HasFilter("\"Active\" = true")
                 .HasDatabaseName("IX_Subscriptions_Active_NextScheduledDate");
         }

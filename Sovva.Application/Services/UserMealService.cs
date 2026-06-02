@@ -5,6 +5,7 @@ using System.Linq;
 using Sovva.Application.DTOs;
 using Sovva.Application.Interfaces;
 using Sovva.Domain.Entities;
+using Microsoft.Extensions.Logging;
 
 namespace Sovva.Application.Services
 {
@@ -12,13 +13,16 @@ namespace Sovva.Application.Services
     {
         private readonly IUserMealRepository _repository;
         private readonly IUserMealIngredientRepository _ingredientRepository;
+        private readonly ILogger<UserMealService> _logger;
 
         public UserMealService(
             IUserMealRepository repository,
-            IUserMealIngredientRepository ingredientRepository)
+            IUserMealIngredientRepository ingredientRepository,
+            ILogger<UserMealService> logger)
         {
             _repository = repository;
             _ingredientRepository = ingredientRepository;
+            _logger = logger;
         }
 
         // ✅ SECURE: CreateUserMealAsync with userId from JWT token
@@ -41,7 +45,7 @@ namespace Sovva.Application.Services
             // ✅ Save ingredients if provided
             if (dto.SelectedIngredients != null && dto.SelectedIngredients.Any())
             {
-                Console.WriteLine($"🔵 UserMealService: Saving {dto.SelectedIngredients.Count} ingredients for UserMeal #{entity.UserMealId}");
+                _logger.LogInformation("Saving {IngredientCount} ingredients for UserMeal {UserMealId}", dto.SelectedIngredients.Count, entity.UserMealId);
                 
                 foreach (var ingredientDto in dto.SelectedIngredients)
                 {
@@ -57,11 +61,11 @@ namespace Sovva.Application.Services
                 }
                 
                 await _ingredientRepository.SaveChangesAsync();
-                Console.WriteLine($"✅ UserMealService: Saved {dto.SelectedIngredients.Count} ingredients");
+                _logger.LogInformation("Saved {IngredientCount} ingredients for UserMeal {UserMealId}", dto.SelectedIngredients.Count, entity.UserMealId);
             }
             else
             {
-                Console.WriteLine("⚠️ UserMealService: No ingredients provided in dto.SelectedIngredients");
+                _logger.LogWarning("No ingredients provided for UserMeal {UserMealId}", entity.UserMealId);
             }
 
             return entity.UserMealId;
@@ -97,6 +101,23 @@ namespace Sovva.Application.Services
                 CreatedAt = entity.CreatedAt,
                 UpdatedAt = entity.UpdatedAt
             });
+        }
+
+        public async Task<UserMealDto?> GetByIdForUserAsync(int id, int userId)
+        {
+            var entity = await _repository.GetByIdForUserAsync(id, userId);
+            if (entity == null) return null;
+
+            return new UserMealDto
+            {
+                UserMealId = entity.UserMealId,
+                UserId = entity.UserId,
+                MealId = entity.MealId,
+                MealName = entity.MealName,
+                TotalPrice = entity.TotalPrice,
+                CreatedAt = entity.CreatedAt,
+                UpdatedAt = entity.UpdatedAt
+            };
         }
     }
 }

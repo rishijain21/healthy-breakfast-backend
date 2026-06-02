@@ -4,7 +4,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace Sovva.Domain.Entities
 {
-    public class WalletTransaction
+    public class WalletTransaction : BaseEntity
     {
         [Key]
         public int TransactionId { get; set; }
@@ -22,7 +22,8 @@ namespace Sovva.Domain.Entities
         // The ID of the Order/Subscription/etc that caused this
         public int? ReferenceId { get; set; }
 
-        public DateTime CreatedAt { get; set; }
+        public int? ScheduledOrderId { get; set; }
+        public ScheduledOrder? ScheduledOrder { get; set; }
 
         public User User { get; set; } = null!;
     }

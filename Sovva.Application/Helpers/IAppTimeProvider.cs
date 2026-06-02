@@ -8,6 +8,7 @@ public interface IAppTimeProvider
     DateTime UtcNow { get; }
     DateOnly TodayIst { get; }
     DateOnly TomorrowIst { get; }
+    DateTime NowIst { get; }
     DateTime ToUtc(DateTime istDateTime);
     DateTime ToIst(DateTime utcDateTime);
 }

@@ -5,6 +5,8 @@ using Sovva.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 using System;
 
+using Sovva.Domain.Constants;
+
 namespace Sovva.Infrastructure.Data
 {
     public class AppDbContext : DbContext
@@ -53,8 +55,11 @@ namespace Sovva.Infrastructure.Data
             // All entity config loaded from IEntityTypeConfiguration<T> classes
             modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
 
-            // Global soft-delete filter — excludes IsDeleted meals from all queries automatically
-            modelBuilder.Entity<Meal>().HasQueryFilter(m => !m.IsDeleted);
+            // ── Uniform soft-delete filters (DeletedAt == null means active) ─
+            modelBuilder.Entity<Meal>().HasQueryFilter(m => m.DeletedAt == null);
+            modelBuilder.Entity<User>().HasQueryFilter(u => u.DeletedAt == null);
+            modelBuilder.Entity<Subscription>().HasQueryFilter(s => s.DeletedAt == null);
+            modelBuilder.Entity<UserMeal>().HasQueryFilter(um => um.DeletedAt == null);
 
             // ======= SEED DATA =======
             var seedDate = new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc);
@@ -68,9 +73,9 @@ namespace Sovva.Infrastructure.Data
             );
 
             modelBuilder.Entity<Meal>().HasData(
-                new Meal { MealId = 1, MealName = "Classic Overnight Oats",  Description = "Traditional overnight oats base",   BasePrice = 40, IsComplete = true, IsDeleted = false, CreatedAt = seedDate, UpdatedAt = seedDate },
-                new Meal { MealId = 2, MealName = "Custom Breakfast Bowl",   Description = "Build your perfect breakfast",      BasePrice = 50, IsComplete = true, IsDeleted = false, CreatedAt = seedDate, UpdatedAt = seedDate },
-                new Meal { MealId = 3, MealName = "Protein Power Bowl",      Description = "High protein breakfast option",     BasePrice = 60, IsComplete = true, IsDeleted = false, CreatedAt = seedDate, UpdatedAt = seedDate }
+                new Meal { MealId = 1, MealName = "Classic Overnight Oats",  Description = "Traditional overnight oats base",   BasePrice = 40, IsComplete = true, CreatedAt = seedDate, UpdatedAt = seedDate },
+                new Meal { MealId = 2, MealName = "Custom Breakfast Bowl",   Description = "Build your perfect breakfast",      BasePrice = 50, IsComplete = true, CreatedAt = seedDate, UpdatedAt = seedDate },
+                new Meal { MealId = 3, MealName = "Protein Power Bowl",      Description = "High protein breakfast option",     BasePrice = 60, IsComplete = true, CreatedAt = seedDate, UpdatedAt = seedDate }
             );
 
             modelBuilder.Entity<User>().HasData(
@@ -93,7 +98,7 @@ namespace Sovva.Infrastructure.Data
                     TransactionId = 1,
                     UserId        = 1,
                     Amount        = 625,
-                    Type          = "Credit",
+                    Type          = WalletConstants.Credit,
                     Description   = "Initial wallet balance",
                     ReferenceType = "Manual",
                     CreatedAt     = seedDate

@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Sovva.Application.DTOs;
+using Sovva.Application.Helpers;
 using Sovva.Application.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -9,6 +10,7 @@ namespace Sovva.WebAPI.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
+    [Microsoft.AspNetCore.RateLimiting.EnableRateLimiting("default")]
     [Authorize]
     public class SubscriptionsController : ControllerBase
     {
@@ -16,6 +18,8 @@ namespace Sovva.WebAPI.Controllers
         private readonly ISubscriptionSchedulingService _subscriptionSchedulingService;
         private readonly IScheduledOrderService _scheduledOrderService;
         private readonly IScheduledOrderRepository _scheduledOrderRepository;
+        private readonly ICurrentUserService _currentUserService;
+        private readonly IAppTimeProvider _time;
         private readonly ILogger<SubscriptionsController> _logger;
 
         public SubscriptionsController(
@@ -23,18 +27,22 @@ namespace Sovva.WebAPI.Controllers
             ISubscriptionSchedulingService subscriptionSchedulingService,
             IScheduledOrderService scheduledOrderService,
             IScheduledOrderRepository scheduledOrderRepository,
+            ICurrentUserService currentUserService,
+            IAppTimeProvider time,
             ILogger<SubscriptionsController> logger)
         {
             _subscriptionService = subscriptionService;
             _subscriptionSchedulingService = subscriptionSchedulingService;
             _scheduledOrderService = scheduledOrderService;
             _scheduledOrderRepository = scheduledOrderRepository;
+            _currentUserService = currentUserService;
+            _time = time;
             _logger = logger;
         }
 
-        // ✅ NEW: Zero DB hit — reads sovva_user_id JWT claim
-        private int? GetCurrentUserId()
-            => User.GetSovvaUserId();
+        // ✅ NEW: Uses ICurrentUserService to correctly fallback to DB if token lacks claim
+        private async Task<int?> GetCurrentUserIdAsync()
+            => await _currentUserService.GetCurrentUserIdAsync();
 
         // ✅ NEW: Zero DB hit — reads sub/nameidentifier claim
         private Guid? GetCurrentAuthId()
@@ -47,53 +55,58 @@ namespace Sovva.WebAPI.Controllers
         [HttpGet]
         public async Task<ActionResult<IEnumerable<SubscriptionDto>>> GetAllSubscriptions()
         {
-            var userId = GetCurrentUserId();
+            var userId = await GetCurrentUserIdAsync();
             if (userId == null)
-                return Unauthorized();
+                return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
 
             var subscriptions = await _subscriptionService.GetSubscriptionsByUserIdAsync(userId.Value);
-            return Ok(subscriptions);
+            return Ok(ApiResponse.Ok(subscriptions));
         }
 
         [HttpGet("{id}")]
         public async Task<ActionResult<SubscriptionDto>> GetSubscription(int id)
         {
-            var userId = GetCurrentUserId();
+            var userId = await GetCurrentUserIdAsync();
             if (userId == null)
-                return Unauthorized();
+                return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
 
             var subscription = await _subscriptionService.GetSubscriptionByIdAsync(id);
             if (subscription == null)
-                return NotFound();
+                return NotFound(ApiResponse.Fail("NOT_FOUND", "Resource not found"));
 
             if (subscription.UserId != userId.Value)
-                return Forbid();
+                return StatusCode(403, ApiResponse.Fail("FORBIDDEN", "Access denied"));
 
-            return Ok(subscription);
+            return Ok(ApiResponse.Ok(subscription));
         }
 
+        /// <summary>
+        /// Deprecated: Use GET /api/subscriptions instead.
+        /// This endpoint returns identical data and will be removed in a future release.
+        /// </summary>
+        [Obsolete("Use GET /api/subscriptions instead. This duplicate endpoint will be removed in v2.")]
         [HttpGet("user/me")]
         public async Task<ActionResult<IEnumerable<SubscriptionDto>>> GetMySubscriptions()
         {
-            var userId = GetCurrentUserId();
+            var userId = await GetCurrentUserIdAsync();
             if (userId == null)
-                return Unauthorized();
+                return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
 
             var subscriptions = await _subscriptionService.GetSubscriptionsByUserIdAsync(userId.Value);
-            return Ok(subscriptions);
+            return Ok(ApiResponse.Ok(subscriptions));
         }
 
         [HttpGet("active")]
         public async Task<ActionResult<IEnumerable<SubscriptionDto>>> GetActiveSubscriptions()
         {
-            var userId = GetCurrentUserId();
+            var userId = await GetCurrentUserIdAsync();
             if (userId == null)
-                return Unauthorized();
+                return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
 
             // ✅ Filter by the current user only
             var subscriptions = await _subscriptionService.GetSubscriptionsByUserIdAsync(userId.Value);
-            var active = subscriptions.Where(s => s.Active);
-            return Ok(active);
+            var active = subscriptions.Where(s => s.IsActive);
+            return Ok(ApiResponse.Ok(active));
         }
 
         /// <summary>
@@ -102,55 +115,55 @@ namespace Sovva.WebAPI.Controllers
         [HttpPost]
         public async Task<ActionResult<SubscriptionDto>> CreateSubscription(CreateSubscriptionDto createSubscriptionDto)
         {
-            var userId = GetCurrentUserId();
+            var userId = await GetCurrentUserIdAsync();
             var authId = GetCurrentAuthId();
             
             if (userId == null || authId == null)
-                return Unauthorized();
+                return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
 
             try
             {
-                _logger.LogInformation($"📦 Creating subscription for user {userId}");
+                _logger.LogInformation("Creating subscription for user {UserId}", userId);
 
                 // 1. Create subscription
                 var internalDto = new CreateSubscriptionInternalDto
                 {
                     UserId = userId.Value,
-                    MealId = createSubscriptionDto.MealId,  // ✅ Changed from UserMealId
+                    MealId = createSubscriptionDto.MealId,
+                    UserMealId = createSubscriptionDto.UserMealId,
                     Frequency = createSubscriptionDto.Frequency,
                     StartDate = createSubscriptionDto.StartDate,
                     EndDate = createSubscriptionDto.EndDate,
-                    Active = createSubscriptionDto.Active,
+                    IsActive = createSubscriptionDto.IsActive,
                     WeeklySchedule = createSubscriptionDto.WeeklySchedule
                 };
 
                 var subscription = await _subscriptionService.CreateSubscriptionAsync(internalDto);
 
-                _logger.LogInformation($"✅ Subscription #{subscription.SubscriptionId} created");
+                _logger.LogInformation("Subscription {SubscriptionId} created", subscription.SubscriptionId);
 
                 // ✅ Order is already created inside CreateSubscriptionAsync() via CreateFirstScheduledOrderAsync()
                 // No need to generate it again!
 
                 return CreatedAtAction(nameof(GetSubscription),
-                    new { id = subscription.SubscriptionId },
-                    subscription);
+                    new { id = subscription.SubscriptionId }, ApiResponse.Ok(subscription, subscription.Warning));
             }
             catch (InvalidOperationException ex)
             {
                 // ✅ This catches duplicate subscription attempts
-                _logger.LogWarning(ex, "⚠️ Duplicate subscription attempt blocked");
-                return Conflict(new { message = ex.Message }); // ✅ Returns 409 Conflict
+                _logger.LogWarning(ex, "Duplicate subscription attempt blocked");
+                return Conflict(ApiResponse.Fail("CONFLICT", ex.Message));
             }
             catch (UnauthorizedAccessException ex)
             {
                 // ✅ This catches security violations
-                _logger.LogWarning(ex, "⚠️ Unauthorized subscription attempt");
-                return Forbid(); // ✅ Returns 403 Forbidden
+                _logger.LogWarning(ex, "Unauthorized subscription attempt");
+                return StatusCode(403, ApiResponse.Fail("FORBIDDEN", "Access denied")); // ✅ Returns 403 Forbidden
             }
             catch (ArgumentException ex)
             {
-                _logger.LogError(ex, "❌ Invalid argument");
-                return BadRequest(new { message = ex.Message });
+                _logger.LogError(ex, "Invalid argument");
+                return BadRequest(ApiResponse.Fail("BAD_REQUEST", ex.Message));
             }
             // ✅ No generic catch — middleware handles unexpected exceptions
         }
@@ -158,48 +171,55 @@ namespace Sovva.WebAPI.Controllers
         [HttpPut("{id}")]
         public async Task<ActionResult<SubscriptionDto>> UpdateSubscription(int id, UpdateSubscriptionDto updateSubscriptionDto)
         {
-            var userId = GetCurrentUserId();
+            var userId = await GetCurrentUserIdAsync();
             if (userId == null)
-                return Unauthorized();
+                return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
 
             var existing = await _subscriptionService.GetSubscriptionByIdAsync(id);
             if (existing == null)
-                return NotFound();
+                return NotFound(ApiResponse.Fail("NOT_FOUND", "Resource not found"));
 
             if (existing.UserId != userId.Value)
-                return Forbid();
+                return StatusCode(403, ApiResponse.Fail("FORBIDDEN", "Access denied"));
 
             try
             {
                 var subscription = await _subscriptionService.UpdateSubscriptionAsync(id, updateSubscriptionDto);
                 if (subscription == null)
-                    return NotFound();
+                    return NotFound(ApiResponse.Fail("NOT_FOUND", "Resource not found"));
 
-                return Ok(subscription);
+                return Ok(ApiResponse.Ok(subscription));
             }
             catch (ArgumentException ex)
             {
-                return BadRequest(new { message = ex.Message });
+                return BadRequest(ApiResponse.Fail("BAD_REQUEST", ex.Message));
             }
         }
 
         [HttpDelete("{id}")]
         public async Task<IActionResult> DeleteSubscription(int id)
         {
-            var userId = GetCurrentUserId();
+            var userId = await GetCurrentUserIdAsync();
             if (userId == null)
-                return Unauthorized();
+                return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
+
+            var subscription = await _subscriptionService.GetSubscriptionByIdAsync(id);
+            if (subscription == null)
+                return NotFound(ApiResponse.Fail("NOT_FOUND", "Resource not found"));
+
+            if (subscription.UserId != userId.Value)
+                return StatusCode(403, ApiResponse.Fail("FORBIDDEN", "Access denied"));
 
             // ✅ Delegate to service - it handles scheduled orders properly
             // (keeps processed orders, deletes pending ones)
             var result = await _subscriptionService.DeleteSubscriptionAsync(id);
             if (!result)
             {
-                _logger.LogWarning($"⚠️ Subscription #{id} not found during delete");
-                return NotFound();
+                _logger.LogWarning("Subscription {SubscriptionId} not found during delete", id);
+                return NotFound(ApiResponse.Fail("NOT_FOUND", "Resource not found"));
             }
 
-            _logger.LogInformation($"✅ Subscription #{id} deleted successfully");
+            _logger.LogInformation("Subscription {SubscriptionId} deleted successfully", id);
             return NoContent();
         }
 
@@ -209,35 +229,35 @@ namespace Sovva.WebAPI.Controllers
         [HttpPatch("{id}/activate")]
         public async Task<IActionResult> ActivateSubscription(int id)
         {
-            var userId = GetCurrentUserId();
+            var userId = await GetCurrentUserIdAsync();
             var authId = GetCurrentAuthId();
             
             if (userId == null || authId == null)
-                return Unauthorized();
+                return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
 
             var existing = await _subscriptionService.GetSubscriptionByIdAsync(id);
             if (existing == null || existing.UserId != userId.Value)
-                return Forbid();
+                return StatusCode(403, ApiResponse.Fail("FORBIDDEN", "Access denied"));
 
-            _logger.LogInformation($"▶️ Resuming subscription #{id}");
+            _logger.LogInformation("Resuming subscription {SubscriptionId}", id);
 
             var result = await _subscriptionService.ActivateSubscriptionAsync(id);
             
             if (!result)
-                return NotFound();
+                return NotFound(ApiResponse.Fail("NOT_FOUND", "Resource not found"));
 
             // ✅ NEW: Generate tomorrow's order immediately when resuming
             try
             {
                 await _subscriptionSchedulingService.GenerateOrderForSubscriptionAsync(id, userId.Value, authId.Value);
-                _logger.LogInformation($"✅ Generated order for resumed subscription #{id}");
+                _logger.LogInformation("Generated order for resumed subscription {SubscriptionId}", id);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, $"⚠️ Failed to generate order for resumed subscription #{id}");
+                _logger.LogWarning(ex, "Failed to generate order for resumed subscription {SubscriptionId}", id);
             }
 
-            return Ok(new { message = "Subscription activated and order generated" });
+            return Ok(ApiResponse.Ok(new { message = "Subscription activated and order generated" }));
         }
 
         /// <summary>
@@ -246,32 +266,34 @@ namespace Sovva.WebAPI.Controllers
         [HttpPatch("{id}/deactivate")]
         public async Task<IActionResult> DeactivateSubscription(int id)
         {
-            var userId = GetCurrentUserId();
+            var userId = await GetCurrentUserIdAsync();
             var authId = GetCurrentAuthId();
             
             if (userId == null || authId == null)
-                return Unauthorized();
+                return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
 
             var existing = await _subscriptionService.GetSubscriptionByIdAsync(id);
             if (existing == null || existing.UserId != userId.Value)
-                return Forbid();
+                return StatusCode(403, ApiResponse.Fail("FORBIDDEN", "Access denied"));
 
-            _logger.LogInformation($"⏸️ Pausing subscription #{id}");
+            _logger.LogInformation("Pausing subscription {SubscriptionId}", id);
 
             // ✅ NEW: Cancel tomorrow's order when pausing
             try
             {
                 await _subscriptionSchedulingService.CancelOrderForSubscriptionAsync(id, userId.Value, authId.Value);
-                _logger.LogInformation($"✅ Cancelled order for paused subscription #{id}");
+                _logger.LogInformation("Cancelled order for paused subscription {SubscriptionId}", id);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, $"⚠️ Failed to cancel order for subscription #{id}");
+                _logger.LogWarning(ex, "Failed to cancel order for subscription {SubscriptionId}", id);
             }
 
             var result = await _subscriptionService.DeactivateSubscriptionAsync(id);
             
-            return result ? Ok(new { message = "Subscription paused and order cancelled" }) : NotFound();
+            return result 
+                ? Ok(ApiResponse.Ok(new { message = "Subscription paused and order cancelled" }))
+                : NotFound(ApiResponse.Fail("NOT_FOUND", "Subscription not found"));
         }
 
         /// <summary>
@@ -283,12 +305,21 @@ namespace Sovva.WebAPI.Controllers
         {
             await _subscriptionService.UpdateNextScheduledDatesAsync();
             
-            return Ok(new 
+            return Ok(ApiResponse.Ok(new 
             { 
                 success = true,
                 message = "Subscription dates synchronized successfully",
-                timestamp = DateTime.UtcNow
-            });
+                timestamp = _time.UtcNow
+            }));
+        }
+        [HttpGet("admin/all")]
+        [Authorize(Roles = "Admin")]
+        public async Task<ActionResult<ApiResponse<PagedResult<SubscriptionDto>>>> GetAllSubscriptionsAdmin(
+            [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
+        {
+            if (pageSize > 200) return BadRequest(ApiResponse.Fail("BAD_REQUEST", "Max page size is 200"));
+            var result = await _subscriptionService.GetAllSubscriptionsAsync(page, pageSize);
+            return Ok(ApiResponse.Ok(result));
         }
     }
 }

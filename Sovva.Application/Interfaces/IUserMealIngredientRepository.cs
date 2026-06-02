@@ -17,5 +17,8 @@ namespace Sovva.Application.Interfaces
         
         // ✅ NEW: Batch get ingredients for multiple UserMeals
         Task<List<UserMealIngredient>> GetByUserMealIdsAsync(List<int> userMealIds);
+
+        // ✅ NEW: Batch insert ingredients
+        Task AddRangeAsync(IEnumerable<UserMealIngredient> entities);
     }
 }

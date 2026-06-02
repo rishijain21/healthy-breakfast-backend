@@ -1,5 +1,6 @@
 using Sovva.Application.DTOs;
 using Sovva.Application.Interfaces;
+using Sovva.Domain.Constants;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
@@ -26,87 +27,70 @@ namespace Sovva.Application.Services
             _logger = logger;
         }
 
-        // ✅ ENHANCED: Retrieves the auth_id from multiple sources
         public string? GetAuthId()
         {
-            try
+            var context = _httpContextAccessor.HttpContext;
+            if (context == null) return null;
+
+            // ✅ METHOD 1: Try AuthMiddleware context items first
+            var authIdFromMiddleware = context.Items["auth_id"]?.ToString();
+            if (!string.IsNullOrEmpty(authIdFromMiddleware))
             {
-                var context = _httpContextAccessor.HttpContext;
-                if (context == null) return null;
-
-                // ✅ METHOD 1: Try AuthMiddleware context items first
-                var authIdFromMiddleware = context.Items["auth_id"]?.ToString();
-                if (!string.IsNullOrEmpty(authIdFromMiddleware))
-                {
-                    _logger.LogInformation($"✅ CurrentUserService: AuthId from middleware: {authIdFromMiddleware}");
-                    return authIdFromMiddleware;
-                }
-
-                // ✅ METHOD 2: Try JWT claims directly (fallback)
-                if (context.User?.Identity?.IsAuthenticated == true)
-                {
-                    var authIdFromClaims = context.User.FindFirst("sub")?.Value 
-                                        ?? context.User.FindFirst("user_id")?.Value 
-                                        ?? context.User.FindFirst("id")?.Value
-                                        ?? context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-
-                    if (!string.IsNullOrEmpty(authIdFromClaims))
-                    {
-                        _logger.LogInformation($"✅ CurrentUserService: AuthId from JWT claims: {authIdFromClaims}");
-                        return authIdFromClaims;
-                    }
-                }
-
-                _logger.LogWarning("⚠️ CurrentUserService: No authId found from any source");
-                return null;
+                _logger.LogInformation("CurrentUserService: AuthId from middleware: {AuthId}", authIdFromMiddleware);
+                return authIdFromMiddleware;
             }
-            catch (Exception ex)
+
+            // ✅ METHOD 2: Try JWT claims directly (fallback)
+            if (context.User?.Identity?.IsAuthenticated == true)
             {
-                _logger.LogError($"❌ CurrentUserService GetAuthId error: {ex.Message}");
-                return null;
+                var authIdFromClaims = context.User.FindFirst("sub")?.Value 
+                                    ?? context.User.FindFirst("user_id")?.Value 
+                                    ?? context.User.FindFirst("id")?.Value
+                                    ?? context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+                if (!string.IsNullOrEmpty(authIdFromClaims))
+                {
+                    _logger.LogInformation("CurrentUserService: AuthId from JWT claims: {AuthId}", authIdFromClaims);
+                    return authIdFromClaims;
+                }
             }
+
+            _logger.LogWarning("⚠️ CurrentUserService: No authId found from any source");
+            return null;
         }
 
         // Returns the currently logged-in user's UserId
         public async Task<int?> GetCurrentUserIdAsync()
         {
-            try
+            var context = _httpContextAccessor.HttpContext;
+            if (context == null) return null;
+
+            // ✅ NEW: Try sovva_user_id claim first (zero DB hit)
+            var sovvaUserIdClaim = context.User.FindFirst(RoleConstants.SovvaUserId)?.Value;
+            if (int.TryParse(sovvaUserIdClaim, out var sovvaUserId))
             {
-                var context = _httpContextAccessor.HttpContext;
-                if (context == null) return null;
-
-                // ✅ NEW: Try sovva_user_id claim first (zero DB hit)
-                var sovvaUserIdClaim = context.User.FindFirst("sovva_user_id")?.Value;
-                if (int.TryParse(sovvaUserIdClaim, out var sovvaUserId))
-                {
-                    _logger.LogInformation($"✅ CurrentUserService: UserId from sovva_user_id claim: {sovvaUserId}");
-                    return sovvaUserId;
-                }
-
-                // Fallback: Get authId and lookup user (for backwards compatibility)
-                var authId = GetAuthId();
-                if (string.IsNullOrEmpty(authId))
-                    return null;
-
-                if (!Guid.TryParse(authId, out var authGuid))
-                    return null;
-
-                // Cache authId → UserId mapping for 5 minutes
-                var cacheKey = $"userid_{authId}";
-                if (_cache.TryGetValue(cacheKey, out int cachedUserId))
-                    return cachedUserId;
-
-                var user = await _userRepository.GetUserByAuthIdAsync(authGuid);
-                if (user == null) return null;
-
-                _cache.Set(cacheKey, user.UserId, TimeSpan.FromMinutes(5));
-                return user.UserId;
+                _logger.LogInformation("CurrentUserService: UserId from sovva_user_id claim: {UserId}", sovvaUserId);
+                return sovvaUserId;
             }
-            catch (Exception ex)
-            {
-                _logger.LogError($"❌ CurrentUserService GetCurrentUserIdAsync error: {ex.Message}");
+
+            // Fallback: Get authId and lookup user (for backwards compatibility)
+            var authId = GetAuthId();
+            if (string.IsNullOrEmpty(authId))
                 return null;
-            }
+
+            if (!Guid.TryParse(authId, out var authGuid))
+                return null;
+
+            // Cache authId → UserId mapping for 5 minutes
+            var cacheKey = $"userid_{authId}";
+            if (_cache.TryGetValue(cacheKey, out int cachedUserId))
+                return cachedUserId;
+
+            var user = await _userRepository.GetUserByAuthIdAsync(authGuid);
+            if (user == null) return null;
+
+            _cache.Set(cacheKey, user.UserId, TimeSpan.FromMinutes(5));
+            return user.UserId;
         }
 
         // Returns the currently logged-in user's details as UserDto
@@ -133,13 +117,25 @@ namespace Sovva.Application.Services
                 Name = user.Name,
                 Email = user.Email,
                 Phone = user.Phone,
-                WalletBalance = user.WalletBalance,
+                // WalletBalance omitted — always use GET /api/WalletTransactions/my-balance
                 CreatedAt = user.CreatedAt,
                 UpdatedAt = user.UpdatedAt
             };
 
             _cache.Set(cacheKey, userDto, TimeSpan.FromMinutes(5));
             return userDto;
+        }
+
+        public async Task InvalidateCacheAsync(int userId)
+        {
+            var user = await _userRepository.GetByIdAsync(userId);
+            if (user != null && user.AuthMapping != null)
+            {
+                var authIdStr = user.AuthMapping.AuthId.ToString();
+                _cache.Remove($"user_{authIdStr}");
+                _cache.Remove($"userid_{authIdStr}");
+                _logger.LogInformation("CurrentUserService: Cache invalidated for user {UserId}", userId);
+            }
         }
     }
 }

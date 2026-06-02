@@ -1,5 +1,6 @@
 using Sovva.Application.DTOs;
 using Sovva.Domain.Entities;
+using Sovva.Domain.Enums;
 using System.Threading.Tasks;
 
 namespace Sovva.Application.Interfaces
@@ -21,11 +22,12 @@ namespace Sovva.Application.Interfaces
         
         // ✅ EXISTING: Keep for backward compatibility
         Task<IEnumerable<OrderDto>> GetUserOrdersAsync(int userId);
-        Task<IEnumerable<OrderDto>> GetAllOrderHistoryAsync();
+        Task<PagedResult<OrderDto>> GetAllOrderHistoryAsync(int page = 1, int pageSize = 50);
+        Task<PagedResult<OrderDto>> GetOrdersByStatusAsync(OrderStatus status, int page = 1, int pageSize = 50);
 
         // ✅ NEW: Enhanced methods with rich data
         Task<IEnumerable<EnhancedOrderHistoryDto>> GetUserOrdersWithDetailsAsync(int userId);
-        Task<IEnumerable<EnhancedOrderHistoryDto>> GetAllOrderHistoryWithDetailsAsync();
+        Task<PagedResult<EnhancedOrderHistoryDto>> GetAllOrderHistoryWithDetailsAsync(int page = 1, int pageSize = 50);
 
         // ✅ NEW: Dedicated method for confirming scheduled orders (no catalogue lookup, no UserMeal creation)
         Task<int> ConfirmScheduledOrderAsync(ScheduledOrder scheduledOrder);
@@ -35,5 +37,9 @@ namespace Sovva.Application.Interfaces
         /// Used by midnight job to check if order was already created
         /// </summary>
         Task<Order?> GetByScheduledOrderIdAsync(int scheduledOrderId);
+
+        // ✅ NEW: Post-delivery actions
+        Task<bool> RateOrderAsync(long orderId, int userId, int rating, string? review);
+        Task<OrderCreationResponseDto> ReorderAsync(long orderId, int userId);
     }
 }

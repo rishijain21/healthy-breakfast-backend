@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Sovva.Application.DTOs;
 using Sovva.Application.Interfaces;
@@ -22,6 +24,8 @@ namespace Sovva.Application.Services
                 UserMealId = dto.UserMealId ?? 0, // Handle nullable
                 IngredientId = dto.IngredientId,
                 Quantity = dto.Quantity,
+                UnitPrice = dto.UnitPrice,
+                TotalPrice = dto.TotalPrice,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
@@ -30,6 +34,22 @@ namespace Sovva.Application.Services
             await _repository.SaveChangesAsync();
 
             return entity.UserMealIngredientId;
+        }
+
+        public async Task CreateUserMealIngredientsAsync(IEnumerable<CreateUserMealIngredientDto> dtos)
+        {
+            var entities = dtos.Select(dto => new UserMealIngredient
+            {
+                UserMealId = dto.UserMealId ?? 0,
+                IngredientId = dto.IngredientId,
+                Quantity = dto.Quantity,
+                UnitPrice = dto.UnitPrice,
+                TotalPrice = dto.TotalPrice,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            });
+
+            await _repository.AddRangeAsync(entities);
         }
 
         public async Task<UserMealIngredientDto?> GetUserMealIngredientByIdAsync(int id)

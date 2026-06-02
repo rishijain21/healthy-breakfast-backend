@@ -12,7 +12,9 @@ namespace Sovva.Application.Interfaces
         Task<List<ScheduledOrder>> GetByUserIdAndDateAsync(int userId, DateTime date);
         Task<ScheduledOrder?> GetByIdAndAuthIdAsync(int scheduledOrderId, Guid authId);
         Task<ScheduledOrder> UpdateAsync(ScheduledOrder scheduledOrder);
+        Task UpdateBatchAsync(IEnumerable<ScheduledOrder> scheduledOrders);
         Task DeleteAsync(int scheduledOrderId);
+        Task DeleteBatchAsync(IEnumerable<int> scheduledOrderIds);
         Task<List<ScheduledOrder>> GetScheduledOrdersForDateAsync(DateTime date);
         
         /// <summary>

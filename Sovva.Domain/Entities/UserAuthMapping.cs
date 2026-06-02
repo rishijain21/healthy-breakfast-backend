@@ -5,7 +5,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 namespace Sovva.Domain.Entities
 {
     [Table("user_auth_mapping")]  // ✅ Map to lowercase table name
-    public class UserAuthMapping
+    public class UserAuthMapping : BaseEntity
     {
         [Key]
         [Column("mapping_id")]  // ✅ Map to lowercase column
@@ -19,7 +19,6 @@ namespace Sovva.Domain.Entities
         public int UserId { get; set; }
 
         [Column("created_at")]  // ✅ Map to lowercase column
-        public DateTime CreatedAt { get; set; }
 
         // Navigation property
         [ForeignKey("UserId")]

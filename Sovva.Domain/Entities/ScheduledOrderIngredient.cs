@@ -4,7 +4,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace Sovva.Domain.Entities
 {
-    public class ScheduledOrderIngredient
+    public class ScheduledOrderIngredient : BaseEntity
     {
         [Key]
         public int Id { get; set; }
@@ -20,8 +20,6 @@ namespace Sovva.Domain.Entities
         public decimal UnitPrice { get; set; }
 
         public decimal TotalPrice { get; set; }
-
-        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
         // Navigation properties
         public ScheduledOrder ScheduledOrder { get; set; } = null!;

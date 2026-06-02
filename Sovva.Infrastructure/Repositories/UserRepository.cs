@@ -1,12 +1,13 @@
 using Sovva.Application.Interfaces;
 using Sovva.Application.Helpers;
+using Sovva.Domain.Constants;
 using Sovva.Domain.Entities;
 using Sovva.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 
 namespace Sovva.Infrastructure.Repositories
 {
-    public class UserRepository : IUserRepository
+    internal class UserRepository : IUserRepository
     {
         private readonly AppDbContext _context;
         private readonly IAppTimeProvider _time;
@@ -17,12 +18,13 @@ namespace Sovva.Infrastructure.Repositories
             _time = time;
         }
 
-        // ✅ FIXED: Now includes AuthMapping
         public async Task<User?> GetByIdAsync(int id)
         {
-            return await _context.Users
+            var user = await _context.Users
                 .Include(u => u.AuthMapping)
                 .FirstOrDefaultAsync(u => u.UserId == id);
+
+            return user;
         }
 
         public Task UpdateUserAsync(User user)
@@ -37,9 +39,14 @@ namespace Sovva.Infrastructure.Repositories
             return await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
         }
 
-        public async Task<List<User>> GetAllAsync()
+        public async Task<IEnumerable<User>> GetAllAsync(int page = 1, int pageSize = 50)
         {
-            return await _context.Users.ToListAsync();
+            return await _context.Users
+                .AsNoTracking()
+                .OrderBy(u => u.UserId)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync();
         }
 
         public async Task AddUserAsync(User user)
@@ -52,23 +59,55 @@ namespace Sovva.Infrastructure.Repositories
             await _context.SaveChangesAsync();
         }
 
-        // ✅ NEW METHOD: Get user by Supabase AuthId (used by ScheduledOrderService)
-        public async Task<User?> GetByAuthIdAsync(Guid authId)
+        // P1-1 FIX: Removed duplicate GetByAuthIdAsync. This is the single canonical method.
+        public async Task<(int UserId, string Role, string AccountStatus)?> GetAuthInfoByAuthIdAsync(Guid authId)
         {
-            return await _context.Users
-                .Include(u => u.AuthMapping)
-                .FirstOrDefaultAsync(u => u.AuthMapping != null && u.AuthMapping.AuthId == authId);
+            var authInfo = await _context.Users
+                .AsNoTracking()
+                .Where(u => u.AuthMapping != null && u.AuthMapping.AuthId == authId)
+                .Select(u => new { u.UserId, u.Role, u.AccountStatus })
+                .FirstOrDefaultAsync();
+
+            if (authInfo == null)
+                return null;
+
+            return (authInfo.UserId, authInfo.Role.ToString(), authInfo.AccountStatus.ToString());
         }
 
-        // ✅ NEW METHOD: Get user by Supabase AuthId (alternative name for clarity)
         public async Task<User?> GetUserByAuthIdAsync(Guid authId)
         {
-            return await _context.Users
+            var user = await _context.Users
                 .Include(u => u.AuthMapping)
                 .FirstOrDefaultAsync(u => u.AuthMapping != null && u.AuthMapping.AuthId == authId);
+
+            if (user != null)
+            {
+                user.WalletBalance = await _context.WalletTransactions
+                    .Where(wt => wt.UserId == user.UserId)
+                    .SumAsync(wt => (decimal?)(wt.Type == WalletConstants.Credit ? wt.Amount : -wt.Amount)) ?? 0m;
+            }
+
+            return user;
         }
 
-        // ✅ NEW METHOD: Batch load users by auth IDs (used in midnight job)
+        public async Task<User?> GetUserByAuthIdIncludingDeletedAsync(Guid authId)
+        {
+            var user = await _context.Users
+                .IgnoreQueryFilters()
+                .Include(u => u.AuthMapping)
+                .FirstOrDefaultAsync(u => u.AuthMapping != null && u.AuthMapping.AuthId == authId);
+
+            if (user != null)
+            {
+                user.WalletBalance = await _context.WalletTransactions
+                    .Where(wt => wt.UserId == user.UserId)
+                    .SumAsync(wt => (decimal?)(wt.Type == WalletConstants.Credit ? wt.Amount : -wt.Amount)) ?? 0m;
+            }
+
+            return user;
+        }
+
+        // Batch load users by auth IDs (used in midnight job)
         public async Task<List<User>> GetByAuthIdsAsync(List<Guid> authIds)
         {
             return await _context.Users
@@ -78,7 +117,7 @@ namespace Sovva.Infrastructure.Repositories
                 .ToListAsync();
         }
 
-        // ✅ NEW METHOD: Create user with auth mapping in transaction
+        // Create user with auth mapping in transaction
         public async Task<User> CreateUserWithAuthMappingAsync(User user, Guid authId)
         {
             var strategy = _context.Database.CreateExecutionStrategy();
@@ -114,7 +153,7 @@ namespace Sovva.Infrastructure.Repositories
             });
         }
 
-        // ✅ NEW: Batch get users with AuthMapping by user IDs (for generation job optimization)
+        // Batch get users with AuthMapping by user IDs (for generation job optimization)
         public async Task<List<User>> GetByIdsWithAuthMappingAsync(List<int> userIds) =>
             await _context.Users
                 .AsNoTracking()
@@ -122,20 +161,13 @@ namespace Sovva.Infrastructure.Repositories
                 .Where(u => userIds.Contains(u.UserId))
                 .ToListAsync();
 
-        // ✅ NEW: Atomic wallet deduction with balance check (prevents race conditions)
-        // Returns the new balance if successful, or null if insufficient funds
-        public async Task<bool> DeductWalletBalanceAtomicAsync(int userId, decimal amount)
-        {
-            // Use raw SQL for atomic UPDATE with condition
-            // This ensures the check-and-deduct is a single atomic operation
-            // CORRECT — match exact column names from your schema
-var rowsAffected = await _context.Database.ExecuteSqlRawAsync(
-    @"UPDATE public.""Users"" 
-       SET ""WalletBalance"" = ""WalletBalance"" - @p0, ""UpdatedAt"" = @p1
-       WHERE ""UserId"" = @p2 AND ""WalletBalance"" >= @p0",
-    amount, DateTime.UtcNow, userId);
+        // P0-3 FIX: DeductWalletBalanceAtomicAsync and CreditWalletBalanceAsync REMOVED.
+        // Wallet operations now use IWalletTransactionRepository.AtomicDebitAsync / AtomicCreditAsync
+        // which do a single INSERT INTO WalletTransactions with a balance check in the WHERE clause.
 
-            return rowsAffected == 1;
+        public async Task<int> CountAsync()
+        {
+            return await _context.Users.CountAsync();
         }
     }
 }

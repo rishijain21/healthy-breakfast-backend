@@ -5,10 +5,14 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Sovva.Application.Exceptions;
+using Sovva.Domain.Constants;
 using Sovva.Application.Interfaces;
 using Sovva.Application.Helpers;
 using Sovva.Domain.Entities;
 using Sovva.Domain.Enums;
+
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Sovva.Application.Tests")]
 
 namespace Sovva.Application.Services
 {
@@ -70,8 +74,9 @@ namespace Sovva.Application.Services
             var allSubscriptions = await _subscriptionRepo.GetActiveSubscriptionsAsync();
             _logger.LogInformation("[SUB-JOB] Active subscriptions: {Count}", allSubscriptions.Count());
 
-            // ── BATCH LOAD — 5 queries regardless of subscription count ──────
-            var userMealIds = allSubscriptions.Select(s => s.UserMealId).Distinct().ToList();
+            // ── BATCH LOAD ──────
+            var userMealIds = allSubscriptions.Where(s => s.UserMealId.HasValue).Select(s => s.UserMealId!.Value).Distinct().ToList();
+            var mealIds     = allSubscriptions.Where(s => s.MealId.HasValue).Select(s => s.MealId!.Value).Distinct().ToList();
             var userIds     = allSubscriptions.Select(s => s.UserId).Distinct().ToList();
 
             var userMealsMap  = (await _userMealRepo.GetByIdsAsync(userMealIds))
@@ -80,6 +85,9 @@ namespace Sovva.Application.Services
             var userMealIngredientsMap = (await _userMealIngredientRepo.GetByUserMealIdsAsync(userMealIds))
                                          .GroupBy(i => i.UserMealId)
                                          .ToDictionary(g => g.Key, g => g.ToList());
+
+            var mealsMap      = (await _mealRepo.GetByIdsWithOptionsAsync(mealIds))
+                                .ToDictionary(m => m.MealId);
 
             var usersMap      = (await _userRepo.GetByIdsWithAuthMappingAsync(userIds))
                                 .ToDictionary(u => u.UserId);
@@ -106,7 +114,7 @@ namespace Sovva.Application.Services
                     }
 
                     // 2. EndDate guard
-                    if (subscription.EndDate < deliveryDay)
+                    if (subscription.EndDate <= today)
                     {
                         _logger.LogInformation(
                             "[SUB-JOB] Subscription #{Id} expired on {End}, skipping",
@@ -131,19 +139,57 @@ namespace Sovva.Application.Services
                     // 4. Resolve quantity (weekly subscriptions can have per-day quantities)
                     int quantity = GetQuantityForDate(subscription, deliveryDay);
 
-                    // 5. Resolve UserMeal
-                    if (!userMealsMap.TryGetValue(subscription.UserMealId, out var userMeal))
-                    {
-                        _logger.LogWarning(
-                            "[SUB-JOB] UserMeal {UserMealId} not found for subscription #{Id}",
-                            subscription.UserMealId, subscription.SubscriptionId);
-                        failed++;
-                        continue;
-                    }
+                    // 5 & 6. Resolve Meal / Ingredients and Check Price Protection
+                    string orderMealName;
+                    List<ScheduledOrderIngredient>? resolvedIngredients = null;
 
-                    // 6. Resolve ingredients — custom meal first, then catalogue fallback
-                    var resolvedIngredients = await ResolveIngredientsAsync(
-                        subscription.SubscriptionId, userMeal, userMealIngredientsMap, quantity);
+                    if (subscription.UserMealId.HasValue)
+                    {
+                        if (!userMealsMap.TryGetValue(subscription.UserMealId.Value, out var userMeal))
+                        {
+                            _logger.LogWarning("[SUB-JOB] UserMeal {UserMealId} not found for subscription #{Id}", subscription.UserMealId, subscription.SubscriptionId);
+                            failed++; continue;
+                        }
+                        
+                        // Price Protection: Custom meals use TotalPrice at time of snapshot
+                        orderMealName = $"{userMeal.MealName} (Subscription)";
+                        resolvedIngredients = await ResolveCustomIngredientsAsync(subscription.SubscriptionId, userMeal, userMealIngredientsMap, quantity);
+                    }
+                    else if (subscription.MealId.HasValue)
+                    {
+                        if (!mealsMap.TryGetValue(subscription.MealId.Value, out var masterMeal))
+                        {
+                            _logger.LogWarning("[SUB-JOB] Master Meal {MealId} not found for subscription #{Id}", subscription.MealId, subscription.SubscriptionId);
+                            failed++; continue;
+                        }
+
+                        // Price Protection: Check if master meal price increased
+                        if (masterMeal.BasePrice > subscription.AgreedPrice)
+                        {
+                            _logger.LogWarning("[SUB-JOB] Price Protection Triggered for Subscription #{Id}. Agreed: {Agreed}, Current: {Current}. Pausing subscription.", 
+                                subscription.SubscriptionId, subscription.AgreedPrice, masterMeal.BasePrice);
+                                
+                            subscription.IsActive = false;
+                            subscription.PauseReason = $"Price increased from {subscription.AgreedPrice:C} to {masterMeal.BasePrice:C}";
+                            await _subscriptionRepo.UpdateAsync(subscription);
+                            skipped++; continue;
+                        }
+                        // If price decreased, auto-adjust agreed price downwards
+                        else if (masterMeal.BasePrice < subscription.AgreedPrice)
+                        {
+                            _logger.LogInformation("[SUB-JOB] Price decreased for Subscription #{Id}. Updating AgreedPrice to {Current}.", 
+                                subscription.SubscriptionId, masterMeal.BasePrice);
+                            subscription.AgreedPrice = masterMeal.BasePrice;
+                            await _subscriptionRepo.UpdateAsync(subscription);
+                        }
+
+                        orderMealName = $"{masterMeal.MealName} (Subscription)";
+                        resolvedIngredients = await ResolveFixedIngredientsAsync(subscription.SubscriptionId, masterMeal, quantity);
+                    }
+                    else
+                    {
+                        failed++; continue;
+                    }
 
                     if (resolvedIngredients == null)
                     {
@@ -182,10 +228,10 @@ namespace Sovva.Application.Services
                     {
                         UserId           = subscription.UserId,
                         AuthId           = user.AuthMapping!.AuthId,
-                        MealName         = $"{userMeal.MealName} (Subscription)",
+                        MealName         = orderMealName,
                         ScheduledFor     = deliveryDay,
-                        DeliveryTimeSlot = "7:00 AM",
-                        TotalPrice       = userMeal.TotalPrice * quantity,
+                        DeliveryTimeSlot = DeliveryConstants.DefaultTimeSlot,
+                        TotalPrice       = resolvedIngredients.Sum(i => i.TotalPrice),
                         OrderStatus      = ScheduledOrderStatus.Scheduled,
                         CanModify        = true,
                         ExpiresAt        = _time.ToUtc(
@@ -208,7 +254,7 @@ namespace Sovva.Application.Services
                     generated++;
                     _logger.LogInformation(
                         "[SUB-JOB] ✅ Created order for subscription #{Id} ({Meal}) → delivery {Date}, qty {Qty}, next {Next:yyyy-MM-dd}",
-                        subscription.SubscriptionId, userMeal.MealName, deliveryDay,
+                        subscription.SubscriptionId, orderMealName, deliveryDay,
                         quantity, subscription.NextScheduledDate);
                 }
                 catch (Exception ex)
@@ -234,7 +280,7 @@ namespace Sovva.Application.Services
             if (subscription == null)
                 throw new InvalidOperationException($"Subscription #{subscriptionId} not found");
 
-            if (!subscription.Active)
+            if (!subscription.IsActive)
             {
                 _logger.LogInformation(
                     "[REALTIME] Subscription #{Id} is inactive, skipping", subscriptionId);
@@ -272,34 +318,70 @@ namespace Sovva.Application.Services
             }
 
             int quantity   = GetQuantityForDate(subscription, deliveryDay);
-            var userMeal   = await _userMealRepo.GetByIdAsync(subscription.UserMealId)
-                             ?? throw new InvalidOperationException("UserMeal not found");
+            
+            string orderMealName;
+            decimal totalPrice = subscription.AgreedPrice;
+            List<ScheduledOrderIngredient>? resolvedIngredients = null;
+
+            if (subscription.UserMealId.HasValue)
+            {
+                var userMeal = await _userMealRepo.GetByIdAsync(subscription.UserMealId.Value)
+                                 ?? throw new InvalidOperationException("UserMeal not found");
+                
+                orderMealName = $"{userMeal.MealName} (Subscription)";
+                var ingredients = await _userMealIngredientRepo.GetByUserMealIdAsync(subscription.UserMealId.Value);
+                resolvedIngredients = await ResolveCustomIngredientsAsync(subscription.SubscriptionId, userMeal, 
+                    new Dictionary<int, List<UserMealIngredient>> { { userMeal.UserMealId, ingredients.ToList() } }, quantity);
+            }
+            else if (subscription.MealId.HasValue)
+            {
+                var masterMeal = await _mealRepo.GetByIdWithOptionsAsync(subscription.MealId.Value)
+                                 ?? throw new InvalidOperationException("Master Meal not found");
+                
+                // Real-time price protection
+                if (masterMeal.BasePrice > subscription.AgreedPrice)
+                {
+                    subscription.IsActive = false;
+                    subscription.PauseReason = $"Price increased from {subscription.AgreedPrice:C} to {masterMeal.BasePrice:C}";
+                    await _subscriptionRepo.UpdateAsync(subscription);
+                    _logger.LogInformation("[REALTIME] Price Protection Paused Subscription #{Id}", subscriptionId);
+                    return;
+                }
+                else if (masterMeal.BasePrice < subscription.AgreedPrice)
+                {
+                    subscription.AgreedPrice = masterMeal.BasePrice;
+                    await _subscriptionRepo.UpdateAsync(subscription);
+                }
+
+                orderMealName = $"{masterMeal.MealName} (Subscription)";
+                resolvedIngredients = await ResolveFixedIngredientsAsync(subscriptionId, masterMeal, quantity);
+            }
+            else
+            {
+                throw new InvalidOperationException("Subscription missing both MealId and UserMealId");
+            }
+
             var user       = await _userRepo.GetByIdAsync(userId)
                              ?? throw new InvalidOperationException("User not found");
 
             if (user.AuthMapping?.AuthId == null)
                 throw new InvalidOperationException("User AuthMapping missing");
 
-            var ingredients = await _userMealIngredientRepo.GetByUserMealIdAsync(subscription.UserMealId);
-            var resolvedIngredients = await BuildIngredientListAsync(
-                subscription.SubscriptionId, userMeal, ingredients.ToList(), quantity);
-
             if (resolvedIngredients == null)
-                throw new InvalidOperationException(
-                    $"No ingredients found for UserMeal #{subscription.UserMealId}");
+                throw new InvalidOperationException($"No ingredients found for Subscription #{subscriptionId}");
 
             int? deliveryAddressId = subscription.DeliveryAddressId
                 ?? (await _userAddressRepo.GetPrimaryAddressAsync(userId))?.Id
-                ?? throw new InvalidOperationException("No delivery address found");
+                ?? throw new AddressNotFoundException(userId);
 
             var scheduledOrder = new ScheduledOrder
             {
                 UserId            = userId,
                 AuthId            = user.AuthMapping.AuthId,
-                MealName          = $"{userMeal.MealName} (Subscription)",
+                MealName          = orderMealName,
                 ScheduledFor      = deliveryDay,
-                DeliveryTimeSlot  = "7:00 AM",
-                TotalPrice        = userMeal.TotalPrice * quantity,
+                DeliveryTimeSlot  = DeliveryConstants.DefaultTimeSlot,
+                TotalPrice        = resolvedIngredients.Sum(i => i.TotalPrice),
                 OrderStatus       = ScheduledOrderStatus.Scheduled,
                 CanModify         = true,
                 ExpiresAt         = _time.ToUtc(
@@ -327,26 +409,22 @@ namespace Sovva.Application.Services
             var tomorrow = _time.TodayIst.AddDays(1);
 
             var orders = await _scheduledOrderRepo.GetBySubscriptionIdAsync(subscriptionId);
-            var toCancel = orders
-                .Where(o => o.ScheduledFor == tomorrow && o.OrderStatus == ScheduledOrderStatus.Scheduled)
+            var toDelete = orders
+                .Where(o => o.ScheduledFor >= tomorrow 
+                         && !o.IsProcessedToOrder)
                 .ToList();
 
-            _logger.LogInformation("[CANCEL] Found {Count} orders to cancel for subscription #{Id} on {Date}",
-                toCancel.Count, subscriptionId, tomorrow);
-
-            foreach (var order in toCancel)
+            if (!toDelete.Any())
             {
-                try
-                {
-                    await _scheduledOrderRepo.DeleteAsync(order.ScheduledOrderId);
-                    _logger.LogInformation("[CANCEL] ✅ Deleted order #{OrderId}", order.ScheduledOrderId);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex,
-                        "[CANCEL] ⚠️ Failed to delete order #{OrderId}", order.ScheduledOrderId);
-                }
+                _logger.LogInformation("[CANCEL] No future orders to delete for subscription #{SubscriptionId}", subscriptionId);
+                return;
             }
+
+            _logger.LogInformation("[CANCEL] Deleting {Count} future orders for subscription #{SubscriptionId} starting {Date}",
+                toDelete.Count, subscriptionId, tomorrow);
+
+            await _scheduledOrderRepo.DeleteBatchAsync(toDelete.Select(o => o.ScheduledOrderId));
+            _logger.LogInformation("[CANCEL] ✅ Successfully deleted {Count} future orders for subscription #{SubscriptionId}", toDelete.Count, subscriptionId);
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -397,7 +475,7 @@ namespace Sovva.Application.Services
             return 1;
         }
 
-        private DateOnly CalculateNextScheduledDate(Subscription subscription, DateOnly deliveredOn)
+        internal DateOnly CalculateNextScheduledDate(Subscription subscription, DateOnly deliveredOn)
         {
             switch (subscription.Frequency)
             {
@@ -422,7 +500,7 @@ namespace Sovva.Application.Services
         /// <summary>
         /// Finds next weekly delivery date. Uses nullable int to avoid Sunday (0) = default(int) bug.
         /// </summary>
-        private static DateOnly FindNextWeeklyDate(DateOnly fromDate, List<int> scheduledDays)
+        internal static DateOnly FindNextWeeklyDate(DateOnly fromDate, List<int> scheduledDays)
         {
             if (!scheduledDays.Any())
                 return fromDate.AddDays(7);
@@ -439,82 +517,23 @@ namespace Sovva.Application.Services
         }
 
         /// <summary>
-        /// Resolves ingredient list for nightly batch job (uses pre-loaded maps).
-        /// Returns null if ingredients cannot be resolved — caller should increment failedCount.
+        /// Resolves ingredient list for Custom Meal subscription.
         /// </summary>
-        private async Task<List<ScheduledOrderIngredient>?> ResolveIngredientsAsync(
+        private async Task<List<ScheduledOrderIngredient>?> ResolveCustomIngredientsAsync(
             int subscriptionId,
             UserMeal userMeal,
             Dictionary<int, List<UserMealIngredient>> userMealIngredientsMap,
             int quantity)
         {
-            // Path A: custom meal — UserMealIngredients exist
-            if (userMealIngredientsMap.TryGetValue(userMeal.UserMealId, out var umi) && umi.Any())
+            if (!userMealIngredientsMap.TryGetValue(userMeal.UserMealId, out var umi) || !umi.Any())
             {
-                return await BuildIngredientListAsync(subscriptionId, userMeal, umi, quantity);
-            }
-
-            // Path B: catalogue meal — fall back to MealOptions default option
-            var meal = await _mealRepo.GetByIdWithOptionsAsync(userMeal.MealId);
-            var defaultOption = meal?.MealOptions?.FirstOrDefault();
-
-            if (defaultOption == null || !defaultOption.MealOptionIngredients.Any())
-            {
-                _logger.LogWarning(
-                    "[SUB-JOB] No ingredients resolvable for UserMeal #{UserMealId} " +
-                    "(MealId: {MealId}), subscription #{SubId}",
-                    userMeal.UserMealId, userMeal.MealId, subscriptionId);
-                return null;
-            }
-
-            // Batch load ingredient prices for the catalogue path
-            var ingredientIds = defaultOption.MealOptionIngredients
-                .Select(i => i.IngredientId).ToList();
-            var ingredientPrices = (await _ingredientRepo.GetByIdsAsync(ingredientIds))
-                .ToDictionary(i => i.IngredientId);
-
-            var result = new List<ScheduledOrderIngredient>();
-            foreach (var moi in defaultOption.MealOptionIngredients)
-            {
-                // MealOptionIngredient has no Quantity — default to 1 per ingredient per serving
-                int qty = 1 * quantity;
-                ingredientPrices.TryGetValue(moi.IngredientId, out var ing);
-                decimal unitPrice = ing?.Price ?? 0m;
-
-                result.Add(new ScheduledOrderIngredient
-                {
-                    IngredientId = moi.IngredientId,
-                    Quantity     = qty,
-                    UnitPrice    = unitPrice,
-                    TotalPrice   = unitPrice * qty,
-                    CreatedAt    = DateTime.UtcNow
-                });
-            }
-            return result;
-        }
-
-        /// <summary>
-        /// Builds ScheduledOrderIngredient list from UserMealIngredients.
-        /// Used by both batch job and real-time path.
-        /// Returns null if ingredients list is empty.
-        /// </summary>
-        private async Task<List<ScheduledOrderIngredient>?> BuildIngredientListAsync(
-            int subscriptionId,
-            UserMeal userMeal,
-            List<UserMealIngredient> umi,
-            int quantity)
-        {
-            if (!umi.Any())
-            {
-                _logger.LogWarning(
-                    "[INGREDIENTS] Empty UserMealIngredients for UserMeal #{Id}, subscription #{SubId}",
+                _logger.LogWarning("[INGREDIENTS] Empty UserMealIngredients for UserMeal #{Id}, subscription #{SubId}",
                     userMeal.UserMealId, subscriptionId);
                 return null;
             }
 
             var ingredientIds = umi.Select(i => i.IngredientId).ToList();
-            var prices = (await _ingredientRepo.GetByIdsAsync(ingredientIds))
-                .ToDictionary(i => i.IngredientId);
+            var prices = await _ingredientRepo.GetByIdsAsync(ingredientIds);
 
             var result = new List<ScheduledOrderIngredient>();
             foreach (var item in umi)
@@ -529,7 +548,46 @@ namespace Sovva.Application.Services
                     Quantity     = qty,
                     UnitPrice    = unitPrice,
                     TotalPrice   = unitPrice * qty,
-                    CreatedAt    = DateTime.UtcNow
+                    CreatedAt    = _time.UtcNow
+                });
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Resolves ingredient list for Fixed Meal subscription.
+        /// </summary>
+        private async Task<List<ScheduledOrderIngredient>?> ResolveFixedIngredientsAsync(
+            int subscriptionId,
+            Meal masterMeal,
+            int quantity)
+        {
+            var defaultOption = masterMeal.MealOptions?.FirstOrDefault();
+
+            if (defaultOption == null || !defaultOption.MealOptionIngredients.Any())
+            {
+                _logger.LogWarning("[SUB-JOB] No ingredients resolvable for Master Meal #{MealId}, subscription #{SubId}",
+                    masterMeal.MealId, subscriptionId);
+                return null;
+            }
+
+            var ingredientIds = defaultOption.MealOptionIngredients.Select(i => i.IngredientId).ToList();
+            var ingredientPrices = await _ingredientRepo.GetByIdsAsync(ingredientIds);
+
+            var result = new List<ScheduledOrderIngredient>();
+            foreach (var moi in defaultOption.MealOptionIngredients)
+            {
+                int qty = 1 * quantity;
+                ingredientPrices.TryGetValue(moi.IngredientId, out var ing);
+                decimal unitPrice = ing?.Price ?? 0m;
+
+                result.Add(new ScheduledOrderIngredient
+                {
+                    IngredientId = moi.IngredientId,
+                    Quantity     = qty,
+                    UnitPrice    = unitPrice,
+                    TotalPrice   = unitPrice * qty,
+                    CreatedAt    = _time.UtcNow
                 });
             }
             return result;

@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Sovva.Infrastructure.Repositories
 {
-    public class ServiceableLocationRepository : IServiceableLocationRepository
+    internal class ServiceableLocationRepository : IServiceableLocationRepository
     {
         private readonly AppDbContext _context;
         private readonly IAppTimeProvider _time;

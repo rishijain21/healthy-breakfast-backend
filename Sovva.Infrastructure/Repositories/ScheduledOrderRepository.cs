@@ -12,7 +12,7 @@ using Sovva.Infrastructure.Data;
 
 namespace Sovva.Infrastructure.Repositories
 {
-    public class ScheduledOrderRepository : IScheduledOrderRepository
+    internal class ScheduledOrderRepository : IScheduledOrderRepository
     {
         private readonly AppDbContext _context;
         private readonly IAppTimeProvider _time;
@@ -153,6 +153,7 @@ namespace Sovva.Infrastructure.Repositories
             _logger.LogInformation("🔍 Querying scheduled orders for {Date:yyyy-MM-dd}", date);
 
             return await _context.ScheduledOrders
+                .AsNoTracking()
                 .Include(so => so.Ingredients)
                     .ThenInclude(soi => soi.Ingredient)
                 .Where(so => so.ScheduledFor == date  // DateOnly == DateOnly ✅ clean
@@ -205,6 +206,7 @@ namespace Sovva.Infrastructure.Repositories
         public async Task<ScheduledOrder> UpdateAsync(ScheduledOrder scheduledOrder)
         {
             var existing = await _context.ScheduledOrders
+                .Include(so => so.Ingredients)
                 .FirstOrDefaultAsync(so => so.ScheduledOrderId == scheduledOrder.ScheduledOrderId);
 
             if (existing == null)
@@ -219,6 +221,21 @@ namespace Sovva.Infrastructure.Repositories
             existing.NutritionalSummary = scheduledOrder.NutritionalSummary;
             // UpdatedAt handled by TimestampInterceptor
 
+            // ✅ FIX 6: Replace ingredients to prevent silent data loss
+            if (scheduledOrder.Ingredients != null)
+            {
+                existing.Ingredients ??= new List<ScheduledOrderIngredient>();
+                
+                // Clear existing ingredients (EF will track as deleted)
+                existing.Ingredients.Clear();
+                
+                // Add new ingredients
+                foreach (var ing in scheduledOrder.Ingredients)
+                {
+                    existing.Ingredients.Add(ing);
+                }
+            }
+
             // ✅ FIX: Populate audit fields when order is confirmed
             if (scheduledOrder.IsProcessedToOrder)
             {
@@ -228,6 +245,12 @@ namespace Sovva.Infrastructure.Repositories
 
             await _context.SaveChangesAsync();
             return existing;
+        }
+
+        public async Task UpdateBatchAsync(IEnumerable<ScheduledOrder> scheduledOrders)
+        {
+            _context.ScheduledOrders.UpdateRange(scheduledOrders);
+            await _context.SaveChangesAsync();
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -248,6 +271,24 @@ namespace Sovva.Infrastructure.Repositories
             }
         }
 
+        public async Task DeleteBatchAsync(IEnumerable<int> scheduledOrderIds)
+        {
+            var orders = await _context.ScheduledOrders
+                .Include(so => so.Ingredients)
+                .Where(so => scheduledOrderIds.Contains(so.ScheduledOrderId))
+                .ToListAsync();
+
+            if (orders.Any())
+            {
+                foreach (var order in orders)
+                {
+                    _context.ScheduledOrderIngredients.RemoveRange(order.Ingredients);
+                }
+                _context.ScheduledOrders.RemoveRange(orders);
+                await _context.SaveChangesAsync();
+            }
+        }
+
         // ─────────────────────────────────────────────────────────────────────
         // ✅ NEW: Raw SQL methods for midnight job (avoid EF Core tracking)
         // ─────────────────────────────────────────────────────────────────────
@@ -262,9 +303,9 @@ namespace Sovva.Infrastructure.Repositories
                 @"UPDATE public.""ScheduledOrders"" 
                   SET ""OrderStatus"" = @p0, 
                       ""CanModify"" = false, 
-                      ""UpdatedAt"" = @p1
-                  WHERE ""ScheduledOrderId"" = @p2",
-                status, DateTime.UtcNow, scheduledOrderId);
+                      ""UpdatedAt"" = NOW() AT TIME ZONE 'UTC'
+                  WHERE ""ScheduledOrderId"" = @p1",
+                status, scheduledOrderId);
         }
 
         /// <summary>
@@ -278,14 +319,14 @@ namespace Sovva.Infrastructure.Repositories
         {
             await _context.Database.ExecuteSqlRawAsync(
                 @"UPDATE public.""ScheduledOrders"" 
-                  SET ""OrderStatus"" = 'processed',
+                  SET ""OrderStatus"" = 'Processed',
                       ""CanModify"" = false,
                       ""IsProcessedToOrder"" = true,
                       ""ConfirmedOrderId"" = @p0,
                       ""ConfirmedAt"" = @p1,
-                      ""UpdatedAt"" = @p2
-                  WHERE ""ScheduledOrderId"" = @p3",
-                confirmedOrderId, confirmedAt, DateTime.UtcNow, scheduledOrderId);
+                      ""UpdatedAt"" = NOW() AT TIME ZONE 'UTC'
+                  WHERE ""ScheduledOrderId"" = @p2",
+                confirmedOrderId, confirmedAt, scheduledOrderId);
         }
     }
 }

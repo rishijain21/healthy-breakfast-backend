@@ -6,7 +6,7 @@ using Sovva.Domain.Enums;
 
 namespace Sovva.Domain.Entities
 {
-    public class ScheduledOrder
+    public class ScheduledOrder : BaseEntity
     {
         [Key]
         public int ScheduledOrderId { get; set; }
@@ -37,9 +37,6 @@ namespace Sovva.Domain.Entities
         public ScheduledOrderStatus OrderStatus { get; set; } = ScheduledOrderStatus.Scheduled;
         
         public bool CanModify { get; set; } = true;
-        
-        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-        public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
         
         public DateTime? ConfirmedAt { get; set; } // When auto-confirmed at midnight
         

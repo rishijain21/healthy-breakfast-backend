@@ -1,5 +1,8 @@
 using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using Microsoft.Extensions.Caching.Memory;
 using Sovva.Application.Interfaces;
+using Sovva.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 
 namespace Sovva.WebAPI.Middleware
@@ -19,6 +22,14 @@ namespace Sovva.WebAPI.Middleware
 
         public async Task InvokeAsync(HttpContext context)
         {
+            // ✅ Always pass CORS preflight (OPTIONS) requests through without auth processing.
+            // Preflights carry no Authorization header and are handled by UseCors earlier in the pipeline.
+            if (context.Request.Method == HttpMethods.Options)
+            {
+                await _next(context);
+                return;
+            }
+
             var path = context.Request.Path.Value?.ToLower() ?? "";
             var publicEndpoints = new[]
             {
@@ -38,13 +49,18 @@ namespace Sovva.WebAPI.Middleware
             if (context.Request.Path.StartsWithSegments("/api")
                 && context.User.Identity?.IsAuthenticated == true)
             {
-                await ProcessAuthenticationAsync(context);
+                var isAuthenticatedAndValid = await ProcessAuthenticationAsync(context);
+                if (!isAuthenticatedAndValid)
+                {
+                    // Response already written (e.g. 401 Account Deleted), short-circuit pipeline
+                    return;
+                }
             }
 
             await _next(context);
         }
 
-        private async Task ProcessAuthenticationAsync(HttpContext context)
+        private async Task<bool> ProcessAuthenticationAsync(HttpContext context)
         {
             try
             {
@@ -54,14 +70,32 @@ namespace Sovva.WebAPI.Middleware
                 if (!string.IsNullOrEmpty(authId) && Guid.TryParse(authId, out var authGuid))
                 {
                     using var scope = _serviceScopeFactory.CreateScope();
-                    var userService = scope.ServiceProvider.GetRequiredService<IUserService>();
+                    var userRepository = scope.ServiceProvider.GetRequiredService<IUserRepository>();
+                    var memoryCache = scope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Caching.Memory.IMemoryCache>();
 
-                    var userDto = await userService.GetUserByAuthIdAsync(authGuid);
-
-                    if (userDto != null)
+                    var cacheKey = $"auth:{authGuid}";
+                    var authInfo = await memoryCache.GetOrCreateAsync(cacheKey, async entry =>
                     {
-                        context.Items["UserId"] = userDto.UserId;
-                        context.Items["User"] = userDto;
+                        entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30);
+                        return await userRepository.GetAuthInfoByAuthIdAsync(authGuid);
+                    });
+
+                    if (authInfo.HasValue)
+                    {
+                        // Check if user account is deleted
+                        if (authInfo.Value.AccountStatus == AccountStatusConstants.Deleted)
+                        {
+                            _logger.LogWarning(
+                                "Access denied - deleted account: AuthId={AuthId} Path={Path}",
+                                authId, context.Request.Path);
+                            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                            context.Response.ContentType = "application/json";
+                            var errorResponse = new { success = false, code = "ACCOUNT_DELETED", message = "Account deleted" };
+                            await context.Response.WriteAsync(System.Text.Json.JsonSerializer.Serialize(errorResponse));
+                            return false;
+                        }
+
+                        context.Items["UserId"] = authInfo.Value.UserId;
                         context.Items["auth_id"] = authId;
                         context.Items["AuthId"] = authGuid;
 
@@ -75,25 +109,25 @@ namespace Sovva.WebAPI.Middleware
 
                             // ✅ FIX 2: Add role to "sovva_role" claim — matches RoleClaimType in Program.cs
                             identity.AddClaim(new System.Security.Claims.Claim(
-                                "sovva_role",
-                                userDto.Role ?? "User"
+                                RoleConstants.SovvaRole,
+                                authInfo.Value.Role ?? "User"
                             ));
 
                             // ✅ FIX 3: Add sovva_user_id claim — used by User.GetSovvaUserId()
                             // Only add if not already present in the JWT from Supabase hook
-                            var existingUserIdClaim = identity.FindFirst("sovva_user_id");
+                            var existingUserIdClaim = identity.FindFirst(RoleConstants.SovvaUserId);
                             if (existingUserIdClaim == null)
                             {
                                 identity.AddClaim(new System.Security.Claims.Claim(
-                                    "sovva_user_id",
-                                    userDto.UserId.ToString()
+                                    RoleConstants.SovvaUserId,
+                                    authInfo.Value.UserId.ToString()
                                 ));
                             }
                         }
 
                         _logger.LogInformation(
                             "✅ AuthMiddleware: User {UserId} authenticated with role {Role}",
-                            userDto.UserId, userDto.Role);
+                            authInfo.Value.UserId, authInfo.Value.Role);
                     }
                     else
                     {
@@ -105,10 +139,13 @@ namespace Sovva.WebAPI.Middleware
                         context.Items["IsNewUser"] = true;
                     }
                 }
+                
+                return true;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "❌ AuthMiddleware error");
+                return true; // Let the request continue or return 500, we don't block here unless we specifically know why
             }
         }
 
@@ -130,12 +167,6 @@ namespace Sovva.WebAPI.Middleware
             }
         }
 
-        private (string? Name, string? Email) ExtractUserInfoFromToken(HttpContext context)
-        {
-            var name = context.User.FindFirst("name")?.Value
-                ?? context.User.FindFirst("full_name")?.Value;
-            var email = context.User.FindFirst("email")?.Value;
-            return (name, email);
-        }
+
     }
 }

@@ -6,6 +6,8 @@ using Microsoft.Extensions.Logging;
 using Sovva.Application.Interfaces;
 using Sovva.Application.Helpers;
 using Sovva.Application.DTOs;
+using Sovva.Application.Exceptions;
+using Sovva.Domain.Constants;
 
 namespace Sovva.Application.Services
 {
@@ -49,13 +51,13 @@ namespace Sovva.Application.Services
             
             var tomorrowIst = istNow.Date.AddDays(1);
 
-            _logger.LogInformation($"🍳 Kitchen Preview: TOMORROW's delivery ({tomorrowIst:yyyy-MM-dd})");
+            _logger.LogInformation("Kitchen Preview: TOMORROW's delivery ({TomorrowDate})", tomorrowIst.ToString("yyyy-MM-dd"));
 
             var orders = await _kitchenRepository.GetOrdersForPreparationAsync(tomorrowIst);
 
             var result = orders.Select(o => MapToDto(o)).ToList();
 
-            _logger.LogInformation($"📦 Kitchen: {result.Count} orders confirmed for TOMORROW");
+            _logger.LogInformation("Kitchen: {OrderCount} orders confirmed for TOMORROW", result.Count);
 
             return result;
         }
@@ -71,19 +73,24 @@ namespace Sovva.Application.Services
         public async Task MarkOrderAsPreparedAsync(int orderId)
         {
             var order = await _kitchenRepository.GetOrderByIdAsync(orderId);
-            
+
             if (order == null)
-                throw new InvalidOperationException("Order not found");
+                throw new OrderNotFoundException(orderId);
 
             if (order.IsPrepared)
-                throw new InvalidOperationException("Order already marked as prepared");
+                throw new OrderAlreadyPreparedException(orderId);
+
+            // Guard: only allow marking orders scheduled for today (IST)
+            var todayIst = _time.ToIst(_time.UtcNow).Date;
+            var orderDateIst = _time.ToIst(order.ScheduledFor).Date;
+            if (orderDateIst != todayIst)
+                throw new InvalidOperationException(
+                    $"Order #{orderId} is scheduled for {orderDateIst:yyyy-MM-dd}, not today ({todayIst:yyyy-MM-dd}). Only today's orders can be marked prepared.");
 
             order.IsPrepared = true;
-            // UpdatedAt handled by TimestampInterceptor
-
             await _kitchenRepository.UpdateOrderAsync(order);
 
-            _logger.LogInformation($"✅ Order #{orderId} marked as prepared");
+            _logger.LogInformation("Order #{OrderId} marked as prepared", orderId);
         }
 
         public async Task<KitchenStatsDto> GetTodayStatsAsync()
@@ -91,7 +98,7 @@ namespace Sovva.Application.Services
             var istNow = _time.ToIst(_time.UtcNow);
             var todayIst = istNow.Date;
 
-            var todayOrders = await _kitchenRepository.GetOrdersForPreparationAsync(todayIst);
+            var todayOrders = await _kitchenRepository.GetOrdersForPreparationAsync(todayIst, includeDetails: false);
 
             var stats = new KitchenStatsDto
             {
@@ -113,7 +120,7 @@ namespace Sovva.Application.Services
             var istNow = _time.ToIst(_time.UtcNow);
             var tomorrowIst = istNow.Date.AddDays(1);
 
-            var tomorrowOrders = await _kitchenRepository.GetOrdersForPreparationAsync(tomorrowIst);
+            var tomorrowOrders = await _kitchenRepository.GetOrdersForPreparationAsync(tomorrowIst, includeDetails: false);
 
             var stats = new KitchenStatsDto
             {
@@ -141,7 +148,8 @@ namespace Sovva.Application.Services
                 UserPhoneNumber = o.User?.Phone ?? "N/A",
                 MealName = o.UserMeal?.MealName ?? "Custom Meal",
                 ScheduledFor = o.ScheduledFor,
-                DeliveryTimeSlot = "7:00 AM - 9:00 AM",
+                // Use the delivery location's slot — NOT a hardcoded value
+                DeliveryTimeSlot = o.DeliveryAddress?.ServiceableLocation?.DeliveryTimeSlot ?? DeliveryConstants.DefaultDeliveryWindow,
                 TotalPrice = o.TotalPrice,
                 IsPrepared = o.IsPrepared,
                 CreatedAt = o.CreatedAt,

@@ -1,5 +1,6 @@
 using System.Threading.Tasks;
 using Sovva.Application.Interfaces;
+using Sovva.Application.Helpers;
 using Sovva.Domain.Entities;
 using Sovva.Domain.Enums;
 using Sovva.Infrastructure.Data;
@@ -7,13 +8,15 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Sovva.Infrastructure.Repositories
 {
-    public class OrderRepository : IOrderRepository
+    internal class OrderRepository : IOrderRepository
     {
         private readonly AppDbContext _context;
+        private readonly IAppTimeProvider _time;
 
-        public OrderRepository(AppDbContext context)
+        public OrderRepository(AppDbContext context, IAppTimeProvider time)
         {
             _context = context;
+            _time = time;
         }
 
         // ✅ EXISTING: Keep all existing methods
@@ -43,9 +46,14 @@ namespace Sovva.Infrastructure.Repositories
             return await _context.Orders.AsNoTracking().Where(o => o.UserId == userId).ToListAsync();
         }
 
-        public async Task<IEnumerable<Order>> GetByStatusAsync(OrderStatus status)
+        public async Task<IEnumerable<Order>> GetByStatusAsync(OrderStatus status, int page = 1, int pageSize = 50)
         {
-            return await _context.Orders.AsNoTracking().Where(o => o.OrderStatus == status).ToListAsync();
+            return await _context.Orders.AsNoTracking()
+                .Where(o => o.OrderStatus == status)
+                .OrderByDescending(o => o.CreatedAt)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync();
         }
 
         // ✅ FIX 7: Added pagination to prevent unbounded queries
@@ -73,10 +81,11 @@ namespace Sovva.Infrastructure.Repositories
                         .ThenInclude(i => i.Ingredient)
                 .Where(o => o.UserId == userId)
                 .OrderByDescending(o => o.CreatedAt)
+                .AsSplitQuery()
                 .ToListAsync();
         }
 
-        public async Task<IEnumerable<Order>> GetAllOrdersWithDetailsAsync()
+        public async Task<IEnumerable<Order>> GetAllOrdersWithDetailsAsync(int page = 1, int pageSize = 50)
         {
             return await _context.Orders.AsNoTracking()
                 .Include(o => o.UserMeal)
@@ -89,6 +98,9 @@ namespace Sovva.Infrastructure.Repositories
                     .ThenInclude(so => so!.Ingredients)
                         .ThenInclude(i => i.Ingredient)
                 .OrderByDescending(o => o.CreatedAt)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .AsSplitQuery()
                 .ToListAsync();
         }
 
@@ -101,6 +113,35 @@ namespace Sovva.Infrastructure.Repositories
             return await _context.Orders
                 .AsNoTracking()
                 .FirstOrDefaultAsync(o => o.ScheduledOrderId == scheduledOrderId);
+        }
+
+        // ✅ FIX 13: Batch idempotency check
+        public async Task<Dictionary<int, Order>> GetByScheduledOrderIdsAsync(IEnumerable<int> scheduledOrderIds)
+        {
+            return await _context.Orders
+                .AsNoTracking()
+                .Where(o => o.ScheduledOrderId.HasValue && scheduledOrderIds.Contains(o.ScheduledOrderId.Value))
+                .ToDictionaryAsync(o => o.ScheduledOrderId!.Value);
+        }
+
+        public async Task<Order?> GetRecentOrderByUserMealIdAsync(int userMealId, int userId, int withinSeconds)
+        {
+            return await _context.Orders
+                .AsNoTracking()
+                .Where(o => o.UserMealId == userMealId 
+                    && o.UserId == userId
+                    && o.CreatedAt >= _time.UtcNow.AddSeconds(-withinSeconds))
+                .OrderByDescending(o => o.CreatedAt)
+                .FirstOrDefaultAsync();
+        }
+        public async Task<int> CountAsync()
+        {
+            return await _context.Orders.CountAsync();
+        }
+
+        public async Task<int> CountByStatusAsync(OrderStatus status)
+        {
+            return await _context.Orders.CountAsync(o => o.OrderStatus == status);
         }
     }
 }

@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace Sovva.Infrastructure.Repositories
 {
-    public class IngredientCategoryRepository : IIngredientCategoryRepository
+    internal class IngredientCategoryRepository : IIngredientCategoryRepository
     {
         private readonly AppDbContext _context;
 

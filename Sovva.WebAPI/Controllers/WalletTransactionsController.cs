@@ -9,17 +9,21 @@ namespace Sovva.WebAPI.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
+    [Microsoft.AspNetCore.RateLimiting.EnableRateLimiting("default")]
     [Authorize]
     public class WalletTransactionsController : ControllerBase
     {
         private readonly IWalletTransactionService _walletTransactionService;
+        private readonly ICurrentUserService _currentUserService;
         private readonly ILogger<WalletTransactionsController> _logger;
 
         public WalletTransactionsController(
             IWalletTransactionService walletTransactionService,
+            ICurrentUserService currentUserService,
             ILogger<WalletTransactionsController> logger)
         {
             _walletTransactionService = walletTransactionService;
+            _currentUserService = currentUserService;
             _logger = logger;
         }
 
@@ -31,127 +35,98 @@ namespace Sovva.WebAPI.Controllers
         [HttpGet("my-balance")]
         public async Task<ActionResult<object>> GetMyBalance()
         {
-            try
+            // ✅ NEW: Zero DB hit - read userId directly from JWT claim
+            var userId = await _currentUserService.GetCurrentUserIdAsync();
+            if (userId is null)
             {
-                // ✅ NEW: Zero DB hit - read userId directly from JWT claim
-                var userId = User.GetSovvaUserId();
-                if (userId is null)
-                {
-                    return Unauthorized("User not authenticated - no valid user ID in token");
-                }
+                return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
+            }
 
-                var balance = await _walletTransactionService.GetWalletBalanceAsync(userId.Value);
-                
-                _logger.LogInformation($"✅ WALLET: Balance retrieved: {balance} for user {userId}");
-                return Ok(new { balance, userId });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"❌ WALLET Error: {ex.Message}");
-                return StatusCode(500, new { message = "An error occurred while retrieving wallet balance", details = ex.Message });
-            }
+            var balance = await _walletTransactionService.GetWalletBalanceAsync(userId.Value);
+            
+            _logger.LogInformation("✅ WALLET: Balance retrieved: {Balance} for user {UserId}", balance, userId);
+            return Ok(ApiResponse.Ok(new { balance, userId }));
         }
 
         /// <summary>
-        /// ✅ SECURE: Gets wallet transactions for the authenticated user
+        /// ✅ SECURE: Gets wallet transactions for the authenticated user (paginated)
         /// </summary>
         [HttpGet("my-transactions")]
-        public async Task<ActionResult<IEnumerable<WalletTransactionDto>>> GetMyTransactions()
+        [ProducesResponseType(typeof(PagedResult<WalletTransactionDto>), 200)]
+        [ProducesResponseType(400)]
+        public async Task<ActionResult<PagedResult<WalletTransactionDto>>> GetMyTransactions(
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 20)
         {
-            try
+            // ✅ NEW: Zero DB hit - read userId directly from JWT claim
+            var userId = await _currentUserService.GetCurrentUserIdAsync();
+            if (userId is null)
             {
-                // ✅ NEW: Zero DB hit - read userId directly from JWT claim
-                var userId = User.GetSovvaUserId();
-                if (userId is null)
-                {
-                    return Unauthorized("User not authenticated");
-                }
+                return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
+            }
 
-                var transactions = await _walletTransactionService.GetUserTransactionsAsync(userId.Value);
-                return Ok(transactions);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"❌ WALLET TRANSACTIONS Error: {ex.Message}");
-                return StatusCode(500, new { message = "An error occurred while retrieving wallet transactions", details = ex.Message });
-            }
+            if (pageSize > 100)
+                return BadRequest(ApiResponse.Fail("BAD_REQUEST", "Maximum page size is 100"));
+
+            var result = await _walletTransactionService.GetUserTransactionsAsync(userId.Value, page, pageSize);
+            return Ok(ApiResponse.Ok(result));
         }
 
         /// <summary>
         /// ✅ SECURE: Top up wallet for the authenticated user
         /// </summary>
         [HttpPost("topup")]
+        [Microsoft.AspNetCore.RateLimiting.EnableRateLimiting("financial")]
         public async Task<ActionResult<WalletTransactionDto>> TopUpMyWallet([FromBody] WalletTopUpDto topUpDto)
         {
-            try
+            // ✅ NEW: Zero DB hit - read userId directly from JWT claim
+            var userId = await _currentUserService.GetCurrentUserIdAsync();
+            if (userId is null)
             {
-                // ✅ NEW: Zero DB hit - read userId directly from JWT claim
-                var userId = User.GetSovvaUserId();
-                if (userId is null)
-                {
-                    return Unauthorized("User not authenticated");
-                }
-
-                if (topUpDto.Amount <= 0)
-                {
-                    return BadRequest(new { message = "Amount must be greater than 0" });
-                }
-
-                var transaction = await _walletTransactionService.TopUpWalletAsync(userId.Value, topUpDto);
-                return Ok(transaction);
+                return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
             }
-            catch (Exception ex)
+
+            if (topUpDto.Amount <= 0)
             {
-                _logger.LogError($"❌ WALLET TOPUP Error: {ex.Message}");
-                return StatusCode(500, new { message = "An error occurred while topping up wallet", details = ex.Message });
+                return BadRequest(ApiResponse.Fail("BAD_REQUEST", "Amount must be greater than 0"));
             }
-        }
 
-        /// <summary>
-        /// ✅ SECURE: Check if authenticated user has sufficient balance
-        /// </summary>
-        [HttpGet("check-balance")]
-        public async Task<ActionResult<object>> CheckBalance([FromQuery] decimal amount)
-        {
-            try
-            {
-                // ✅ NEW: Zero DB hit - read userId directly from JWT claim
-                var userId = User.GetSovvaUserId();
-                if (userId is null)
-                {
-                    return Unauthorized("User not authenticated");
-                }
-
-                // ✅ FIX 9: Use single GetUserBalanceAsync call instead of double aggregate
-                var currentBalance = await _walletTransactionService.GetUserBalanceAsync(userId.Value);
-                var hasSufficientBalance = currentBalance >= amount;
-
-                return Ok(new
-                {
-                    hasSufficientBalance,
-                    currentBalance,
-                    requiredAmount = amount,
-                    shortfall = hasSufficientBalance ? 0 : amount - currentBalance
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"❌ WALLET CHECK Error: {ex.Message}");
-                return StatusCode(500, new { message = "An error occurred while checking balance", details = ex.Message });
-            }
+            var transaction = await _walletTransactionService.TopUpWalletAsync(userId.Value, topUpDto);
+            return Ok(ApiResponse.Ok(transaction));
         }
 
         // ==================== ADMIN ENDPOINTS ====================
 
         /// <summary>
-        /// Admin endpoint: Get all wallet transactions
+        /// Admin endpoint: Get all wallet transactions (paginated)
+        /// P1-5 FIX: Added pagination to prevent unbounded queries at scale
         /// </summary>
         [HttpGet("admin/all")]
         [Authorize(Roles = "Admin")]
-        public async Task<ActionResult<IEnumerable<WalletTransactionDto>>> GetAllTransactions()
+        [ProducesResponseType(typeof(PagedResult<WalletTransactionDto>), 200)]
+        public async Task<ActionResult<PagedResult<WalletTransactionDto>>> GetAllTransactions(
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 50)
         {
+            if (pageSize > 100)
+                return BadRequest(ApiResponse.Fail("BAD_REQUEST", "Maximum page size is 100"));
+
+            // Reuse the existing paginated method — admin can view any user's transactions
+            // For "all transactions" admin view, we use a dedicated service method
             var transactions = await _walletTransactionService.GetAllTransactionsAsync();
-            return Ok(transactions);
+            
+            // Apply pagination in-memory for backward compatibility
+            // TODO: Add a proper paginated GetAllAsync to the repository
+            var paged = transactions.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+            var totalCount = transactions.Count();
+            
+            return Ok(ApiResponse.Ok(new PagedResult<WalletTransactionDto>
+            {
+                Items = paged,
+                TotalCount = totalCount,
+                Page = page,
+                PageSize = pageSize
+            }));
         }
 
         /// <summary>
@@ -161,15 +136,8 @@ namespace Sovva.WebAPI.Controllers
         [Authorize(Roles = "Admin")]
         public async Task<ActionResult<object>> GetUserBalance(int userId)
         {
-            try
-            {
-                var balance = await _walletTransactionService.GetUserBalanceAsync(userId);
-                return Ok(new { userId, balance });
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new { message = ex.Message });
-            }
+            var balance = await _walletTransactionService.GetUserBalanceAsync(userId);
+            return Ok(ApiResponse.Ok(new { userId, balance }));
         }
 
         /// <summary>
@@ -177,17 +145,14 @@ namespace Sovva.WebAPI.Controllers
         /// </summary>
         [HttpGet("admin/user/{userId}/transactions")]
         [Authorize(Roles = "Admin")]
-        public async Task<ActionResult<IEnumerable<WalletTransactionDto>>> GetUserTransactions(int userId)
+        [ProducesResponseType(typeof(PagedResult<WalletTransactionDto>), 200)]
+        public async Task<ActionResult<PagedResult<WalletTransactionDto>>> GetUserTransactions(
+            int userId,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 20)
         {
-            try
-            {
-                var transactions = await _walletTransactionService.GetUserTransactionsAsync(userId);
-                return Ok(transactions);
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new { message = ex.Message });
-            }
+            var result = await _walletTransactionService.GetUserTransactionsAsync(userId, page, pageSize);
+            return Ok(ApiResponse.Ok(result));
         }
 
         /// <summary>
@@ -197,20 +162,17 @@ namespace Sovva.WebAPI.Controllers
         [Authorize(Roles = "Admin")]
         public async Task<ActionResult<WalletTransactionDto>> CreditUserWallet(int userId, [FromBody] WalletTopUpDto dto)
         {
-            try
+            if (dto.Amount <= 0)
             {
-                if (dto.Amount <= 0)
-                {
-                    return BadRequest(new { message = "Amount must be greater than 0" });
-                }
+                return BadRequest(ApiResponse.Fail("BAD_REQUEST", "Amount must be greater than 0"));
+            }
 
-                var transaction = await _walletTransactionService.TopUpWalletAsync(userId, dto);
-                return Ok(transaction);
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new { message = ex.Message });
-            }
+            var transaction = await _walletTransactionService.AdminCreditWalletAsync(
+                userId, 
+                dto.Amount, 
+                dto.Description ?? $"Admin credit of ₹{dto.Amount}"
+            );
+            return Ok(ApiResponse.Ok(transaction));
         }
 
         /// <summary>
@@ -221,8 +183,8 @@ namespace Sovva.WebAPI.Controllers
         public async Task<ActionResult<WalletTransactionDto>> GetTransaction(int id)
         {
             var transaction = await _walletTransactionService.GetTransactionByIdAsync(id);
-            if (transaction == null) return NotFound();
-            return Ok(transaction);
+            if (transaction == null) return NotFound(ApiResponse.Fail("NOT_FOUND", "Resource not found"));
+            return Ok(ApiResponse.Ok(transaction));
         }
     }
 }

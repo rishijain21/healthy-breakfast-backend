@@ -5,7 +5,7 @@ using Sovva.Domain.Enums;
 
 namespace Sovva.Domain.Entities
 {
-    public class User
+    public class User : BaseEntity
     {
         [Key]
         public int UserId { get; set; }
@@ -16,16 +16,13 @@ namespace Sovva.Domain.Entities
 
         public ICollection<UserAddress> Addresses { get; set; } = new List<UserAddress>();
 
-        public string AccountStatus { get; set; } = "Active"; // "Active", "Deactivated", "Deleted"
+        public AccountStatus AccountStatus { get; set; } = AccountStatus.Active;
 
         public decimal WalletBalance { get; set; }
 
         public UserRole Role { get; set; } = UserRole.Customer;
 
         public DateTime? DeletedAt { get; set; } // Soft delete
-
-        public DateTime CreatedAt { get; set; }
-        public DateTime UpdatedAt { get; set; }
 
         // Navigation property
         public virtual UserAuthMapping? AuthMapping { get; set; }

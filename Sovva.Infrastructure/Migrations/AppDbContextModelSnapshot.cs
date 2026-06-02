@@ -30,9 +30,6 @@ namespace Sovva.Infrastructure.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("IngredientId"));
 
-                    b.Property<bool>("Available")
-                        .HasColumnType("boolean");
-
                     b.Property<int>("Calories")
                         .HasColumnType("integer");
 
@@ -57,8 +54,11 @@ namespace Sovva.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<bool>("IsAvailable")
+                        .HasColumnType("boolean");
+
                     b.Property<decimal>("Price")
-                        .HasColumnType("numeric");
+                        .HasColumnType("decimal(12,2)");
 
                     b.Property<decimal>("Protein")
                         .HasColumnType("numeric");
@@ -159,6 +159,9 @@ namespace Sovva.Infrastructure.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("Description")
                         .IsRequired()
                         .HasColumnType("text");
@@ -167,9 +170,6 @@ namespace Sovva.Infrastructure.Migrations
                         .HasColumnType("text");
 
                     b.Property<bool>("IsComplete")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("IsDeleted")
                         .HasColumnType("boolean");
 
                     b.Property<string>("MealName")
@@ -191,7 +191,6 @@ namespace Sovva.Infrastructure.Migrations
                             CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Description = "Traditional overnight oats base",
                             IsComplete = true,
-                            IsDeleted = false,
                             MealName = "Classic Overnight Oats",
                             UpdatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)
                         },
@@ -202,7 +201,6 @@ namespace Sovva.Infrastructure.Migrations
                             CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Description = "Build your perfect breakfast",
                             IsComplete = true,
-                            IsDeleted = false,
                             MealName = "Custom Breakfast Bowl",
                             UpdatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)
                         },
@@ -213,7 +211,6 @@ namespace Sovva.Infrastructure.Migrations
                             CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             Description = "High protein breakfast option",
                             IsComplete = true,
-                            IsDeleted = false,
                             MealName = "Protein Power Bowl",
                             UpdatedAt = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)
                         });
@@ -309,6 +306,12 @@ namespace Sovva.Infrastructure.Migrations
                         .HasColumnType("character varying(50)")
                         .HasColumnName("Status");
 
+                    b.Property<int?>("Rating")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Review")
+                        .HasColumnType("text");
+
                     b.Property<DateTime>("ScheduledFor")
                         .HasColumnType("timestamp with time zone");
 
@@ -335,7 +338,9 @@ namespace Sovva.Infrastructure.Migrations
                         .HasDatabaseName("IX_Orders_ScheduledFor");
 
                     b.HasIndex("ScheduledOrderId")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasDatabaseName("IX_Orders_ScheduledOrderId")
+                        .HasFilter("\"ScheduledOrderId\" IS NOT NULL");
 
                     b.HasIndex("UserId")
                         .HasDatabaseName("IX_Orders_UserId");
@@ -347,6 +352,8 @@ namespace Sovva.Infrastructure.Migrations
 
                     b.ToTable("Orders", t =>
                         {
+                            t.HasCheckConstraint("CK_Orders_Rating", "\"Rating\" IS NULL OR (\"Rating\" >= 1 AND \"Rating\" <= 5)");
+
                             t.HasCheckConstraint("CK_Orders_Status", "\"Status\" IN ('Pending','Confirmed','Preparing','OutForDelivery','Delivered','Cancelled')");
 
                             t.HasCheckConstraint("CK_Orders_TotalPrice", "\"TotalPrice\" >= 0");
@@ -368,7 +375,7 @@ namespace Sovva.Infrastructure.Migrations
                         .HasColumnType("integer");
 
                     b.Property<decimal>("Price")
-                        .HasColumnType("numeric");
+                        .HasColumnType("decimal(12,2)");
 
                     b.Property<int>("Quantity")
                         .HasColumnType("integer");
@@ -481,7 +488,7 @@ namespace Sovva.Infrastructure.Migrations
 
                     b.ToTable("ScheduledOrders", t =>
                         {
-                            t.HasCheckConstraint("CK_ScheduledOrders_Status", "\"OrderStatus\" IN ('Scheduled', 'Confirmed', 'Cancelled', 'Processed')");
+                            t.HasCheckConstraint("CK_ScheduledOrders_Status", "\"OrderStatus\" IN ('Scheduled', 'Confirmed', 'Cancelled', 'Processed', 'Processing', 'Failed')");
 
                             t.HasCheckConstraint("CK_ScheduledOrders_TotalPrice", "\"TotalPrice\" >= 0");
                         });
@@ -508,10 +515,13 @@ namespace Sovva.Infrastructure.Migrations
                         .HasColumnType("integer");
 
                     b.Property<decimal>("TotalPrice")
-                        .HasColumnType("numeric");
+                        .HasColumnType("decimal(12,2)");
 
                     b.Property<decimal>("UnitPrice")
-                        .HasColumnType("numeric");
+                        .HasColumnType("decimal(12,2)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.HasKey("Id");
 
@@ -571,7 +581,7 @@ namespace Sovva.Infrastructure.Migrations
                         .HasMaxLength(10)
                         .HasColumnType("character varying(10)");
 
-                    b.Property<DateTime?>("UpdatedAt")
+                    b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.HasKey("Id");
@@ -587,10 +597,13 @@ namespace Sovva.Infrastructure.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("SubscriptionId"));
 
-                    b.Property<bool>("Active")
-                        .HasColumnType("boolean");
+                    b.Property<decimal>("AgreedPrice")
+                        .HasColumnType("decimal(18,2)");
 
                     b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<int?>("DeliveryAddressId")
@@ -602,8 +615,18 @@ namespace Sovva.Infrastructure.Migrations
                     b.Property<int>("Frequency")
                         .HasColumnType("integer");
 
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<int?>("MealId")
+                        .HasColumnType("integer");
+
                     b.Property<DateOnly?>("NextScheduledDate")
                         .HasColumnType("date");
+
+                    b.Property<string>("PauseReason")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
 
                     b.Property<DateOnly>("StartDate")
                         .HasColumnType("date");
@@ -614,29 +637,38 @@ namespace Sovva.Infrastructure.Migrations
                     b.Property<int>("UserId")
                         .HasColumnType("integer");
 
-                    b.Property<int>("UserMealId")
+                    b.Property<int?>("UserMealId")
                         .HasColumnType("integer");
 
                     b.HasKey("SubscriptionId");
 
                     b.HasIndex("DeliveryAddressId");
 
+                    b.HasIndex("MealId");
+
                     b.HasIndex("UserMealId");
 
-                    b.HasIndex("Active", "NextScheduledDate")
+                    b.HasIndex("IsActive", "NextScheduledDate")
                         .HasDatabaseName("IX_Subscriptions_Active_NextScheduledDate")
                         .HasFilter("\"Active\" = true");
 
-                    b.HasIndex("UserId", "Active")
+                    b.HasIndex("UserId", "IsActive")
                         .HasDatabaseName("IX_Subscriptions_UserId_Active");
+
+                    b.HasIndex("UserId", "MealId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_Subscriptions_ActiveMeal")
+                        .HasFilter("\"IsActive\" = true AND \"MealId\" IS NOT NULL");
 
                     b.HasIndex("UserId", "UserMealId")
                         .IsUnique()
                         .HasDatabaseName("UX_Subscriptions_ActiveUserMeal")
-                        .HasFilter("\"Active\" = true");
+                        .HasFilter("\"IsActive\" = true AND \"UserMealId\" IS NOT NULL");
 
                     b.ToTable("Subscriptions", t =>
                         {
+                            t.HasCheckConstraint("CK_Subscription_MealType", "(\"MealId\" IS NOT NULL AND \"UserMealId\" IS NULL) OR (\"MealId\" IS NULL AND \"UserMealId\" IS NOT NULL)");
+
                             t.HasCheckConstraint("CK_Subscriptions_Dates", "\"EndDate\" > \"StartDate\"");
                         });
                 });
@@ -668,7 +700,10 @@ namespace Sovva.Infrastructure.Migrations
 
                     b.HasIndex("SubscriptionId");
 
-                    b.ToTable("SubscriptionSchedules");
+                    b.ToTable("SubscriptionSchedules", t =>
+                        {
+                            t.HasCheckConstraint("CK_SubscriptionSchedule_DayOfWeek", "\"DayOfWeek\" >= 0 AND \"DayOfWeek\" <= 6");
+                        });
                 });
 
             modelBuilder.Entity("Sovva.Domain.Entities.User", b =>
@@ -714,7 +749,6 @@ namespace Sovva.Infrastructure.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<decimal>("WalletBalance")
-                        .IsConcurrencyToken()
                         .HasColumnType("decimal(12,2)");
 
                     b.HasKey("UserId");
@@ -796,7 +830,7 @@ namespace Sovva.Infrastructure.Migrations
                     b.Property<int>("ServiceableLocationId")
                         .HasColumnType("integer");
 
-                    b.Property<DateTime?>("UpdatedAt")
+                    b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<int>("UserId")
@@ -829,8 +863,10 @@ namespace Sovva.Infrastructure.Migrations
                         .HasColumnName("auth_id");
 
                     b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at");
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<int>("UserId")
                         .HasColumnType("integer")
@@ -853,6 +889,9 @@ namespace Sovva.Infrastructure.Migrations
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("UserMealId"));
 
                     b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DeletedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<int>("MealId")
@@ -900,6 +939,12 @@ namespace Sovva.Infrastructure.Migrations
                     b.Property<int>("Quantity")
                         .HasColumnType("integer");
 
+                    b.Property<decimal>("TotalPrice")
+                        .HasColumnType("numeric");
+
+                    b.Property<decimal>("UnitPrice")
+                        .HasColumnType("numeric");
+
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -941,18 +986,32 @@ namespace Sovva.Infrastructure.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
 
+                    b.Property<int?>("ScheduledOrderId")
+                        .HasColumnType("integer");
+
                     b.Property<string>("Type")
                         .IsRequired()
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<int>("UserId")
                         .HasColumnType("integer");
 
                     b.HasKey("TransactionId");
 
+                    b.HasIndex("ScheduledOrderId")
+                        .HasDatabaseName("IX_WalletTransactions_ScheduledOrderId");
+
                     b.HasIndex("UserId", "CreatedAt")
                         .HasDatabaseName("IX_WalletTransactions_UserId_CreatedAt");
+
+                    b.HasIndex("UserId", "Type")
+                        .HasDatabaseName("IX_WalletTransactions_UserId_Type_Amount");
+
+                    NpgsqlIndexBuilderExtensions.IncludeProperties(b.HasIndex("UserId", "Type"), new[] { "Amount" });
 
                     b.ToTable("WalletTransactions", t =>
                         {
@@ -972,6 +1031,7 @@ namespace Sovva.Infrastructure.Migrations
                             Description = "Initial wallet balance",
                             ReferenceType = "Manual",
                             Type = "Credit",
+                            UpdatedAt = new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified),
                             UserId = 1
                         });
                 });
@@ -1125,6 +1185,11 @@ namespace Sovva.Infrastructure.Migrations
                         .HasForeignKey("DeliveryAddressId")
                         .OnDelete(DeleteBehavior.SetNull);
 
+                    b.HasOne("Sovva.Domain.Entities.Meal", "Meal")
+                        .WithMany()
+                        .HasForeignKey("MealId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("Sovva.Domain.Entities.User", "User")
                         .WithMany()
                         .HasForeignKey("UserId")
@@ -1134,10 +1199,11 @@ namespace Sovva.Infrastructure.Migrations
                     b.HasOne("Sovva.Domain.Entities.UserMeal", "UserMeal")
                         .WithMany()
                         .HasForeignKey("UserMealId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.Navigation("DeliveryAddress");
+
+                    b.Navigation("Meal");
 
                     b.Navigation("User");
 
@@ -1225,11 +1291,17 @@ namespace Sovva.Infrastructure.Migrations
 
             modelBuilder.Entity("Sovva.Domain.Entities.WalletTransaction", b =>
                 {
+                    b.HasOne("Sovva.Domain.Entities.ScheduledOrder", "ScheduledOrder")
+                        .WithMany()
+                        .HasForeignKey("ScheduledOrderId");
+
                     b.HasOne("Sovva.Domain.Entities.User", "User")
                         .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("ScheduledOrder");
 
                     b.Navigation("User");
                 });

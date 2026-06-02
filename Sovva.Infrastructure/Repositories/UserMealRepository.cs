@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Sovva.Infrastructure.Repositories
 {
-    public class UserMealRepository : IUserMealRepository
+    internal class UserMealRepository : IUserMealRepository
     {
         private readonly AppDbContext _context;
 
@@ -57,6 +57,12 @@ namespace Sovva.Infrastructure.Repositories
                 .Include(um => um.Meal)
                 .AsNoTracking()
                 .FirstOrDefaultAsync(um => um.UserId == userId && um.MealId == mealId);
+        }
+
+        public async Task<UserMeal?> GetByIdForUserAsync(int id, int userId)
+        {
+            return await _context.UserMeals
+                .FirstOrDefaultAsync(um => um.UserMealId == id && um.UserId == userId);
         }
     }
 }

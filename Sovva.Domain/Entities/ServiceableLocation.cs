@@ -2,7 +2,7 @@ using System.ComponentModel.DataAnnotations;
 
 namespace Sovva.Domain.Entities
 {
-    public class ServiceableLocation
+    public class ServiceableLocation : BaseEntity
     {
         public int Id { get; set; }
         
@@ -33,9 +33,6 @@ namespace Sovva.Domain.Entities
         // Delivery time slot (optional for future use)
         [MaxLength(100)]
         public string? DeliveryTimeSlot { get; set; }
-        
-        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-        public DateTime? UpdatedAt { get; set; }
         
         // Navigation Properties
         public ICollection<UserAddress> UserAddresses { get; set; } = new List<UserAddress>();

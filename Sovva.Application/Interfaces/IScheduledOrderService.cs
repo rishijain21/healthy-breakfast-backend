@@ -15,7 +15,7 @@ namespace Sovva.Application.Interfaces
         Task CancelScheduledOrderAsync(int userId, Guid authId, int scheduledOrderId);
         // ✅ UPDATED: Uses userId directly - PK lookup instead of authId join
         Task<bool> CheckWalletBalanceAsync(int userId, decimal amount);
-        Task ConfirmAllScheduledOrdersAsync();
+        Task<ProcessOrdersResponseDto> ConfirmAllScheduledOrdersAsync(DateOnly? targetDate = null);
         Task<int> GetTimeUntilMidnightMinutesAsync();
     }
 }

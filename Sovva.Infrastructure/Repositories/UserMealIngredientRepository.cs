@@ -10,7 +10,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Sovva.Infrastructure.Repositories
 {
-    public class UserMealIngredientRepository : IUserMealIngredientRepository
+    internal class UserMealIngredientRepository : IUserMealIngredientRepository
     {
         private readonly AppDbContext _context;
 
@@ -50,5 +50,11 @@ namespace Sovva.Infrastructure.Repositories
                 .AsNoTracking()
                 .Where(i => userMealIds.Contains(i.UserMealId))
                 .ToListAsync();
+
+        public async Task AddRangeAsync(IEnumerable<UserMealIngredient> entities)
+        {
+            await _context.UserMealIngredients.AddRangeAsync(entities);
+            await _context.SaveChangesAsync();
+        }
     }
 }
