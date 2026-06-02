@@ -36,7 +36,8 @@ namespace Sovva.Infrastructure.Repositories
 
         public async Task<User?> GetByEmailAsync(string email)
         {
-            return await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
+            var lowerEmail = email.ToLower();
+            return await _context.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == lowerEmail);
         }
 
         public async Task<IEnumerable<User>> GetAllAsync(int page = 1, int pageSize = 50)

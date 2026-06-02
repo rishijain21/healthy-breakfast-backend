@@ -266,7 +266,7 @@ namespace Sovva.Application.Services
                         if (ingredientMap.TryGetValue(umi.IngredientId, out var ing))
                         {
                             var itemTotal = ing.Price * umi.Quantity;
-                            totalPrice += itemTotal;
+                            // DO NOT add to totalPrice; AgreedPrice already includes ingredient cost
                             scheduledOrderIngredients.Add(new ScheduledOrderIngredient
                             {
                                 IngredientId = ing.IngredientId,
@@ -292,7 +292,7 @@ namespace Sovva.Application.Services
                             if (ingredientMap.TryGetValue(moi.IngredientId, out var ing))
                             {
                                 var itemTotal = ing.Price * 1;
-                                totalPrice += itemTotal;
+                                // DO NOT add to totalPrice; AgreedPrice already includes ingredient cost
                                 scheduledOrderIngredients.Add(new ScheduledOrderIngredient
                                 {
                                     IngredientId = ing.IngredientId,

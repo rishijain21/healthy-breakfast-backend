@@ -231,7 +231,7 @@ namespace Sovva.Application.Services
                         MealName         = orderMealName,
                         ScheduledFor     = deliveryDay,
                         DeliveryTimeSlot = DeliveryConstants.DefaultTimeSlot,
-                        TotalPrice       = resolvedIngredients.Sum(i => i.TotalPrice),
+                        TotalPrice       = subscription.AgreedPrice * quantity,
                         OrderStatus      = ScheduledOrderStatus.Scheduled,
                         CanModify        = true,
                         ExpiresAt        = _time.ToUtc(
@@ -376,13 +376,15 @@ namespace Sovva.Application.Services
 
             var scheduledOrder = new ScheduledOrder
             {
-                UserId            = userId,
-                AuthId            = user.AuthMapping.AuthId,
-                MealName          = orderMealName,
-                ScheduledFor      = deliveryDay,
-                DeliveryTimeSlot  = DeliveryConstants.DefaultTimeSlot,
-                TotalPrice        = resolvedIngredients.Sum(i => i.TotalPrice),
-                OrderStatus       = ScheduledOrderStatus.Scheduled,
+                UserId           = subscription.UserId,
+                AuthId           = subscription.AuthId,
+                MealName         = orderMealName,
+                MealId           = subscription.MealId,
+                MealImageUrl     = subscription.MealImageUrl,
+                ScheduledFor     = deliveryDay,
+                DeliveryTimeSlot = DeliveryConstants.DefaultTimeSlot,
+                TotalPrice       = subscription.AgreedPrice * quantity,
+                OrderStatus      = ScheduledOrderStatus.Scheduled,
                 CanModify         = true,
                 ExpiresAt         = _time.ToUtc(
                                         deliveryDay.AddDays(1)
