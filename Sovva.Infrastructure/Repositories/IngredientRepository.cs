@@ -11,17 +11,26 @@ namespace Sovva.Infrastructure.Repositories
     internal class IngredientRepository : IIngredientRepository
     {
         private readonly AppDbContext _context;
+        private readonly ICacheService _cacheService;
+        private const string CacheKeyAll = "Ingredients_All";
 
-        public IngredientRepository(AppDbContext context)
+        public IngredientRepository(AppDbContext context, ICacheService cacheService)
         {
             _context = context;
+            _cacheService = cacheService;
         }
 
         // ==================== READ OPERATIONS ====================
         
         public async Task<IEnumerable<Ingredient>> GetAllAsync()
         {
-            return await _context.Ingredients.ToListAsync();
+            var cached = await _cacheService.GetAsync<IEnumerable<Ingredient>>(CacheKeyAll);
+            if (cached != null)
+                return cached;
+
+            var data = await _context.Ingredients.ToListAsync();
+            await _cacheService.SetAsync(CacheKeyAll, data, TimeSpan.FromHours(12));
+            return data;
         }
 
         public async Task<IEnumerable<Ingredient>> GetByCategoryIdAsync(int categoryId)
@@ -58,6 +67,7 @@ namespace Sovva.Infrastructure.Repositories
         public async Task AddIngredientAsync(Ingredient ingredient)
         {
             await _context.Ingredients.AddAsync(ingredient);
+            await _cacheService.RemoveAsync(CacheKeyAll);
         }
 
         // ==================== UPDATE OPERATIONS ====================
@@ -65,6 +75,7 @@ namespace Sovva.Infrastructure.Repositories
         public Task UpdateIngredientAsync(Ingredient ingredient)
         {
             _context.Ingredients.Update(ingredient);
+            _cacheService.RemoveAsync(CacheKeyAll).GetAwaiter().GetResult();
             return Task.CompletedTask;
         }
 
@@ -73,6 +84,7 @@ namespace Sovva.Infrastructure.Repositories
         public Task DeleteIngredientAsync(Ingredient ingredient)
         {
             _context.Ingredients.Remove(ingredient);
+            _cacheService.RemoveAsync(CacheKeyAll).GetAwaiter().GetResult();
             return Task.CompletedTask;
         }
 

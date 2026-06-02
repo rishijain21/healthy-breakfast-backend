@@ -4,6 +4,7 @@ using Sovva.Application.Services;
 using Sovva.Domain.Constants;
 using Sovva.Infrastructure.Data;
 using Sovva.Infrastructure.Repositories;
+using Sovva.Infrastructure.Services;
 using Sovva.WebAPI.Configuration;
 using Sovva.WebAPI.Infrastructure;
 using Sovva.WebAPI.Services;
@@ -126,11 +127,34 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
+    public static IServiceCollection AddAppCaching(this IServiceCollection services, IConfiguration configuration)
+    {
+        var redisConnectionString = configuration.GetConnectionString("RedisConnection");
+
+        if (!string.IsNullOrWhiteSpace(redisConnectionString))
+        {
+            services.AddStackExchangeRedisCache(options =>
+            {
+                options.Configuration = redisConnectionString;
+                options.InstanceName = "Sovva_";
+            });
+        }
+        else
+        {
+            // Fallback to in-memory cache for local development without Redis
+            services.AddDistributedMemoryCache();
+        }
+
+        return services;
+    }
+
     /// <summary>
     /// Registers all Application and Infrastructure layer services (repositories, services, helpers).
     /// </summary>
     public static IServiceCollection AddApplicationServices(this IServiceCollection services)
     {
+        // Caching
+        services.AddScoped<ICacheService, CacheService>();
         // Repositories
         services.AddScoped<IUserRepository, UserRepository>();
         services.AddScoped<IUserLoader, UserLoader>();

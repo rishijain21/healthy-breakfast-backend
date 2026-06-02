@@ -377,10 +377,8 @@ namespace Sovva.Application.Services
             var scheduledOrder = new ScheduledOrder
             {
                 UserId           = subscription.UserId,
-                AuthId           = subscription.AuthId,
+                AuthId           = user.AuthMapping.AuthId,
                 MealName         = orderMealName,
-                MealId           = subscription.MealId,
-                MealImageUrl     = subscription.MealImageUrl,
                 ScheduledFor     = deliveryDay,
                 DeliveryTimeSlot = DeliveryConstants.DefaultTimeSlot,
                 TotalPrice       = subscription.AgreedPrice * quantity,

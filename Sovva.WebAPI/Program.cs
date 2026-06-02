@@ -35,6 +35,7 @@ builder.Services
     .AddDatabase(builder.Configuration)
     .AddHangfireServices(builder.Configuration)
     .AddApplicationServices()
+    .AddAppCaching(builder.Configuration)
     .AddApiInfrastructure()
     .AddAppCors(builder.Configuration)
     .AddAppRateLimiting()

@@ -9,10 +9,12 @@ namespace Sovva.Infrastructure.Repositories
     internal class MealRepository : IMealRepository
     {
         private readonly AppDbContext _context;
+        private readonly ICacheService _cacheService;
 
-        public MealRepository(AppDbContext context)
+        public MealRepository(AppDbContext context, ICacheService cacheService)
         {
             _context = context;
+            _cacheService = cacheService;
         }
 
         public async Task AddMealAsync(Meal meal)
@@ -56,7 +58,12 @@ namespace Sovva.Infrastructure.Repositories
 
         public async Task<Meal?> GetByIdWithOptionsAsync(int id)
         {
-            return await _context.Meals
+            var cacheKey = $"Meal_{id}";
+            var cached = await _cacheService.GetAsync<Meal>(cacheKey);
+            if (cached != null)
+                return cached;
+
+            var meal = await _context.Meals
                 .AsNoTracking()
                 .Include(m => m.MealOptions)
                     .ThenInclude(mo => mo.IngredientCategory)
@@ -64,12 +71,20 @@ namespace Sovva.Infrastructure.Repositories
                     .ThenInclude(mo => mo.MealOptionIngredients)
                         .ThenInclude(moi => moi.Ingredient)
                 .FirstOrDefaultAsync(m => m.MealId == id);
+
+            if (meal != null)
+            {
+                await _cacheService.SetAsync(cacheKey, meal, TimeSpan.FromHours(1));
+            }
+
+            return meal;
         }
 
         public async Task UpdateMealAsync(Meal meal)
         {
             _context.Meals.Update(meal);
             await _context.SaveChangesAsync();
+            await _cacheService.RemoveAsync($"Meal_{meal.MealId}");
         }
 
         public async Task DeleteMealAsync(Meal meal)
@@ -78,6 +93,7 @@ namespace Sovva.Infrastructure.Repositories
             // into: meal.DeletedAt = now; (EntityState.Modified)
             _context.Meals.Remove(meal);
             await _context.SaveChangesAsync();
+            await _cacheService.RemoveAsync($"Meal_{meal.MealId}");
         }
 
         public async Task<bool> UpdateMealStatusAsync(int id, bool isComplete)
@@ -87,6 +103,7 @@ namespace Sovva.Infrastructure.Repositories
 
             meal.IsComplete = isComplete;
             await _context.SaveChangesAsync();
+            await _cacheService.RemoveAsync($"Meal_{id}");
             return true;
         }
 
