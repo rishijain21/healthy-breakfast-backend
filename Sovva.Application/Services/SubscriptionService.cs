@@ -305,7 +305,9 @@ namespace Sovva.Application.Services
                     }
                     else
                     {
-                        return (false, $"No ingredients configured for master meal #{subscription.MealId.Value}");
+                        // ✅ FIX: Do not fail the entire order creation just because ingredients aren't configured yet.
+                        // The user expects the order to show up on their schedule regardless.
+                        _logger.LogWarning("No ingredients configured for master meal #{MealId}. Order created without ingredients.", subscription.MealId.Value);
                     }
                 }
 
