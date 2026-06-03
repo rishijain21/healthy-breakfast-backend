@@ -28,7 +28,7 @@ namespace Sovva.Infrastructure.Repositories
             if (cached != null)
                 return cached;
 
-            var data = await _context.Ingredients.ToListAsync();
+            var data = await _context.Ingredients.AsNoTracking().ToListAsync();
             await _cacheService.SetAsync(CacheKeyAll, data, TimeSpan.FromHours(12));
             return data;
         }
@@ -36,6 +36,7 @@ namespace Sovva.Infrastructure.Repositories
         public async Task<IEnumerable<Ingredient>> GetByCategoryIdAsync(int categoryId)
         {
             return await _context.Ingredients
+                .AsNoTracking()
                 .Where(i => i.CategoryId == categoryId)
                 .ToListAsync();
         }
@@ -43,12 +44,14 @@ namespace Sovva.Infrastructure.Repositories
         public async Task<Ingredient?> GetByIdAsync(int id)
         {
             return await _context.Ingredients
+                .AsNoTracking()
                 .FirstOrDefaultAsync(i => i.IngredientId == id);
         }
 
         public async Task<Ingredient?> GetByIdWithCategoryAsync(int id)
         {
             return await _context.Ingredients
+                .AsNoTracking()
                 .Include(i => i.IngredientCategory)
                 .FirstOrDefaultAsync(i => i.IngredientId == id);
         }

@@ -243,10 +243,9 @@ public async Task<Subscription> UpdateAsync(Subscription subscription)
         // ✅ FIX BUG 2 & 4: Check any active subscription for this meal (ignores date range)
         public async Task<Subscription?> GetAnyActiveSubscriptionByUserMealIdAsync(int userId, int userMealId)
         {
+            // ✅ PERF: Removed Includes. This is a duplicate check, we only need to know if the row exists.
             return await _context.Subscriptions
                 .AsNoTracking()
-                .Include(s => s.UserMeal)
-                    .ThenInclude(um => um.Meal) // ADDED
                 .FirstOrDefaultAsync(s =>
                     s.UserId     == userId     &&
                     s.UserMealId == userMealId &&
@@ -258,12 +257,9 @@ public async Task<Subscription> UpdateAsync(Subscription subscription)
         // ✅ FIX BUG 2: Check any active subscription for this meal (ignores date range)
         public async Task<Subscription?> GetAnyActiveSubscriptionByMealIdAsync(int userId, int mealId)
         {
+            // ✅ PERF: Removed Includes. This is a duplicate check, we only need to know if the row exists.
             return await _context.Subscriptions
                 .AsNoTracking()
-                .Include(s => s.UserMeal)
-                    .ThenInclude(um => um.Meal)
-                .Include(s => s.Meal) // ✅ ADDED
-                .Include(s => s.WeeklySchedule)
                 .FirstOrDefaultAsync(s => 
                     s.UserId == userId && 
                     s.IsActive == true &&

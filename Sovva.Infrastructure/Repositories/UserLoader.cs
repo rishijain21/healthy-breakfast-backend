@@ -19,6 +19,7 @@ namespace Sovva.Infrastructure.Repositories
         public async Task<User?> GetUserWithAuthMappingAsync(int userId)
         {
             return await _context.Users
+                .AsNoTracking()
                 .Include(u => u.AuthMapping)
                 .FirstOrDefaultAsync(u => u.UserId == userId);
         }

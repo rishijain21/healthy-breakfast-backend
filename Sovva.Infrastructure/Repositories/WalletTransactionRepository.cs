@@ -25,6 +25,7 @@ namespace Sovva.Infrastructure.Repositories
             // WARNING: GetAllAsync called — this is unbounded and should not be used in production flows
             // Safety limit applied for now.
             return await _context.WalletTransactions
+                        .AsNoTracking()
                         .OrderByDescending(wt => wt.CreatedAt)
                         .Take(500)
                         .ToListAsync();
@@ -33,12 +34,14 @@ namespace Sovva.Infrastructure.Repositories
         // ✅ OPTIMIZED: Removed .Include(wt => wt.User) for faster queries
         public async Task<WalletTransaction?> GetByIdAsync(long transactionId)
             => await _context.WalletTransactions
+                        .AsNoTracking()
                         .FirstOrDefaultAsync(wt => wt.TransactionId == transactionId);
 
         // ✅ OPTIMIZED: Added pagination to prevent unbounded queries
         public async Task<(IEnumerable<WalletTransaction> Items, int TotalCount)> GetByUserIdAsync(int userId, int page, int pageSize)
         {
             var query = _context.WalletTransactions
+                        .AsNoTracking()
                         .Where(wt => wt.UserId == userId)
                         .OrderByDescending(wt => wt.CreatedAt);
 
@@ -54,6 +57,7 @@ namespace Sovva.Infrastructure.Repositories
         // ✅ OPTIMIZED: Removed .Include(wt => wt.User) for faster queries
         public async Task<IEnumerable<WalletTransaction>> GetByUserIdAndTypeAsync(int userId, string type)
             => await _context.WalletTransactions
+                        .AsNoTracking()
                         .Where(wt => wt.UserId == userId && wt.Type == type)
                         .OrderByDescending(wt => wt.CreatedAt).ToListAsync();
 

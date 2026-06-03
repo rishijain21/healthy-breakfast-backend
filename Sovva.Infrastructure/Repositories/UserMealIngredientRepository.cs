@@ -32,6 +32,7 @@ namespace Sovva.Infrastructure.Repositories
         public async Task<UserMealIngredient?> GetByIdAsync(int id)
         {
             return await _context.UserMealIngredients
+                .AsNoTracking()
                 .FirstOrDefaultAsync(umi => umi.UserMealIngredientId == id);
         }
 
@@ -39,6 +40,7 @@ namespace Sovva.Infrastructure.Repositories
         public async Task<IEnumerable<UserMealIngredient>> GetByUserMealIdAsync(int userMealId)
         {
             return await _context.UserMealIngredients
+                .AsNoTracking()
                 .Include(umi => umi.Ingredient)  // Include ingredient details
                 .Where(umi => umi.UserMealId == userMealId)
                 .ToListAsync();

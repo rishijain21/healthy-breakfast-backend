@@ -41,6 +41,7 @@ namespace Sovva.Infrastructure.Repositories
         public async Task<UserAddress?> GetPrimaryAddressByUserIdAsync(int userId)
         {
             return await _context.UserAddresses
+                .AsNoTracking()
                 .Include(x => x.ServiceableLocation)
                 .FirstOrDefaultAsync(x => 
                     x.UserId == userId && 
@@ -74,6 +75,7 @@ namespace Sovva.Infrastructure.Repositories
         public async Task<UserAddress?> GetPrimaryAddressAsync(int userId)
         {
             return await _context.UserAddresses
+                .AsNoTracking()
                 .Include(x => x.ServiceableLocation)
                 .FirstOrDefaultAsync(x => x.UserId == userId && x.IsPrimary && x.IsActive);
         }

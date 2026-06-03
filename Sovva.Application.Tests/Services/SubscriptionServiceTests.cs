@@ -32,6 +32,7 @@ namespace Sovva.Application.Tests.Services
         private readonly Mock<ILogger<SubscriptionService>> _loggerMock = new();
         private readonly Mock<IUserLoader> _userLoaderMock = new();
         private readonly Mock<IUnitOfWork> _unitOfWorkMock = new();
+        private readonly Mock<ICacheService> _cacheServiceMock = new();
 
         // 2. The Service Under Test (SUT)
         private readonly SubscriptionService _sut;
@@ -67,7 +68,8 @@ namespace Sovva.Application.Tests.Services
                 _timeProviderMock.Object,
                 _loggerMock.Object,
                 _userLoaderMock.Object,
-                _unitOfWorkMock.Object
+                _unitOfWorkMock.Object,
+                _cacheServiceMock.Object
             );
         }
 

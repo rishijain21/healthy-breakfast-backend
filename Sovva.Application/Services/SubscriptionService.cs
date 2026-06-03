@@ -29,6 +29,7 @@ namespace Sovva.Application.Services
         private readonly ILogger<SubscriptionService> _logger;
         private readonly IUserLoader _userLoader;
         private readonly IUnitOfWork _unitOfWork;
+        private readonly ICacheService _cacheService;
 
         public SubscriptionService(
             ISubscriptionRepository subscriptionRepository,
@@ -42,7 +43,8 @@ namespace Sovva.Application.Services
             IAppTimeProvider time,
             ILogger<SubscriptionService> logger,
             IUserLoader userLoader,
-            IUnitOfWork unitOfWork)
+            IUnitOfWork unitOfWork,
+            ICacheService cacheService)
         {
             _subscriptionRepository = subscriptionRepository;
             _userMealRepository = userMealRepository;
@@ -56,6 +58,7 @@ namespace Sovva.Application.Services
             _logger = logger;
             _userLoader = userLoader;
             _unitOfWork = unitOfWork;
+            _cacheService = cacheService;
         }
 
         public async Task<PagedResult<SubscriptionDto>> GetAllSubscriptionsAsync(int page = 1, int pageSize = 50)
@@ -79,8 +82,20 @@ namespace Sovva.Application.Services
 
         public async Task<IEnumerable<SubscriptionDto>> GetSubscriptionsByUserIdAsync(int userId)
         {
+            var cacheKey = $"Subscriptions_User_{userId}";
+            var cached = await _cacheService.GetAsync<IEnumerable<SubscriptionDto>>(cacheKey);
+            if (cached != null)
+            {
+                return cached;
+            }
+
             var subscriptions = await _subscriptionRepository.GetByUserIdAsync(userId);
-            return subscriptions.Select(MapToDto);
+            var result = subscriptions.Select(MapToDto).ToList();
+
+            // Cache for 30 seconds - subscriptions rarely change but are queried often on dashboard/profile loads
+            await _cacheService.SetAsync(cacheKey, result, TimeSpan.FromSeconds(30));
+
+            return result;
         }
 
         public async Task<IEnumerable<SubscriptionDto>> GetActiveSubscriptionsAsync()
@@ -248,6 +263,9 @@ namespace Sovva.Application.Services
             {
                 _logger.LogWarning("Subscription entity not captured after commit for user {UserId}", dto.UserId);
             }
+
+            // ✅ Clear user subscriptions cache
+            await _cacheService.RemoveAsync($"Subscriptions_User_{dto.UserId}");
 
             finalSubscription.Warning = firstOrderWarning;
             return finalSubscription;
@@ -464,6 +482,9 @@ namespace Sovva.Application.Services
 
                 await _subscriptionRepository.UpdateAsync(subscription);
 
+                // ✅ Clear user subscriptions cache
+                await _cacheService.RemoveAsync($"Subscriptions_User_{subscription.UserId}");
+
                 // FIX Bug 3: UpdateAsync already returns the saved entity.
                 // Re-fetching it from DB is a redundant round-trip.
                 return MapToDto(subscription);
@@ -487,6 +508,9 @@ namespace Sovva.Application.Services
                     success = false;
                     return;
                 }
+                
+                // ✅ Clear user subscriptions cache
+                await _cacheService.RemoveAsync($"Subscriptions_User_{subscription.UserId}");
 
                 if (subscription.IsActive)
                 {
