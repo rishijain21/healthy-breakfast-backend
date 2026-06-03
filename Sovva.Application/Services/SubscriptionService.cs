@@ -293,6 +293,10 @@ namespace Sovva.Application.Services
 
                 var scheduledOrderIngredients = new List<ScheduledOrderIngredient>();
                 decimal totalPrice = subscription.AgreedPrice; // Base price
+                
+                int totalCalories = 0;
+                decimal totalProtein = 0m;
+                int itemCount = 0;
 
                 if (subscription.UserMealId.HasValue)
                 {
@@ -315,6 +319,10 @@ namespace Sovva.Application.Services
                                 UnitPrice = ing.Price,
                                 TotalPrice = itemTotal
                             });
+                            
+                            totalCalories += ing.Calories * umi.Quantity;
+                            totalProtein += ing.Protein * umi.Quantity;
+                            itemCount += umi.Quantity;
                         }
                     }
                 }
@@ -341,6 +349,10 @@ namespace Sovva.Application.Services
                                     UnitPrice = ing.Price,
                                     TotalPrice = itemTotal
                                 });
+                                
+                                totalCalories += ing.Calories * 1;
+                                totalProtein += ing.Protein * 1;
+                                itemCount += 1;
                             }
                         }
                     }
@@ -359,14 +371,24 @@ namespace Sovva.Application.Services
                 // Build scheduled order
                 var deliveryDateTimeUtc = _time.ToUtc(firstDeliveryDate.ToDateTime(TimeOnly.MinValue));
                 
+                var nutritionalSummary = new Sovva.Application.DTOs.NutritionalSummaryDto
+                {
+                    TotalCalories = totalCalories,
+                    TotalProtein = totalProtein,
+                    ItemCount = itemCount
+                };
+                
                 var scheduledOrder = new ScheduledOrder
                 {
                     UserId = subscription.UserId,
                     AuthId = user.AuthMapping?.AuthId ?? throw new Sovva.Domain.Exceptions.BusinessRuleException("User has no AuthMapping"),
                     MealName = subscription.MealId.HasValue ? meal.MealName : userMeal!.MealName,
+                    MealId = subscription.MealId,
+                    MealImageUrl = subscription.MealId.HasValue ? meal.ImageUrl : null,
                     ScheduledFor = firstDeliveryDate, // ✅ FIX: Use local IST date, not UTC shifted date
                     DeliveryTimeSlot = DeliveryConstants.DefaultTimeSlot,
                     TotalPrice = totalPrice,
+                    NutritionalSummary = System.Text.Json.JsonSerializer.Serialize(nutritionalSummary),
                     OrderStatus = ScheduledOrderStatus.Scheduled,
                     CanModify = true,
                     ExpiresAt = deliveryDateTimeUtc.AddDays(1),
