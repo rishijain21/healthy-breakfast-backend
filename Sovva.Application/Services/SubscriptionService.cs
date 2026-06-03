@@ -364,7 +364,7 @@ namespace Sovva.Application.Services
                     UserId = subscription.UserId,
                     AuthId = user.AuthMapping?.AuthId ?? throw new Sovva.Domain.Exceptions.BusinessRuleException("User has no AuthMapping"),
                     MealName = subscription.MealId.HasValue ? meal.MealName : userMeal!.MealName,
-                    ScheduledFor = DateOnly.FromDateTime(deliveryDateTimeUtc),
+                    ScheduledFor = firstDeliveryDate, // ✅ FIX: Use local IST date, not UTC shifted date
                     DeliveryTimeSlot = DeliveryConstants.DefaultTimeSlot,
                     TotalPrice = totalPrice,
                     OrderStatus = ScheduledOrderStatus.Scheduled,
