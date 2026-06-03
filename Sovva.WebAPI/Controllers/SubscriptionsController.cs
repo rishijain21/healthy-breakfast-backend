@@ -205,20 +205,19 @@ namespace Sovva.WebAPI.Controllers
 
             var subscription = await _subscriptionService.GetSubscriptionByIdAsync(id);
             if (subscription == null)
-                return NotFound(ApiResponse.Fail("NOT_FOUND", "Resource not found"));
+            {
+                // ✅ FIX: Idempotent delete. If already deleted, treat as success to prevent frontend UX errors.
+                _logger.LogInformation("Subscription {SubscriptionId} not found during delete (likely already deleted)", id);
+                return NoContent();
+            }
 
             if (subscription.UserId != userId.Value)
                 return StatusCode(403, ApiResponse.Fail("FORBIDDEN", "Access denied"));
 
             // ✅ Delegate to service - it handles scheduled orders properly
             // (keeps processed orders, deletes pending ones)
-            var result = await _subscriptionService.DeleteSubscriptionAsync(id);
-            if (!result)
-            {
-                _logger.LogWarning("Subscription {SubscriptionId} not found during delete", id);
-                return NotFound(ApiResponse.Fail("NOT_FOUND", "Resource not found"));
-            }
-
+            await _subscriptionService.DeleteSubscriptionAsync(id);
+            
             _logger.LogInformation("Subscription {SubscriptionId} deleted successfully", id);
             return NoContent();
         }
