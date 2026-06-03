@@ -2,6 +2,11 @@ using Serilog;
 using Sovva.WebAPI.Extensions;
 
 // ══════════════════════════════════════════════════
+// GLOBAL FIX: Disable IPv6 for Npgsql/Supabase connection hanging on unroutable IPv6 
+// ══════════════════════════════════════════════════
+AppContext.SetSwitch("System.Net.DisableIPv6", true);
+
+// ══════════════════════════════════════════════════
 // LOGGING
 // ══════════════════════════════════════════════════
 var builder = WebApplication.CreateBuilder(args);
