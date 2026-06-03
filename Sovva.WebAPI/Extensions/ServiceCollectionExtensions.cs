@@ -133,11 +133,47 @@ public static class ServiceCollectionExtensions
 
         if (!string.IsNullOrWhiteSpace(redisConnectionString))
         {
-            services.AddStackExchangeRedisCache(options =>
+            try
             {
-                options.Configuration = redisConnectionString;
-                options.InstanceName = "Sovva_";
-            });
+                // ✅ FIX: Parse the connection string and layer in hard timeout defaults.
+                // Without these, a failed Redis connection blocks for the StackExchange.Redis default
+                // of 5000ms (connect) + 5000ms (sync) = up to 15s per request, which holds the
+                // EF Core transaction open and causes DB timeouts + duplicate subscription 409s.
+                var redisOptions = StackExchange.Redis.ConfigurationOptions.Parse(redisConnectionString);
+
+                // ✅ Fail fast: give Redis 1.5s to connect/respond. If it can't, the CacheService
+                // try/catch immediately falls back to the database — no user-visible delay.
+                redisOptions.ConnectTimeout  = 1500;  // ms — how long to wait to establish connection
+                redisOptions.SyncTimeout     = 1500;  // ms — how long to wait for a command response
+                redisOptions.AsyncTimeout    = 1500;  // ms — how long to wait for an async command
+                redisOptions.AbortOnConnectFail = false; // ✅ Don't throw on startup if Redis is unreachable
+                redisOptions.ReconnectRetryPolicy = new StackExchange.Redis.LinearRetry(1000);
+
+                // ✅ Render requires TLS for external Redis URLs.
+                // If the scheme is rediss:// or the port is 6380, SSL is already parsed.
+                // This is a safety net for plain redis:// URLs on external Render instances.
+                if (!redisOptions.Ssl && redisOptions.EndPoints.Count > 0)
+                {
+                    var endpoint = redisOptions.EndPoints[0]?.ToString() ?? "";
+                    if (!endpoint.Contains(":6379") && !endpoint.StartsWith("127.") && !endpoint.StartsWith("localhost"))
+                    {
+                        redisOptions.Ssl = true;
+                        redisOptions.SslProtocols = System.Security.Authentication.SslProtocols.Tls12;
+                    }
+                }
+
+                services.AddStackExchangeRedisCache(options =>
+                {
+                    options.ConfigurationOptions = redisOptions;
+                    options.InstanceName = "Sovva_";
+                });
+            }
+            catch (Exception)
+            {
+                // ✅ Safety net: if the connection string is malformed, fall back to in-memory cache
+                // so the app still starts cleanly.
+                services.AddDistributedMemoryCache();
+            }
         }
         else
         {

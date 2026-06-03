@@ -191,33 +191,16 @@ namespace Sovva.Application.Services
                         await _subscriptionRepository.AddSchedulesAsync(createdSubscription.SubscriptionId, schedules);
                     }
 
-                    // 8. Create first scheduled order
-                    var firstOrderResult = await CreateFirstScheduledOrderAsync(
-                        createdSubscription, 
-                        user, 
-                        userMeal, 
-                        meal,
-                        primaryAddress
-                    );
-
-                    string? firstOrderWarning = null;
-                    if (!firstOrderResult.Success)
-                    {
-                        _logger.LogWarning("Subscription created but first order failed: {Error}", firstOrderResult.Error);
-                        if (firstOrderResult.Error?.Contains("No ingredients") == true)
-                        {
-                            firstOrderWarning = "Subscription created. First delivery will be scheduled once meal ingredients are configured by admin.";
-                        }
-                    }
-                    
                     // ✅ FIX: Attach navigation properties so MapToDto has data to populate MealName, MealPrice, etc.
                     createdSubscription.User = user;
                     createdSubscription.Meal = meal;
                     createdSubscription.UserMeal = userMeal;
 
-                    var dtoResult = MapToDto(createdSubscription);
-                    dtoResult.Warning = firstOrderWarning;
-                    return dtoResult;
+                    // ✅ ARCH FIX: Return the created subscription from the transaction.
+                    // Do NOT call CreateFirstScheduledOrderAsync inside this transaction.
+                    // That method calls CacheService → Redis, and a Redis timeout would hold
+                    // the DB transaction open for 10-15s, causing command timeouts and 409s.
+                    return MapToDto(createdSubscription);
                 }
                 catch (DuplicateSubscriptionException)
                 {
@@ -227,6 +210,44 @@ namespace Sovva.Application.Services
                 }
             });
 
+            // ✅ FIX: Create the first scheduled order AFTER the subscription transaction commits.
+            // This is safe — if order creation fails, the subscription already exists and the nightly
+            // Hangfire job will pick it up. The user still subscribed successfully.
+            var primaryAddress = await _userAddressRepository.GetPrimaryAddressAsync(dto.UserId);
+            string? firstOrderWarning = null;
+
+            if (primaryAddress != null)
+            {
+                var firstOrderResult = await CreateFirstScheduledOrderAsync(
+                    // Re-fetch subscription so we have SubscriptionId correctly populated
+                    await _subscriptionRepository.GetByIdAsync(finalSubscription.SubscriptionId)
+                        ?? throw new InvalidOperationException("Subscription lost after commit"),
+                    user,
+                    userMeal,
+                    meal,
+                    primaryAddress
+                );
+
+                if (!firstOrderResult.Success)
+                {
+                    _logger.LogWarning("Subscription {Id} created but first order failed: {Error}",
+                        finalSubscription.SubscriptionId, firstOrderResult.Error);
+                    if (firstOrderResult.Error?.Contains("No ingredients") == true)
+                    {
+                        firstOrderWarning = "Subscription created! First delivery will be scheduled once meal ingredients are configured by admin.";
+                    }
+                    else
+                    {
+                        firstOrderWarning = "Subscription created! Your first order will be scheduled automatically.";
+                    }
+                }
+            }
+            else
+            {
+                _logger.LogWarning("Primary address not found after subscription commit for user {UserId}", dto.UserId);
+            }
+
+            finalSubscription.Warning = firstOrderWarning;
             return finalSubscription;
         }
 
