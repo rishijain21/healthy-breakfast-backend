@@ -123,6 +123,16 @@ namespace Sovva.Application.Services
                 if (meal == null) throw new ArgumentException("Base meal not found for custom meal");
             }
 
+            // ✅ PERF: Fetch primary address ONCE before the transaction.
+            // Previously fetched twice (inside + outside the transaction = 2 round-trips).
+            var primaryAddress = await _userAddressRepository.GetPrimaryAddressAsync(dto.UserId);
+            if (primaryAddress == null)
+                throw new AddressNotFoundException(dto.UserId, "Please set a default delivery address before creating a subscription");
+
+            // ✅ PERF: Capture the full Subscription entity from inside the transaction
+            // so we don't need to re-fetch it from DB after commit.
+            Subscription? createdSubscriptionEntity = null;
+
             var finalSubscription = await _unitOfWork.ExecuteInTransactionAsync(async () =>
             {
                 try
@@ -143,25 +153,18 @@ namespace Sovva.Application.Services
                         throw new DuplicateSubscriptionException();
                     }
 
-                    // 2. Get primary address
-                    var primaryAddress = await _userAddressRepository.GetPrimaryAddressAsync(dto.UserId);
-                    if (primaryAddress == null)
-                    {
-                        throw new AddressNotFoundException(dto.UserId, "Please set a default delivery address before creating a subscription");
-                    }
-
-                    // 4. Validate dates
+                    // 2. Validate dates
                     if (dto.StartDate >= dto.EndDate)
                         throw new ArgumentException("Start date must be before end date");
 
-                    // 5. Frequency validation
+                    // 3. Frequency validation
                     if (dto.Frequency == SubscriptionFrequency.Weekly)
                     {
                         if (dto.WeeklySchedule == null || !dto.WeeklySchedule.Any())
                             throw new ArgumentException("Weekly schedule is required for Weekly subscriptions");
                     }
 
-                    // 6. Create Subscription
+                    // 4. Create Subscription
                     var subscription = new Subscription
                     {
                         UserId = dto.UserId,
@@ -172,13 +175,13 @@ namespace Sovva.Application.Services
                         StartDate = dto.StartDate,
                         EndDate = dto.EndDate,
                         IsActive = dto.IsActive,
-                        DeliveryAddressId = primaryAddress.Id,
+                        DeliveryAddressId = primaryAddress.Id,   // ✅ reuse pre-fetched address
                         NextScheduledDate = CalculateInitialNextDeliveryDate(dto.StartDate, dto.Frequency, dto.WeeklySchedule)
                     };
 
                     var createdSubscription = await _subscriptionRepository.CreateAsync(subscription);
 
-                    // 7. Add Schedules
+                    // 5. Add Schedules
                     if (dto.Frequency == SubscriptionFrequency.Weekly && dto.WeeklySchedule != null)
                     {
                         var schedules = dto.WeeklySchedule.Select(s => new SubscriptionSchedule
@@ -191,60 +194,59 @@ namespace Sovva.Application.Services
                         await _subscriptionRepository.AddSchedulesAsync(createdSubscription.SubscriptionId, schedules);
                     }
 
-                    // ✅ FIX: Attach navigation properties so MapToDto has data to populate MealName, MealPrice, etc.
+                    // ✅ Attach navigation properties so MapToDto works without a re-fetch
                     createdSubscription.User = user;
                     createdSubscription.Meal = meal;
                     createdSubscription.UserMeal = userMeal;
 
-                    // ✅ ARCH FIX: Return the created subscription from the transaction.
-                    // Do NOT call CreateFirstScheduledOrderAsync inside this transaction.
-                    // That method calls CacheService → Redis, and a Redis timeout would hold
-                    // the DB transaction open for 10-15s, causing command timeouts and 409s.
+                    // ✅ PERF: Capture entity reference so outer code can use it without GetByIdAsync
+                    createdSubscriptionEntity = createdSubscription;
+
                     return MapToDto(createdSubscription);
                 }
                 catch (DuplicateSubscriptionException)
                 {
-                    // ✅ SOLID-2 FIX: Re-throw domain exception from Infrastructure layer
-                    // The duplicate key catch now lives in SubscriptionRepository.CreateAsync
                     throw;
                 }
             });
 
-            // ✅ FIX: Create the first scheduled order AFTER the subscription transaction commits.
-            // This is safe — if order creation fails, the subscription already exists and the nightly
-            // Hangfire job will pick it up. The user still subscribed successfully.
-            var primaryAddress = await _userAddressRepository.GetPrimaryAddressAsync(dto.UserId);
+            // ✅ PERF: Create the first scheduled order AFTER the subscription transaction commits.
+            // Uses captured entity + pre-fetched address — zero extra DB round-trips.
             string? firstOrderWarning = null;
 
-            if (primaryAddress != null)
+            if (createdSubscriptionEntity != null)
             {
+                // ✅ PERF: Attach WeeklySchedule from DTO so CalculateFirstDeliveryDate works
+                // without needing to reload the entity from the DB.
+                if (dto.Frequency == SubscriptionFrequency.Weekly && dto.WeeklySchedule != null)
+                {
+                    createdSubscriptionEntity.WeeklySchedule = dto.WeeklySchedule.Select(s => new SubscriptionSchedule
+                    {
+                        DayOfWeek = s.DayOfWeek,
+                        Quantity = s.Quantity
+                    }).ToList();
+                }
+
                 var firstOrderResult = await CreateFirstScheduledOrderAsync(
-                    // Re-fetch subscription so we have SubscriptionId correctly populated
-                    await _subscriptionRepository.GetByIdAsync(finalSubscription.SubscriptionId)
-                        ?? throw new InvalidOperationException("Subscription lost after commit"),
+                    createdSubscriptionEntity,   // ✅ captured entity — no GetByIdAsync
                     user,
                     userMeal,
                     meal,
-                    primaryAddress
+                    primaryAddress               // ✅ pre-fetched address — no 2nd GetPrimaryAddressAsync
                 );
 
                 if (!firstOrderResult.Success)
                 {
                     _logger.LogWarning("Subscription {Id} created but first order failed: {Error}",
                         finalSubscription.SubscriptionId, firstOrderResult.Error);
-                    if (firstOrderResult.Error?.Contains("No ingredients") == true)
-                    {
-                        firstOrderWarning = "Subscription created! First delivery will be scheduled once meal ingredients are configured by admin.";
-                    }
-                    else
-                    {
-                        firstOrderWarning = "Subscription created! Your first order will be scheduled automatically.";
-                    }
+                    firstOrderWarning = firstOrderResult.Error?.Contains("No ingredients") == true
+                        ? "Subscription created! First delivery will be scheduled once meal ingredients are configured by admin."
+                        : "Subscription created! Your first order will be scheduled automatically.";
                 }
             }
             else
             {
-                _logger.LogWarning("Primary address not found after subscription commit for user {UserId}", dto.UserId);
+                _logger.LogWarning("Subscription entity not captured after commit for user {UserId}", dto.UserId);
             }
 
             finalSubscription.Warning = firstOrderWarning;
