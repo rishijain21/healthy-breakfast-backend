@@ -71,6 +71,8 @@ namespace Sovva.Application.Services
                 "[SUB-JOB] Started at {Now:yyyy-MM-dd HH:mm:ss} IST. Generating orders for {DeliveryDay:yyyy-MM-dd}",
                 istNow, deliveryDay);
 
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
             var allSubscriptions = await _subscriptionRepo.GetActiveSubscriptionsAsync();
             _logger.LogInformation("[SUB-JOB] Active subscriptions: {Count}", allSubscriptions.Count());
 
@@ -97,6 +99,13 @@ namespace Sovva.Application.Services
             // ─────────────────────────────────────────────────────────────────
 
             int generated = 0, skipped = 0, failed = 0;
+            
+            // ✅ BATCH DUPLICATE CHECK
+            var subscriptionIds = allSubscriptions.Select(s => s.SubscriptionId).ToList();
+            var existingOrderSet = (await _scheduledOrderRepo.GetExistingSubscriptionOrdersForDateAsync(subscriptionIds, deliveryDay)).ToHashSet();
+
+            // ✅ BATCH NEXT SCHEDULED DATE UPDATE
+            var subscriptionsToUpdate = new List<Subscription>();
 
             foreach (var subscription in allSubscriptions)
             {
@@ -125,9 +134,7 @@ namespace Sovva.Application.Services
 
                     // 3. Duplicate guard — DB unique index also enforces this, but check first
                     //    to avoid noisy constraint violations in logs
-                    var existing = await _scheduledOrderRepo.GetBySubscriptionIdAndDateAsync(
-                        subscription.SubscriptionId, deliveryDay);
-                    if (existing != null)
+                    if (existingOrderSet.Contains(subscription.SubscriptionId))
                     {
                         _logger.LogInformation(
                             "[SUB-JOB] Order already exists for subscription #{Id} on {Date}, skipping",
@@ -141,7 +148,9 @@ namespace Sovva.Application.Services
 
                     // 5 & 6. Resolve Meal / Ingredients and Check Price Protection
                     string orderMealName;
+                    string? orderMealImageUrl = null;
                     List<ScheduledOrderIngredient>? resolvedIngredients = null;
+                    string? nutritionalSummaryJson = null;
 
                     if (subscription.UserMealId.HasValue)
                     {
@@ -153,7 +162,9 @@ namespace Sovva.Application.Services
                         
                         // Price Protection: Custom meals use TotalPrice at time of snapshot
                         orderMealName = $"{userMeal.MealName} (Subscription)";
-                        resolvedIngredients = await ResolveCustomIngredientsAsync(subscription.SubscriptionId, userMeal, userMealIngredientsMap, quantity);
+                        var result = await ResolveCustomIngredientsAsync(subscription.SubscriptionId, userMeal, userMealIngredientsMap, quantity);
+                        resolvedIngredients = result.Ingredients;
+                        nutritionalSummaryJson = result.NutritionalSummary;
                     }
                     else if (subscription.MealId.HasValue)
                     {
@@ -184,7 +195,10 @@ namespace Sovva.Application.Services
                         }
 
                         orderMealName = $"{masterMeal.MealName} (Subscription)";
-                        resolvedIngredients = await ResolveFixedIngredientsAsync(subscription.SubscriptionId, masterMeal, quantity);
+                        orderMealImageUrl = masterMeal.ImageUrl;
+                        var result = await ResolveFixedIngredientsAsync(subscription.SubscriptionId, masterMeal, quantity);
+                        resolvedIngredients = result.Ingredients;
+                        nutritionalSummaryJson = result.NutritionalSummary;
                     }
                     else
                     {
@@ -241,7 +255,10 @@ namespace Sovva.Application.Services
                         UpdatedAt        = _time.UtcNow,
                         DeliveryAddressId = deliveryAddressId,
                         SubscriptionId   = subscription.SubscriptionId,
-                        Ingredients      = resolvedIngredients
+                        Ingredients      = resolvedIngredients,
+                        MealId           = subscription.MealId,
+                        MealImageUrl     = orderMealImageUrl,
+                        NutritionalSummary = nutritionalSummaryJson
                     };
 
                     await _scheduledOrderRepo.CreateAsync(scheduledOrder);
@@ -249,7 +266,7 @@ namespace Sovva.Application.Services
                     // 10. Advance NextScheduledDate
                     subscription.NextScheduledDate = CalculateNextScheduledDate(subscription, deliveryDay);
                     subscription.UpdatedAt         = _time.UtcNow;
-                    await _subscriptionRepo.UpdateAsync(subscription);
+                    subscriptionsToUpdate.Add(subscription);
 
                     generated++;
                     _logger.LogInformation(
@@ -266,9 +283,23 @@ namespace Sovva.Application.Services
                 }
             }
 
+            if (subscriptionsToUpdate.Any())
+            {
+                await _subscriptionRepo.UpdateBatchAsync(subscriptionsToUpdate);
+            }
+
+            stopwatch.Stop();
+
             _logger.LogInformation(
-                "[SUB-JOB] Complete — generated: {G}, skipped: {S}, failed: {F}",
-                generated, skipped, failed);
+                "[JOB-METRICS] {@Metrics}", new
+                {
+                    Job = "subscription-order-generation",
+                    Date = deliveryDay.ToString("yyyy-MM-dd"),
+                    Generated = generated,
+                    Skipped = skipped,
+                    Failed = failed,
+                    DurationMs = stopwatch.ElapsedMilliseconds
+                });
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -320,8 +351,10 @@ namespace Sovva.Application.Services
             int quantity   = GetQuantityForDate(subscription, deliveryDay);
             
             string orderMealName;
+            string? orderMealImageUrl = null;
             decimal totalPrice = subscription.AgreedPrice;
             List<ScheduledOrderIngredient>? resolvedIngredients = null;
+            string? nutritionalSummaryJson = null;
 
             if (subscription.UserMealId.HasValue)
             {
@@ -330,8 +363,10 @@ namespace Sovva.Application.Services
                 
                 orderMealName = $"{userMeal.MealName} (Subscription)";
                 var ingredients = await _userMealIngredientRepo.GetByUserMealIdAsync(subscription.UserMealId.Value);
-                resolvedIngredients = await ResolveCustomIngredientsAsync(subscription.SubscriptionId, userMeal, 
+                var result = await ResolveCustomIngredientsAsync(subscription.SubscriptionId, userMeal, 
                     new Dictionary<int, List<UserMealIngredient>> { { userMeal.UserMealId, ingredients.ToList() } }, quantity);
+                resolvedIngredients = result.Ingredients;
+                nutritionalSummaryJson = result.NutritionalSummary;
             }
             else if (subscription.MealId.HasValue)
             {
@@ -354,7 +389,10 @@ namespace Sovva.Application.Services
                 }
 
                 orderMealName = $"{masterMeal.MealName} (Subscription)";
-                resolvedIngredients = await ResolveFixedIngredientsAsync(subscriptionId, masterMeal, quantity);
+                orderMealImageUrl = masterMeal.ImageUrl;
+                var result = await ResolveFixedIngredientsAsync(subscriptionId, masterMeal, quantity);
+                resolvedIngredients = result.Ingredients;
+                nutritionalSummaryJson = result.NutritionalSummary;
             }
             else
             {
@@ -391,7 +429,10 @@ namespace Sovva.Application.Services
                 UpdatedAt         = _time.UtcNow,
                 DeliveryAddressId = deliveryAddressId,
                 SubscriptionId    = subscriptionId,
-                Ingredients       = resolvedIngredients
+                Ingredients       = resolvedIngredients,
+                MealId           = subscription.MealId,
+                MealImageUrl     = orderMealImageUrl,
+                NutritionalSummary = nutritionalSummaryJson
             };
 
             await _scheduledOrderRepo.CreateAsync(scheduledOrder);
@@ -519,7 +560,7 @@ namespace Sovva.Application.Services
         /// <summary>
         /// Resolves ingredient list for Custom Meal subscription.
         /// </summary>
-        private async Task<List<ScheduledOrderIngredient>?> ResolveCustomIngredientsAsync(
+        private async Task<(List<ScheduledOrderIngredient>? Ingredients, string? NutritionalSummary)> ResolveCustomIngredientsAsync(
             int subscriptionId,
             UserMeal userMeal,
             Dictionary<int, List<UserMealIngredient>> userMealIngredientsMap,
@@ -529,13 +570,17 @@ namespace Sovva.Application.Services
             {
                 _logger.LogWarning("[INGREDIENTS] Empty UserMealIngredients for UserMeal #{Id}, subscription #{SubId}",
                     userMeal.UserMealId, subscriptionId);
-                return null;
+                return (null, null);
             }
 
             var ingredientIds = umi.Select(i => i.IngredientId).ToList();
             var prices = await _ingredientRepo.GetByIdsAsync(ingredientIds);
 
             var result = new List<ScheduledOrderIngredient>();
+            int totalCalories = 0;
+            decimal totalProtein = 0m;
+            int itemCount = 0;
+
             foreach (var item in umi)
             {
                 prices.TryGetValue(item.IngredientId, out var ing);
@@ -550,14 +595,29 @@ namespace Sovva.Application.Services
                     TotalPrice   = unitPrice * qty,
                     CreatedAt    = _time.UtcNow
                 });
+
+                if (ing != null)
+                {
+                    totalCalories += ing.Calories * qty;
+                    totalProtein += ing.Protein * qty;
+                    itemCount += qty;
+                }
             }
-            return result;
+
+            var nutritionalSummary = new Sovva.Application.DTOs.NutritionalSummaryDto
+            {
+                TotalCalories = totalCalories,
+                TotalProtein = totalProtein,
+                ItemCount = itemCount
+            };
+
+            return (result, System.Text.Json.JsonSerializer.Serialize(nutritionalSummary));
         }
 
         /// <summary>
         /// Resolves ingredient list for Fixed Meal subscription.
         /// </summary>
-        private async Task<List<ScheduledOrderIngredient>?> ResolveFixedIngredientsAsync(
+        private async Task<(List<ScheduledOrderIngredient>? Ingredients, string? NutritionalSummary)> ResolveFixedIngredientsAsync(
             int subscriptionId,
             Meal masterMeal,
             int quantity)
@@ -568,13 +628,17 @@ namespace Sovva.Application.Services
             {
                 _logger.LogWarning("[SUB-JOB] No ingredients resolvable for Master Meal #{MealId}, subscription #{SubId}",
                     masterMeal.MealId, subscriptionId);
-                return null;
+                return (null, null);
             }
 
             var ingredientIds = defaultOption.MealOptionIngredients.Select(i => i.IngredientId).ToList();
             var ingredientPrices = await _ingredientRepo.GetByIdsAsync(ingredientIds);
 
             var result = new List<ScheduledOrderIngredient>();
+            int totalCalories = 0;
+            decimal totalProtein = 0m;
+            int itemCount = 0;
+
             foreach (var moi in defaultOption.MealOptionIngredients)
             {
                 int qty = 1 * quantity;
@@ -589,8 +653,23 @@ namespace Sovva.Application.Services
                     TotalPrice   = unitPrice * qty,
                     CreatedAt    = _time.UtcNow
                 });
+
+                if (ing != null)
+                {
+                    totalCalories += ing.Calories * qty;
+                    totalProtein += ing.Protein * qty;
+                    itemCount += qty;
+                }
             }
-            return result;
+
+            var nutritionalSummary = new Sovva.Application.DTOs.NutritionalSummaryDto
+            {
+                TotalCalories = totalCalories,
+                TotalProtein = totalProtein,
+                ItemCount = itemCount
+            };
+
+            return (result, System.Text.Json.JsonSerializer.Serialize(nutritionalSummary));
         }
     }
 }

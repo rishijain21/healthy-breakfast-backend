@@ -35,6 +35,16 @@ namespace Sovva.Infrastructure.Repositories
                 .FirstOrDefaultAsync(x => x.Id == id);
         }
 
+        public async Task<IEnumerable<UserAddress>> GetByIdsWithDetailsAsync(IEnumerable<int> ids)
+        {
+            return await _context.UserAddresses
+                .AsNoTracking()
+                .Include(x => x.ServiceableLocation)
+                .Include(x => x.User)
+                .Where(x => ids.Contains(x.Id))
+                .ToListAsync();
+        }
+
         /// <summary>
         /// Get user's primary address with serviceable location details
         /// </summary>

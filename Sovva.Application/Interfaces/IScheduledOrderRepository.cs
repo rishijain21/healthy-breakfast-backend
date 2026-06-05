@@ -38,6 +38,7 @@ namespace Sovva.Application.Interfaces
         /// Used to prevent duplicate order generation on job retry
         /// </summary>
         Task<ScheduledOrder?> GetBySubscriptionIdAndDateAsync(int subscriptionId, DateOnly date);
+        Task<List<int>> GetExistingSubscriptionOrdersForDateAsync(List<int> subscriptionIds, DateOnly date);
 
         /// <summary>
         /// ✅ NEW: Mark a scheduled order status using raw SQL (no EF tracker)

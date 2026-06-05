@@ -6,6 +6,7 @@ namespace Sovva.Application.Interfaces
     {
         Task<UserAddress?> GetByIdAsync(int id);
         Task<UserAddress?> GetByIdWithDetailsAsync(int id);
+        Task<IEnumerable<UserAddress>> GetByIdsWithDetailsAsync(IEnumerable<int> ids);
         Task<UserAddress?> GetPrimaryAddressByUserIdAsync(int userId);
         Task<IEnumerable<UserAddress>> GetByUserIdAsync(int userId);
         Task<IEnumerable<UserAddress>> GetActiveByUserIdAsync(int userId);

@@ -196,6 +196,19 @@ namespace Sovva.Infrastructure.Repositories
                     so.OrderStatus != ScheduledOrderStatus.Failed);  // ← allow retry on failed orders
         }
 
+        public async Task<List<int>> GetExistingSubscriptionOrdersForDateAsync(List<int> subscriptionIds, DateOnly date)
+        {
+            return await _context.ScheduledOrders
+                .AsNoTracking()
+                .Where(so => 
+                    so.SubscriptionId.HasValue && 
+                    subscriptionIds.Contains(so.SubscriptionId.Value) &&
+                    so.ScheduledFor == date &&
+                    so.OrderStatus != ScheduledOrderStatus.Failed)
+                .Select(so => so.SubscriptionId!.Value)
+                .ToListAsync();
+        }
+
         // ─────────────────────────────────────────────────────────────────────
         // UPDATE
         //
