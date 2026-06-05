@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
 using Sovva.Application.DTOs;
 using Sovva.Application.Helpers;
 using Sovva.Application.Interfaces;
@@ -26,6 +27,7 @@ namespace Sovva.Application.Services
         private readonly IAppTimeProvider _time;
         private readonly IMemoryCache _cache;
         private readonly ILogger<DashboardService> _logger;
+        private readonly Microsoft.Extensions.DependencyInjection.IServiceScopeFactory _scopeFactory;
         
         private const string ProfileCacheKey = "dashboard:profile";
 
@@ -36,7 +38,8 @@ namespace Sovva.Application.Services
             IScheduledOrderRepository scheduledOrderRepository,
             IAppTimeProvider time,
             IMemoryCache cache,
-            ILogger<DashboardService> logger)
+            ILogger<DashboardService> logger,
+            Microsoft.Extensions.DependencyInjection.IServiceScopeFactory scopeFactory)
         {
             _userRepository = userRepository;
             _walletTransactionRepository = walletTransactionRepository;
@@ -45,6 +48,7 @@ namespace Sovva.Application.Services
             _time = time;
             _cache = cache;
             _logger = logger;
+            _scopeFactory = scopeFactory;
         }
 
         public async Task<DashboardSummaryDto> GetDashboardSummaryAsync(int userId, CancellationToken ct = default)
@@ -55,32 +59,70 @@ namespace Sovva.Application.Services
             var istNow = _time.ToIst(_time.UtcNow);
             var tomorrowIst = istNow.Date.AddDays(1);
 
-            // ✅ FIX: Sequential awaits — EF Core DbContext is NOT thread-safe.
-            // Task.WhenAll with shared DbContext causes "second operation started" error.
-            var profile = await GetProfileAsync(userId, ct);
-            if (profile == null)
+            // ✅ FIX: Parallel queries using IServiceScopeFactory to give each repository its own DbContext
+            var profileTask = Task.Run(async () =>
             {
-                _logger.LogWarning("⚠️ User {UserId} has no profile yet. Returning safe zero-state.", userId);
-                profile = new UserDto
+                using var scope = _scopeFactory.CreateScope();
+                var userRepo = scope.ServiceProvider.GetRequiredService<IUserRepository>();
+                var p = await GetProfileAsync(userId, userRepo, ct);
+                if (p == null)
                 {
-                    UserId = userId,
-                    Name = "New User",
-                    Email = "",
-                    Phone = "",
-                    AccountStatus = "Active",
-                    Role = "Customer",
-                    CreatedAt = _time.UtcNow,
-                    UpdatedAt = _time.UtcNow,
-                    IsProfileComplete = false
-                };
-            }
+                    _logger.LogWarning("⚠️ User {UserId} has no profile yet. Returning safe zero-state.", userId);
+                    p = new UserDto
+                    {
+                        UserId = userId,
+                        Name = "New User",
+                        Email = "",
+                        Phone = "",
+                        AccountStatus = "Active",
+                        Role = "Customer",
+                        CreatedAt = _time.UtcNow,
+                        UpdatedAt = _time.UtcNow,
+                        IsProfileComplete = false
+                    };
+                }
+                return p;
+            });
 
-            var walletBalance = await _walletTransactionRepository.GetUserBalanceAsync(userId);
+            var walletBalanceTask = Task.Run(async () =>
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var walletRepo = scope.ServiceProvider.GetRequiredService<IWalletTransactionRepository>();
+                return await walletRepo.GetUserBalanceAsync(userId);
+            });
+
+            var transactionsTask = Task.Run(async () =>
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var walletRepo = scope.ServiceProvider.GetRequiredService<IWalletTransactionRepository>();
+                var result = await walletRepo.GetByUserIdAsync(userId, 1, 20);
+                return result.Items;
+            });
+
+            var subscriptionsTask = Task.Run(async () =>
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var subRepo = scope.ServiceProvider.GetRequiredService<ISubscriptionRepository>();
+                return await GetActiveSubscriptionsAsync(userId, subRepo, ct);
+            });
+
+            var tomorrowOrdersTask = Task.Run(async () =>
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var orderRepo = scope.ServiceProvider.GetRequiredService<IScheduledOrderRepository>();
+                return await GetTomorrowOrdersAsync(userId, tomorrowIst, orderRepo, ct);
+            });
+
+            await Task.WhenAll(profileTask, walletBalanceTask, transactionsTask, subscriptionsTask, tomorrowOrdersTask);
+
+            var profile = profileTask.Result;
+            var walletBalance = walletBalanceTask.Result;
+            var transactions = transactionsTask.Result;
+            var subscriptions = subscriptionsTask.Result;
+            var tomorrowOrders = tomorrowOrdersTask.Result;
+
             profile.WalletBalance = walletBalance;
-            
-            var (transactions, _) = await _walletTransactionRepository.GetByUserIdAsync(userId, 1, 20);
-            var subscriptions = await GetActiveSubscriptionsAsync(userId, ct);
-            var tomorrowOrders = await GetTomorrowOrdersAsync(userId, tomorrowIst, ct);
+
 
             _logger.LogInformation(
                 "✅ Dashboard ready: profile={ProfileFound}, balance={Balance}, " +
@@ -114,10 +156,7 @@ namespace Sovva.Application.Services
             };
         }
 
-        /// <summary>
-        /// Get user profile with 5-minute cache (profile rarely changes)
-        /// </summary>
-        private async Task<UserDto?> GetProfileAsync(int userId, CancellationToken ct)
+        private async Task<UserDto?> GetProfileAsync(int userId, IUserRepository userRepo, CancellationToken ct)
         {
             var cacheKey = $"{ProfileCacheKey}:{userId}";
             
@@ -127,7 +166,7 @@ namespace Sovva.Application.Services
                 return cachedProfile;
             }
 
-            var user = await _userRepository.GetByIdAsync(userId);
+            var user = await userRepo.GetByIdAsync(userId);
             if (user == null) return null;
 
             var profile = new UserDto
@@ -155,9 +194,9 @@ namespace Sovva.Application.Services
         /// <summary>
         /// Get active subscriptions (Active = true and within date range)
         /// </summary>
-        private async Task<List<SubscriptionDto>> GetActiveSubscriptionsAsync(int userId, CancellationToken ct)
+        private async Task<List<SubscriptionDto>> GetActiveSubscriptionsAsync(int userId, ISubscriptionRepository subRepo, CancellationToken ct)
         {
-            var subscriptions = await _subscriptionRepository.GetByUserIdAsync(userId);
+            var subscriptions = await subRepo.GetByUserIdAsync(userId);
             var today = _time.TodayIst;
             
             return subscriptions
@@ -192,10 +231,11 @@ namespace Sovva.Application.Services
         private async Task<List<ScheduledOrderResponseDto>> GetTomorrowOrdersAsync(
             int userId, 
             DateTime tomorrowIstDate,
+            IScheduledOrderRepository orderRepo,
             CancellationToken ct)
         {
             // Get all orders for tomorrow by userId
-            var allOrders = await _scheduledOrderRepository.GetByUserIdAndDateAsync(
+            var allOrders = await orderRepo.GetByUserIdAndDateAsync(
                 userId, 
                 tomorrowIstDate
             );

@@ -69,6 +69,7 @@ namespace Sovva.Infrastructure.Repositories
         {
             return await _context.Subscriptions
                 .AsNoTracking()
+                .AsSplitQuery()
                 .Include(s => s.User)
                 .Include(s => s.UserMeal)
                     .ThenInclude(um => um.Meal)
@@ -83,6 +84,7 @@ namespace Sovva.Infrastructure.Repositories
             var today = _time.TodayIst;  // ✅ Use IST instead of UTC
             return await _context.Subscriptions
                 .AsNoTracking()
+                .AsSplitQuery()
                 .Include(s => s.User)
                     .ThenInclude(u => u.AuthMapping)  // ✅ Important for scheduling
                 .Include(s => s.UserMeal)

@@ -50,6 +50,7 @@ namespace Sovva.Infrastructure.Repositories
 
             return await _context.ScheduledOrders
                 .AsNoTracking()
+                .AsSplitQuery()
                 .Include(so => so.Ingredients)
                     .ThenInclude(soi => soi.Ingredient)
                         .ThenInclude(i => i.IngredientCategory)
@@ -72,6 +73,7 @@ namespace Sovva.Infrastructure.Repositories
 
             return await _context.ScheduledOrders
                 .AsNoTracking()
+                .AsSplitQuery()
                 .Include(so => so.Ingredients)
                     .ThenInclude(soi => soi.Ingredient)
                         .ThenInclude(i => i.IngredientCategory)
