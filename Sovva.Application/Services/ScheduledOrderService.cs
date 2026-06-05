@@ -690,7 +690,7 @@ namespace Sovva.Application.Services
                     UnitPrice = i.UnitPrice,
                     TotalPrice = i.TotalPrice,
                     Category = i.Ingredient?.IngredientCategory?.CategoryName ?? string.Empty,
-                    ImageUrl = string.Empty,
+                    ImageUrl = i.Ingredient?.IconEmoji ?? string.Empty,
                     Calories = i.Ingredient?.Calories ?? 0,
                     Protein = i.Ingredient?.Protein ?? 0,
                     Fiber = i.Ingredient?.Fiber ?? 0

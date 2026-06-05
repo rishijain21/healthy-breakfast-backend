@@ -224,7 +224,10 @@ namespace Sovva.Application.Services
                         UnitPrice = i.UnitPrice,
                         TotalPrice = i.TotalPrice,
                         Category = i.Ingredient?.IngredientCategory?.CategoryName ?? "",
-                        ImageUrl = i.Ingredient?.IconEmoji ?? ""
+                        ImageUrl = i.Ingredient?.IconEmoji ?? "",
+                        Calories = i.Ingredient?.Calories ?? 0,
+                        Protein = i.Ingredient?.Protein ?? 0,
+                        Fiber = i.Ingredient?.Fiber ?? 0
                     }).ToList() ?? new List<ScheduledOrderIngredientDetailDto>()
                 })
                 .ToList();
