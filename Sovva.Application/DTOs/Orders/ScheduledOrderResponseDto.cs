@@ -32,5 +32,8 @@ namespace Sovva.Application.DTOs
         public decimal TotalPrice { get; set; }
         public string Category { get; set; } = null!;
         public string ImageUrl { get; set; } = null!;
+        public int Calories { get; set; }
+        public decimal Protein { get; set; }
+        public decimal Fiber { get; set; }
     }
 }

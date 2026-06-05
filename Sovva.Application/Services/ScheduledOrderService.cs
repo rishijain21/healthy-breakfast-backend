@@ -29,7 +29,7 @@ namespace Sovva.Application.Services
         private readonly IMealRepository _mealRepository;
         private readonly IOrderRepository _orderRepository;
         private readonly IWalletTransactionRepository _walletTransactionRepository;
-
+        private readonly Microsoft.Extensions.DependencyInjection.IServiceScopeFactory _scopeFactory;
 
         public ScheduledOrderService(
             IScheduledOrderRepository scheduledOrderRepository,
@@ -43,7 +43,8 @@ namespace Sovva.Application.Services
             IUnitOfWork unitOfWork,
             IMealRepository mealRepository,
             IOrderRepository orderRepository,
-            IWalletTransactionRepository walletTransactionRepository)
+            IWalletTransactionRepository walletTransactionRepository,
+            Microsoft.Extensions.DependencyInjection.IServiceScopeFactory scopeFactory)
         {
             _scheduledOrderRepository = scheduledOrderRepository;
             _userRepository = userRepository;
@@ -57,6 +58,7 @@ namespace Sovva.Application.Services
             _mealRepository = mealRepository;
             _orderRepository = orderRepository;
             _walletTransactionRepository = walletTransactionRepository;
+            _scopeFactory = scopeFactory;
         }
 
 
@@ -486,6 +488,8 @@ namespace Sovva.Application.Services
             var deliveryDate = targetDate ?? _time.TomorrowIst;
             var istNow = _time.ToIst(_time.UtcNow);
             
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
             _logger.LogInformation("[MIDNIGHT JOB] Starting confirmation for Date: {Date} IST (System Today: {Today} IST)", 
                 deliveryDate, _time.TodayIst);
             
@@ -538,17 +542,58 @@ namespace Sovva.Application.Services
             var existingOrdersByScheduledOrderId = await _orderRepository.GetByScheduledOrderIdsAsync(scheduledOrderIds);
             var existingTransactionsByScheduledOrderId = await _walletTransactionRepository.GetByScheduledOrderIdsAsync(scheduledOrderIds);
 
+            // ✅ FIX: Batch load delivery addresses
+            var addressIds = pendingOrders
+                .Where(o => o.DeliveryAddressId.HasValue)
+                .Select(o => o.DeliveryAddressId!.Value)
+                .Distinct().ToList();
+            var addressesMap = (await _userAddressRepository.GetByIdsWithDetailsAsync(addressIds))
+                .ToDictionary(a => a.Id);
+
             int confirmedCount = 0;
             int failedCount = 0;
 
-            foreach (var scheduledOrder in pendingOrders)
+            // ✅ PHASE 2: Parallelize order confirmation
+            var semaphore = new SemaphoreSlim(10); // Process 10 orders concurrently
+            var tasks = pendingOrders.Select(async scheduledOrder =>
             {
-                // ✅ INDUSTRY PATTERN: Each order fully isolated
-                // One failure never affects the next order
-                var success = await ConfirmSingleOrderAsync(scheduledOrder, usersByAuthId, existingOrdersByScheduledOrderId, existingTransactionsByScheduledOrderId);
-                if (success) confirmedCount++;
-                else failedCount++;
-            }
+                await semaphore.WaitAsync();
+                try
+                {
+                    // Isolated scope per order to ensure thread safety with EF Core DbContext
+                    using var scope = _scopeFactory.CreateScope();
+                    var scopedService = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<IScheduledOrderService>(scope.ServiceProvider);
+                    
+                    var success = await scopedService.ProcessSingleScheduledOrderAsync(
+                        scheduledOrder, 
+                        usersByAuthId, 
+                        existingOrdersByScheduledOrderId, 
+                        existingTransactionsByScheduledOrderId,
+                        addressesMap);
+                        
+                    if (success) Interlocked.Increment(ref confirmedCount);
+                    else Interlocked.Increment(ref failedCount);
+                }
+                finally
+                {
+                    semaphore.Release();
+                }
+            });
+
+            await Task.WhenAll(tasks);
+            stopwatch.Stop();
+
+            _logger.LogInformation(
+                "[JOB-METRICS] {@Metrics}", new
+                {
+                    Job = "scheduled-order-confirmation",
+                    Date = deliveryDate.ToString("yyyy-MM-dd"),
+                    Found = scheduledOrders.Count,
+                    Pending = pendingOrders.Count,
+                    Confirmed = confirmedCount,
+                    Failed = failedCount,
+                    DurationMs = stopwatch.ElapsedMilliseconds
+                });
 
             _logger.LogInformation("[MIDNIGHT JOB] Complete! Confirmed: {Confirmed}, Failed: {Failed}, Already processed: {AlreadyProcessed}",
                 confirmedCount, failedCount, scheduledOrders.Count - pendingOrders.Count);
@@ -645,7 +690,10 @@ namespace Sovva.Application.Services
                     UnitPrice = i.UnitPrice,
                     TotalPrice = i.TotalPrice,
                     Category = i.Ingredient?.IngredientCategory?.CategoryName ?? string.Empty,
-                    ImageUrl = string.Empty
+                    ImageUrl = string.Empty,
+                    Calories = i.Ingredient?.Calories ?? 0,
+                    Protein = i.Ingredient?.Protein ?? 0,
+                    Fiber = i.Ingredient?.Fiber ?? 0
                 }).ToList() ?? new List<ScheduledOrderIngredientDetailDto>(),
                 
                 // ✅ ADD: Subscription ID for filtering orders by subscription
@@ -655,13 +703,14 @@ namespace Sovva.Application.Services
 
         // ----------------------------------------------------------------------------------------
         // ✅ Each order gets its own isolated execution scope
-        // Safe to retry — idempotency handled inside ConfirmSingleOrderAsync
+        // Safe to retry — idempotency handled inside ProcessSingleScheduledOrderAsync
         // ----------------------------------------------------------------------------------------
-        private async Task<bool> ConfirmSingleOrderAsync(
+        public async Task<bool> ProcessSingleScheduledOrderAsync(
             ScheduledOrder scheduledOrder,
             Dictionary<Guid, User> usersByAuthId,
             Dictionary<int, Order> existingOrders,
-            Dictionary<int, WalletTransaction> existingTransactions)
+            Dictionary<int, WalletTransaction> existingTransactions,
+            Dictionary<int, UserAddress> addressesMap)
         {
             try
             {
@@ -690,8 +739,15 @@ namespace Sovva.Application.Services
                     return false;
                 }
 
-                var address = await _userAddressRepository
-                    .GetByIdWithDetailsAsync(scheduledOrder.DeliveryAddressId.Value);
+                if (!addressesMap.TryGetValue(scheduledOrder.DeliveryAddressId.Value, out var address))
+                {
+                    _logger.LogWarning(
+                        "Address {AddressId} not found for order #{Id}",
+                        scheduledOrder.DeliveryAddressId.Value, scheduledOrder.ScheduledOrderId);
+                    await _scheduledOrderRepository.MarkAsAsync(
+                        scheduledOrder.ScheduledOrderId, "Failed");
+                    return false;
+                }
 
                 if (address?.ServiceableLocation == null 
                     || !address.ServiceableLocation.IsActive)
