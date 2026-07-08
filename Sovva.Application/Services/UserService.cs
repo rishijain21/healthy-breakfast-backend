@@ -13,17 +13,23 @@ namespace Sovva.Application.Services
         private readonly ICurrentUserService _currentUserService;
         private readonly IAppTimeProvider _time;
         private readonly ILogger<UserService> _logger;
+        private readonly ICacheService _cacheService;
+
+        private const string UserByIdCacheKeyPrefix = "user:id:";
+        private const string UserByAuthIdCacheKeyPrefix = "user:auth:";
 
         public UserService(
             IUserRepository userRepository, 
             ICurrentUserService currentUserService,
             IAppTimeProvider time,
-            ILogger<UserService> logger)
+            ILogger<UserService> logger,
+            ICacheService cacheService)
         {
             _userRepository = userRepository;
             _currentUserService = currentUserService;
             _time = time;
             _logger = logger;
+            _cacheService = cacheService;
         }
 
         // ✅ EXISTING METHODS (updated to include new fields)
@@ -32,9 +38,8 @@ namespace Sovva.Application.Services
             var user = new User
             {
                 Name = dto.Name,
-                Email = dto.Email,
+                Email = dto.Email.ToLower(),
                 Phone = dto.Phone,
-                WalletBalance = 0,
                 AccountStatus = AccountStatus.Active,
                 Role = UserRole.Customer,
                 CreatedAt = _time.UtcNow,
@@ -48,10 +53,16 @@ namespace Sovva.Application.Services
 
         public async Task<UserDto?> GetUserByIdAsync(int id)
         {
+            var cacheKey = UserByIdCacheKeyPrefix + id;
+            var cached = await _cacheService.GetAsync<UserDto>(cacheKey);
+            if (cached != null) return cached;
+
             var user = await _userRepository.GetByIdAsync(id);
             if (user == null) return null;
 
-            return MapToUserDto(user);
+            var result = MapToUserDto(user);
+            await _cacheService.SetAsync(cacheKey, result, TimeSpan.FromMinutes(10));
+            return result;
         }
 
         public async Task<bool> UserExistsAsync(string email)
@@ -125,9 +136,8 @@ namespace Sovva.Application.Services
             var user = new User
             {
                 Name = request.Name,
-                Email = request.Email,
+                Email = request.Email.ToLower(),
                 Phone = request.Phone ?? string.Empty,
-                WalletBalance = 0.00m,
                 AccountStatus = AccountStatus.Active,
                 Role = UserRole.Customer,
                 CreatedAt = _time.UtcNow,
@@ -158,10 +168,16 @@ namespace Sovva.Application.Services
         // ✅ NEW: Get user profile by AuthId (for profile page)
         public async Task<UserDto?> GetUserProfileByAuthIdAsync(Guid authId)
         {
+            var cacheKey = UserByAuthIdCacheKeyPrefix + authId;
+            var cached = await _cacheService.GetAsync<UserDto>(cacheKey);
+            if (cached != null) return cached;
+
             var user = await _userRepository.GetUserByAuthIdAsync(authId);
             if (user == null) return null;
 
-            return MapToUserDto(user);
+            var result = MapToUserDto(user);
+            await _cacheService.SetAsync(cacheKey, result, TimeSpan.FromMinutes(10));
+            return result;
         }
 
         // ✅ NEW: Update user profile
@@ -190,6 +206,10 @@ namespace Sovva.Application.Services
 
             await _userRepository.UpdateUserAsync(user);
             await _userRepository.SaveChangesAsync();
+
+            await _cacheService.RemoveAsync(UserByIdCacheKeyPrefix + user.UserId);
+            await _cacheService.RemoveAsync(UserByAuthIdCacheKeyPrefix + authId);
+            await _cacheService.RemoveAsync("dashboard:profile:" + user.UserId);
 
             return MapToUserDto(user);
         }
@@ -231,6 +251,13 @@ namespace Sovva.Application.Services
 
             await _currentUserService.InvalidateCacheAsync(userId);
 
+            await _cacheService.RemoveAsync(UserByIdCacheKeyPrefix + userId);
+            await _cacheService.RemoveAsync("dashboard:profile:" + userId);
+            if (user.AuthMapping != null)
+            {
+                await _cacheService.RemoveAsync(UserByAuthIdCacheKeyPrefix + user.AuthMapping.AuthId);
+            }
+
             return true;
         }
 
@@ -251,6 +278,13 @@ namespace Sovva.Application.Services
                 user.UserId, user.Email, user.DeletedAt);
 
             await _currentUserService.InvalidateCacheAsync(userId);
+
+            await _cacheService.RemoveAsync(UserByIdCacheKeyPrefix + userId);
+            await _cacheService.RemoveAsync("dashboard:profile:" + userId);
+            if (user.AuthMapping != null)
+            {
+                await _cacheService.RemoveAsync(UserByAuthIdCacheKeyPrefix + user.AuthMapping.AuthId);
+            }
 
             return true;
         }

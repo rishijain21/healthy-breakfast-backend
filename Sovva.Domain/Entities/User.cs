@@ -18,7 +18,6 @@ namespace Sovva.Domain.Entities
 
         public AccountStatus AccountStatus { get; set; } = AccountStatus.Active;
 
-        public decimal WalletBalance { get; set; }
 
         public UserRole Role { get; set; } = UserRole.Customer;
 

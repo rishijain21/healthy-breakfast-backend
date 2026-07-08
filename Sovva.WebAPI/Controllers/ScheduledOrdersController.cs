@@ -27,6 +27,7 @@ namespace Sovva.WebAPI.Controllers
         private readonly ICurrentUserService _currentUserService;
         private readonly IAppTimeProvider _time;
         private readonly ILogger<ScheduledOrdersController> _logger;
+        private readonly ISupabaseStorageService _storageService;
 
         public ScheduledOrdersController(
             IScheduledOrderService scheduledOrderService,
@@ -35,7 +36,8 @@ namespace Sovva.WebAPI.Controllers
             IOrderService orderService,
             ICurrentUserService currentUserService,
             IAppTimeProvider time,
-            ILogger<ScheduledOrdersController> logger)
+            ILogger<ScheduledOrdersController> logger,
+            ISupabaseStorageService storageService)
         {
             _scheduledOrderService = scheduledOrderService;
             _scheduledOrderRepository = scheduledOrderRepository;
@@ -44,6 +46,7 @@ namespace Sovva.WebAPI.Controllers
             _currentUserService = currentUserService;
             _time = time;
             _logger = logger;
+            _storageService = storageService;
         }
 
         [HttpPost("create-from-meal-builder")]
@@ -117,6 +120,23 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
             var pendingOrders = allOrders
                 .Where(order => order.OrderStatus?.ToLower() == "scheduled")
                 .ToList();
+
+            // ✅ FIX: Sign raw storage paths for meal images so frontend can render them
+            foreach (var order in pendingOrders)
+            {
+                if (!string.IsNullOrEmpty(order.MealImageUrl))
+                {
+                    try
+                    {
+                        order.MealImageUrl = await _storageService.GetSignedUrlAsync(order.MealImageUrl);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning("Failed to sign image for order {OrderId}: {Error}", order.ScheduledOrderId, ex.Message);
+                        order.MealImageUrl = null;
+                    }
+                }
+            }
 
             _logger.LogInformation("📦 Found {PendingCount} orders in cart (filtered from {TotalCount} total)", pendingOrders.Count, allOrders.Count);
 
@@ -208,6 +228,20 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
         public async Task<ActionResult<ProcessOrdersResponseDto>> ProcessTomorrowManual()
         {
             var result = await ProcessOrdersForDateAsync(_time.UtcNow.AddDays(1), "TOMORROW");
+            return Ok(ApiResponse.Ok(result));
+        }
+
+        [HttpPost("retry-failed-orders")]
+        [Authorize(Roles = "Admin")]
+        public async Task<ActionResult<ProcessOrdersResponseDto>> RetryFailedOrders([FromQuery] string? date = null)
+        {
+            DateOnly? targetDate = null;
+            if (!string.IsNullOrEmpty(date) && DateOnly.TryParse(date, out var parsed))
+            {
+                targetDate = parsed;
+            }
+            
+            var result = await _scheduledOrderService.RetryFailedOrdersAsync(targetDate);
             return Ok(ApiResponse.Ok(result));
         }
 

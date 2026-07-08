@@ -11,6 +11,7 @@ namespace Sovva.Application.Interfaces
         Task<Subscription?> GetByIdAsync(int subscriptionId);
         Task<IEnumerable<Subscription>> GetByUserIdAsync(int userId);
         Task<IEnumerable<Subscription>> GetActiveSubscriptionsAsync();
+        Task<IEnumerable<Subscription>> GetExpiredActiveSubscriptionsAsync(DateOnly today);
         Task<Subscription> CreateAsync(Subscription subscription);
         Task<Subscription> UpdateAsync(Subscription subscription);
         Task<bool> DeleteAsync(int subscriptionId);

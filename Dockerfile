@@ -21,7 +21,9 @@ ENV ASPNETCORE_ENVIRONMENT=Production
 EXPOSE 10000
 
 RUN addgroup --system --gid 1001 dotnetgroup && \
-    adduser --system --uid 1001 --ingroup dotnetgroup dotnetuser
+    adduser --system --uid 1001 --ingroup dotnetgroup dotnetuser && \
+    mkdir -p /app/logs && \
+    chown -R dotnetuser:dotnetgroup /app/logs
+    
 USER dotnetuser
-
 ENTRYPOINT ["dotnet", "Sovva.WebAPI.dll"]

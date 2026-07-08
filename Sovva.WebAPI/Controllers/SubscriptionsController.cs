@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Sovva.Application.DTOs;
+using Sovva.Application.Exceptions;
 using Sovva.Application.Helpers;
 using Sovva.Application.Interfaces;
 using Microsoft.AspNetCore.Authorization;
@@ -19,6 +20,7 @@ namespace Sovva.WebAPI.Controllers
         private readonly IScheduledOrderService _scheduledOrderService;
         private readonly IScheduledOrderRepository _scheduledOrderRepository;
         private readonly ICurrentUserService _currentUserService;
+        private readonly IDashboardService _dashboardService;
         private readonly IAppTimeProvider _time;
         private readonly ILogger<SubscriptionsController> _logger;
 
@@ -28,6 +30,7 @@ namespace Sovva.WebAPI.Controllers
             IScheduledOrderService scheduledOrderService,
             IScheduledOrderRepository scheduledOrderRepository,
             ICurrentUserService currentUserService,
+            IDashboardService dashboardService,
             IAppTimeProvider time,
             ILogger<SubscriptionsController> logger)
         {
@@ -36,6 +39,7 @@ namespace Sovva.WebAPI.Controllers
             _scheduledOrderService = scheduledOrderService;
             _scheduledOrderRepository = scheduledOrderRepository;
             _currentUserService = currentUserService;
+            _dashboardService = dashboardService;
             _time = time;
             _logger = logger;
         }
@@ -145,10 +149,13 @@ namespace Sovva.WebAPI.Controllers
                 // ✅ Order is already created inside CreateSubscriptionAsync() via CreateFirstScheduledOrderAsync()
                 // No need to generate it again!
 
+                // ✅ FIX: Invalidate dashboard cache so active sub count updates
+                await _dashboardService.InvalidateDashboardCacheAsync(userId.Value);
+
                 return CreatedAtAction(nameof(GetSubscription),
                     new { id = subscription.SubscriptionId }, ApiResponse.Ok(subscription, subscription.Warning));
             }
-            catch (InvalidOperationException ex)
+            catch (DuplicateSubscriptionException ex)
             {
                 // ✅ This catches duplicate subscription attempts
                 _logger.LogWarning(ex, "Duplicate subscription attempt blocked");
@@ -159,11 +166,6 @@ namespace Sovva.WebAPI.Controllers
                 // ✅ This catches security violations
                 _logger.LogWarning(ex, "Unauthorized subscription attempt");
                 return StatusCode(403, ApiResponse.Fail("FORBIDDEN", "Access denied")); // ✅ Returns 403 Forbidden
-            }
-            catch (ArgumentException ex)
-            {
-                _logger.LogError(ex, "Invalid argument");
-                return BadRequest(ApiResponse.Fail("BAD_REQUEST", ex.Message));
             }
             // ✅ No generic catch — middleware handles unexpected exceptions
         }
@@ -182,18 +184,13 @@ namespace Sovva.WebAPI.Controllers
             if (existing.UserId != userId.Value)
                 return StatusCode(403, ApiResponse.Fail("FORBIDDEN", "Access denied"));
 
-            try
-            {
-                var subscription = await _subscriptionService.UpdateSubscriptionAsync(id, updateSubscriptionDto);
-                if (subscription == null)
-                    return NotFound(ApiResponse.Fail("NOT_FOUND", "Resource not found"));
+            var subscription = await _subscriptionService.UpdateSubscriptionAsync(id, updateSubscriptionDto);
+            if (subscription == null)
+                return NotFound(ApiResponse.Fail("NOT_FOUND", "Resource not found"));
 
-                return Ok(ApiResponse.Ok(subscription));
-            }
-            catch (ArgumentException ex)
-            {
-                return BadRequest(ApiResponse.Fail("BAD_REQUEST", ex.Message));
-            }
+            await _dashboardService.InvalidateDashboardCacheAsync(userId.Value);
+
+            return Ok(ApiResponse.Ok(subscription));
         }
 
         [HttpDelete("{id}")]
@@ -217,6 +214,8 @@ namespace Sovva.WebAPI.Controllers
             // ✅ Delegate to service - it handles scheduled orders properly
             // (keeps processed orders, deletes pending ones)
             await _subscriptionService.DeleteSubscriptionAsync(id);
+            
+            await _dashboardService.InvalidateDashboardCacheAsync(userId.Value);
             
             _logger.LogInformation("Subscription {SubscriptionId} deleted successfully", id);
             return NoContent();
@@ -256,6 +255,8 @@ namespace Sovva.WebAPI.Controllers
                 _logger.LogWarning(ex, "Failed to generate order for resumed subscription {SubscriptionId}", id);
             }
 
+            await _dashboardService.InvalidateDashboardCacheAsync(userId.Value);
+
             return Ok(ApiResponse.Ok(new { message = "Subscription activated and order generated" }));
         }
 
@@ -290,9 +291,13 @@ namespace Sovva.WebAPI.Controllers
 
             var result = await _subscriptionService.DeactivateSubscriptionAsync(id);
             
-            return result 
-                ? Ok(ApiResponse.Ok(new { message = "Subscription paused and order cancelled" }))
-                : NotFound(ApiResponse.Fail("NOT_FOUND", "Subscription not found"));
+            if (result)
+            {
+                await _dashboardService.InvalidateDashboardCacheAsync(userId.Value);
+                return Ok(ApiResponse.Ok(new { message = "Subscription paused and order cancelled" }));
+            }
+            
+            return NotFound(ApiResponse.Fail("NOT_FOUND", "Subscription not found"));
         }
 
         /// <summary>

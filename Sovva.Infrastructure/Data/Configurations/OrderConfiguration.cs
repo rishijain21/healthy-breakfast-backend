@@ -18,6 +18,9 @@ namespace Sovva.Infrastructure.Data.Configurations
                 .IsRequired()
                 .HasMaxLength(50);
 
+            builder.Property(e => e.Review)
+                .HasMaxLength(1000);
+
             // CHECK constraints
             builder.ToTable(t =>
             {
@@ -53,8 +56,9 @@ namespace Sovva.Infrastructure.Data.Configurations
             builder.HasIndex(e => new { e.UserId, e.OrderStatus })
                 .HasDatabaseName("IX_Orders_UserId_Status");
 
-            // ✅ FIX 12: Partial index for Idempotency check
+            // ✅ FIX 12: Partial unique index for Idempotency check
             builder.HasIndex(e => e.ScheduledOrderId)
+                .IsUnique()
                 .HasDatabaseName("IX_Orders_ScheduledOrderId")
                 .HasFilter("\"ScheduledOrderId\" IS NOT NULL");
         }

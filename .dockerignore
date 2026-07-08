@@ -1,0 +1,13 @@
+.env
+.git/
+.gitignore
+*.md
+audit_results.txt
+publish/
+bin/
+obj/
+*.http
+docs/
+sovva.db
+*.db-shm
+*.db-wal

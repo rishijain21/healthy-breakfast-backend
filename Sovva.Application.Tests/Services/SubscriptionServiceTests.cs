@@ -222,6 +222,9 @@ namespace Sovva.Application.Tests.Services
             _subRepoMock.Setup(x => x.GetAnyActiveSubscriptionByMealIdAsync(1, 10))
                         .ReturnsAsync(new Subscription()); // Exists
 
+            _addressRepoMock.Setup(x => x.GetPrimaryAddressAsync(1))
+                            .ReturnsAsync(new UserAddress { Id = 1, ServiceableLocation = new ServiceableLocation { IsActive = true } });
+
             // Act
             Func<Task> action = async () => await _sut.CreateSubscriptionAsync(dto);
 

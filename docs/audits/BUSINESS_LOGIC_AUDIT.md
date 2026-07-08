@@ -316,3 +316,25 @@ This code path is hit when: existing Order row was found but wallet debit fails 
 | 5 | 21 `DateTime.UtcNow` violations in services | 🟡 P2 | BL-12 |
 | 6 | CurrentUserService swallows all exceptions | 🟡 P2 | BL-13 |
 | 7 | Order state machine allows skip transitions | 🟢 P3 | BL-01 |
+
+## 10. MESSAGE QUEUE & ASYNC BOTTLENECKS (DEEP AUDIT)
+
+### BL-18: O(N) Database Insertions in Nightly Subscription Job (Thread Starvation Risk)
+- **Severity:** 🔴 P0 CRITICAL
+- **Location:** `SubscriptionSchedulingService.GenerateScheduledOrdersFromSubscriptionsAsync`
+- **Issue:** The method iterates over all active subscriptions in a sequential `foreach` loop. Inside the loop, it performs:
+  1. `await _scheduledOrderRepo.CreateAsync(scheduledOrder)`
+  2. `await _ingredientRepo.GetByIdsAsync(...)` (inside helper methods)
+- **Impact:** For 10,000 subscriptions, this triggers 10,000 to 20,000 separate, synchronous database round-trips. This will hold a thread from the ThreadPool for minutes, causing ThreadPool starvation and likely pushing the Hangfire job past timeout limits or making the system unresponsive.
+- **Fix Required:** 
+  1. Bulk load all required `IngredientIds` BEFORE the loop.
+  2. Accumulate all generated `ScheduledOrder` entities into a `List<ScheduledOrder>`.
+  3. Add a new `CreateBatchAsync` method to `IScheduledOrderRepository`.
+  4. Perform a single bulk insert after the loop via `AddRangeAsync`.
+
+### BL-19: Unbounded Data Loading in Repositories
+- **Severity:** 🟡 P1
+- **Location:** `WalletTransactionRepository.GetAllAsync()`
+- **Issue:** Uses `Take(500)` as a "safety limit". While bounded, this is a code smell. If an admin page expects pagination, it will silently drop records beyond 500.
+- **Fix:** Ensure Admin UI uses `GetAllPagedAsync` properly.
+

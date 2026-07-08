@@ -29,6 +29,8 @@ namespace Sovva.Application.DTOs
     {
         public int TotalCalories { get; set; }
         public decimal TotalProtein { get; set; }
+        public decimal TotalCarbs { get; set; }
+        public decimal TotalFats { get; set; }
         public int ItemCount { get; set; }
     }
 }

@@ -27,5 +27,8 @@ namespace Sovva.Application.DTOs
         public int LoyaltyPoints { get; set; }
         public decimal AverageCarbs { get; set; }
         public decimal AverageFats { get; set; }
+        public decimal AverageCalories { get; set; }
+        public decimal AverageProtein { get; set; }
+        public int OrdersThisWeek { get; set; }
     }
 }

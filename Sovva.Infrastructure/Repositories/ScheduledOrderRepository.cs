@@ -36,6 +36,12 @@ namespace Sovva.Infrastructure.Repositories
             return scheduledOrder;
         }
 
+        public async Task CreateBatchAsync(IEnumerable<ScheduledOrder> scheduledOrders)
+        {
+            await _context.ScheduledOrders.AddRangeAsync(scheduledOrders);
+            await _context.SaveChangesAsync();
+        }
+
         // ─────────────────────────────────────────────────────────────────────
         // READ — user-scoped
         // ─────────────────────────────────────────────────────────────────────
@@ -80,6 +86,22 @@ namespace Sovva.Infrastructure.Repositories
                 .Where(so => so.UserId == userId
                           && so.ScheduledFor == istDateOnly)
                 .OrderBy(so => so.CreatedAt)
+                .ToListAsync();
+        }
+
+        public async Task<List<ScheduledOrder>> GetByUserIdAndDateRangeAsync(int userId, DateOnly from, DateOnly to)
+        {
+            return await _context.ScheduledOrders
+                .AsNoTracking()
+                .AsSplitQuery()
+                .Include(so => so.Ingredients)
+                    .ThenInclude(soi => soi.Ingredient)
+                .Where(so => so.UserId == userId
+                          && so.ScheduledFor >= from
+                          && so.ScheduledFor <= to
+                          && so.OrderStatus != ScheduledOrderStatus.Failed
+                          && so.DeletedAt == null)
+                .OrderBy(so => so.ScheduledFor)
                 .ToListAsync();
         }
 
@@ -160,7 +182,29 @@ namespace Sovva.Infrastructure.Repositories
                     .ThenInclude(soi => soi.Ingredient)
                 .Where(so => so.ScheduledFor == date  // DateOnly == DateOnly ✅ clean
                           && !so.IsProcessedToOrder)
+                .OrderBy(so => so.ScheduledOrderId)
                 .ToListAsync();
+        }
+
+        public async Task<List<ScheduledOrder>> GetFailedScheduledOrdersAsync(DateOnly? targetDate)
+        {
+            var query = _context.ScheduledOrders
+                .AsNoTracking()
+                .Where(so => so.OrderStatus == ScheduledOrderStatus.Failed)
+                .Include(o => o.User)
+                .Include(o => o.Ingredients)
+                    .ThenInclude(i => i.Ingredient)
+                        .ThenInclude(ing => ing.IngredientCategory)
+                .Include(o => o.DeliveryAddress)
+                    .ThenInclude(a => a!.ServiceableLocation)
+                .AsQueryable();
+
+            if (targetDate.HasValue)
+            {
+                query = query.Where(so => so.ScheduledFor == targetDate.Value);
+            }
+
+            return await query.OrderBy(o => o.CreatedAt).ToListAsync();
         }
 
         public async Task<bool> HasScheduledOrdersForDateAsync(Guid authId, DateTime date)
@@ -280,8 +324,7 @@ namespace Sovva.Infrastructure.Repositories
 
             if (scheduledOrder != null)
             {
-                _context.ScheduledOrderIngredients.RemoveRange(scheduledOrder.Ingredients);
-                _context.ScheduledOrders.Remove(scheduledOrder);
+                scheduledOrder.DeletedAt = _time.UtcNow;
                 await _context.SaveChangesAsync();
             }
         }
@@ -295,11 +338,11 @@ namespace Sovva.Infrastructure.Repositories
 
             if (orders.Any())
             {
+                var now = _time.UtcNow;
                 foreach (var order in orders)
                 {
-                    _context.ScheduledOrderIngredients.RemoveRange(order.Ingredients);
+                    order.DeletedAt = now;
                 }
-                _context.ScheduledOrders.RemoveRange(orders);
                 await _context.SaveChangesAsync();
             }
         }

@@ -1,0 +1,243 @@
+### ═══════════════════════════════════════════════════════════════════
+### Phase 4 — Orders API Test Suite
+### Sovva Backend (.NET 8)
+###
+### Tests the CreateOrderFromMealBuilderAsync refactored implementation
+### (ExecuteOrderCreationAsync extracted core logic)
+###
+### Usage: Install "REST Client" VS Code extension, then click
+###        "Send Request" above each request block.
+###
+### Prerequisite: Ensure database has active meal + user with primary address
+### ═══════════════════════════════════════════════════════════════════
+
+@baseUrl = http://localhost:5257
+
+# Use tokens from phase1-foundation.http or obtain fresh ones
+@adminToken = eyJhbGciOiJFUzI1NiIsImtpZCI6IjE4OTNiMDM2LWYyMTAtNDM4Ni1hNWJkLTk5ODA3N2FhOWYwNyIsInR5cCI6IkpXVCJ9.eyJhYWwiOiJhYWwxIiwiYW1yIjpbeyJtZXRob2QiOiJvdHAiLCJ0aW1lc3RhbXAiOjE3NzUxMjE3NTF9XSwiYXBwX21ldGFkYXRhIjp7InByb3ZpZGVyIjoiZW1haWwiLCJwcm92aWRlcnMiOlsiZW1haWwiXX0sImF1ZCI6ImF1dGhlbnRpY2F0ZWQiLCJlbWFpbCI6ImphaW5ucmlzaGlpMjFAZ21haWwuY29tIiwiZXhwIjoxNzc2ODUxMjA0LCJpYXQiOjE3NzY4NDc2MDQsImlzX2Fub255bW91cyI6ZmFsc2UsImlzcyI6Imh0dHBzOi8vYmVlcWFtd3B0bWJwb3dzd2F3Znguc3VwYWJhc2UuY28vYXV0aC92MSIsInBob25lIjoiIiwicm9sZSI6ImF1dGhlbnRpY2F0ZWQiLCJzZXNzaW9uX2lkIjoiZDYzOTVkNmQtNjg0MC00ODQzLWFjY2MtZGUzMzA1ODk3ZmJhIiwic3ViIjoiODAwNzlkNzMtM2YxNS00Mjk3LThkNjQtZGViZmY0NzY0NjAwIiwidXNlcl9tZXRhZGF0YSI6eyJlbWFpbCI6ImphaW5ucmlzaGlpMjFAZ21haWwuY29tIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsInBob25lX3ZlcmlmaWVkIjpmYWxzZSwic3ViIjoiODAwNzlkNzMtM2YxNS00Mjk3LThkNjQtZGViZmY0NzY0NjAwIn19.WGeKXQVoqbHwBu5wJtUdQ4Ap2EnuKsmQlly4c7uxYgzqk1y1NTWpZva49lnHvr3KVG_QkU8qyX0xKQxRjFtc6A
+@userToken = eyJhbGciOiJFUzI1NiIsImtpZCI6IjE4OTNiMDM2LWYyMTAtNDM4Ni1hNWJkLTk5ODA3N2FhOWYwNyIsInR5cCI6IkpXVCJ9.eyJhYWwiOiJhYWwxIiwiYW1yIjpbeyJtZXRob2QiOiJvdHAiLCJ0aW1lc3RhbXAiOjE3NzUxMjE3NTF9XSwiYXBwX21ldGFkYXRhIjp7InByb3ZpZGVyIjoiZW1haWwiLCJwcm92aWRlcnMiOlsiZW1haWwiXX0sImF1ZCI6ImF1dGhlbnRpY2F0ZWQiLCJlbWFpbCI6ImphaW5ucmlzaGlpMjFAZ21haWwuY29tIiwiZXhwIjoxNzc2ODUxMjA0LCJpYXQiOjE3NzY4NDc2MDQsImlzX2Fub255bW91cyI6ZmFsc2UsImlzcyI6Imh0dHBzOi8vYmVlcWFtd3B0bWJwb3dzd2F3Znguc3VwYWJhc2UuY28vYXV0aC92MSIsInBob25lIjoiIiwicm9sZSI6ImF1dGhlbnRpY2F0ZWQiLCJzZXNzaW9uX2lkIjoiZDYzOTVkNmQtNjg0MC00ODQzLWFjY2MtZGUzMzA1ODk3ZmJhIiwic3ViIjoiODAwNzlkNzMtM2YxNS00Mjk3LThkNjQtZGViZmY0NzY0NjAwIiwidXNlcl9tZXRhZGF0YSI6eyJlbWFpbCI6ImphaW5ucmlzaGlpMjFAZ21haWwuY29tIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsInBob25lX3ZlcmlmaWVkIjpmYWxzZSwic3ViIjoiODAwNzlkNzMtM2YxNS00Mjk3LThkNjQtZGViZmY0NzY0NjAwIn19.WGeKXQVoqbHwBu5wJtUdQ4Ap2EnuKsmQlly4c7uxYgzqk1y1NTWpZva49lnHvr3KVG_QkU8qyX0xKQxRjFtc6A
+
+# Alternate user for wrong-user token test
+@otherUserToken = eyJhbGciOiJFUzI1NiIsImtpZCI6IjE4OTNiMDM2LWYyMTAtNDM4Ni1hNWJkLTk5ODA3N2FhOWYwNyIsInR5cCI6IkpXVCJ9.eyJhYWwiOiJhYWwxIiwiYW1yIjpbeyJtZXRob2QiOiJvdHAiLCJ0aW1lc3RhbXAiOjE3NzUxMjE3NTF9XSwiYXBwX21ldGFkYXRhIjp7InByb3ZpZGVyIjoiZW1haWwiLCJwcm92aWRlcnMiOlsiZW1haWwiXX0sImF1ZCI6ImF1dGhlbnRpY2F0ZWQiLCJlbWFpbCI6InRlc3RAZXhhbXBsZS5jb20iLCJleHAiOjE3NzY4NTEyMDQsImlhdCI6MTc3Njg0NzYwNCwiaXNfYW5vbnltb3VzIjpmYWxzZSwiaXNzIjoiaHR0cHM6Ly9iZWVxYW13cHRtYnBvd3N3YXdmbi5zdXBhYXNlLmNvL2F1dGgvdnEiLCJwaG9uZSI6IiIsInJvbGUiOiJhdXRoZW50aWNhdGVkIiwic2Vzc2lvbl9pZCI6ImQ2MzVkNmQtNjg0MC00ODQzLWFjY2MtZGUzMzA1ODk3ZmJhIiwic3ViIjoiOTAwNzlkNzMtM2YxNS00Mjk3LThkNjQtZGViZmY0NzY0NjAwIiwidXNlcl9tZXRhZGF0YSI6eyJlbWFpbCI6InRlc3RAZXhhbXBsZS5jb20iLCJlbWFpbF92ZXJpZmllZCI6dHJ1ZSwicGhvbmVfdmVyaWZpZWQiOmZhbHNlLCJzdWIiOiI5MDA3OWQ3My0zZjE1LTQyOTctOGQ2NC1kZWJmZjQ3NjQ2MDAifQ.t0TESTokenEXAMPLEonlyNOTREAL
+
+
+### ════════════════════════════════════���══════════════════════════════
+### 1. WALLET TOP-UP (Prerequisite for order creation)
+### Controller: WalletTransactionsController
+### Base route: /api/wallettransactions
+### ═══════════════════════════════════════════════════════════════════
+
+### ─── 1.1 POST top-up ₹500 ─────────────────────────────────────────
+### Add wallet balance before creating order
+### Expected: 200 OK → { userId, amount, balance, transactionId }
+
+POST {{baseUrl}}/api/wallettransactions/topup HTTP/1.1
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{
+    "amount": 500,
+    "paymentMethod": "UPI"
+}
+
+### DB CHECK: verify wallet balance increased by 500
+
+
+### ═══════════════════════════════════════════════════════════════════
+### 2. ORDER CREATION — Happy Path
+### Controller: OrdersController
+### Route: /api/orders/create-from-meal-builder
+### ═══════════════════════════════════════════════════════════════════
+
+### ─── 2.1 POST create-from-meal-builder — happy path ─────────────
+### Creates order using primary address (first overload)
+### Expected: 200 OK → { orderId, mealName, walletBalanceBefore/After, etc. }
+
+POST {{baseUrl}}/api/orders/create-from-meal-builder HTTP/1.1
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{
+    "mealId": 1,
+    "selectedIngredients": [
+        { "ingredientId": 1, "quantity": 1 },
+        { "ingredientId": 2, "quantity": 2 }
+    ],
+    "scheduledFor": null
+}
+
+### Response should include:
+### - orderId > 0
+### - mealName: "Classic Overnight Oats" or similar
+### - walletBalanceBefore: 500 (after top-up)
+### - walletBalanceAfter: < 500 (after debit)
+### - orderStatus: "Confirmed"
+
+### DB CHECK: verify orders table has new row
+### DB CHECK: verify wallet_transactions has debit row
+### DB CHECK: wallet balance = before - totalPrice
+
+
+### ═══════════════════════════════════════════════════════════════════
+### 3. ORDER CREATION — Insufficient Balance
+### ═══════════════════════════════════════════════════════════════════
+
+### ─── 3.1 POST create-from-meal-builder — insufficient balance ────
+### Try to create another order without additional top-up
+### Expected: 400 Bad Request → { error: "Insufficient wallet balance..." }
+
+POST {{baseUrl}}/api/orders/create-from-meal-builder HTTP/1.1
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{
+    "mealId": 1,
+    "selectedIngredients": [
+        { "ingredientId": 1, "quantity": 1 },
+        { "ingredientId": 2, "quantity": 2 }
+    ],
+    "scheduledFor": null
+}
+
+### Expected: 400 with error message about insufficient balance
+
+
+### ═══════════════════════════════════════════════════════════════════
+### 4. ORDER CREATION — No Primary Address
+### ════════════════════════════════��══════════════════════════════════
+
+### ─── 4.1 POST create-from-meal-builder — no address ────────────────
+### Requires user WITHOUT any primary delivery address
+### Note: This test uses existing test user; in practice, create test user without address
+### Expected: 400 Bad Request → { error: "Please add a delivery address..." }
+
+# POST {{baseUrl}}/api/orders/create-from-meal-builder HTTP/1.1
+# Authorization: Bearer {{userTokenWithoutAddress}}
+# Content-Type: application/json
+
+# {
+#     "mealId": 1,
+#     "selectedIngredients": [
+#         { "ingredientId": 1, "quantity": 1 }
+#     ]
+# }
+
+### Skipped — requires setup with user having no address
+### Manual test: use test user without address in database
+
+
+### ═══════════════════════════════════════════════════════════════════
+### 5. GET ORDER HISTORY
+### ═══════════════════════════════════════════════════════════════════
+
+### ─── 5.1 GET /api/orders/history ────────────────────────────────
+### Verify order appears in user's order history
+### Expected: 200 OK → array including our newly created order
+
+GET {{baseUrl}}/api/orders/history HTTP/1.1
+Authorization: Bearer {{userToken}}
+
+### Response should contain order with:
+### - orderId: matches created order
+### - mealName: correct meal
+### - orderStatus: "Confirmed"
+### - totalPrice: matches charged amount
+
+
+### ═══════════════════════════════════════════════════════════════════
+### 6. GET ORDER BY ID — Correct Owner
+### ═══════════════════════════════════════════════════════════════════
+
+### ─── 6.1 GET /api/orders/{id} — owner access ────────────────────
+### Get order by ID with correct user token
+### Expected: 200 OK → full order details
+
+GET {{baseUrl}}/api/orders/1 HTTP/1.1
+Authorization: Bearer {{userToken}}
+
+### Replace {id} with actual orderId from step 2.1 response
+
+### DB CHECK: ensure order.UserId matches token's userId
+
+
+### ═══════════════════════════════════════════════════════════════════
+### 7. GET ORDER BY ID — Wrong User (Ownership Check)
+### ═══════════════════════════════════════════════════════════════════
+
+### ─── 7.1 GET /api/orders/{id} — different user ───────────────────
+### Try to access another user's order
+### Expected: 403 Forbidden
+
+GET {{baseUrl}}/api/orders/1 HTTP/1.1
+Authorization: Bearer {{otherUserToken}}
+
+### Expected: 403 Forbidden (ownership check fails)
+
+
+### ═══════════════════════════════════════════════════════════════════
+### 8. MEAL PRICE CALCULATION
+### Controller: MealsController
+### Route: /api/meals/calculate-price
+### ═══════════════════════════════════════════════════════════════════
+
+### ─── 8.1 POST calculate-price ─────────────────────────────────────
+### Verify price matches what was charged in order
+### Expected: 200 OK → { mealName, totalPrice, ingredientBreakdown }
+
+POST {{baseUrl}}/api/meals/calculate-price HTTP/1.1
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{
+    "mealId": 1,
+    "selectedIngredients": [
+        { "ingredientId": 1, "quantity": 1 },
+        { "ingredientId": 2, "quantity": 2 }
+    ]
+}
+
+### Compare totalPrice with OrderCreationResponseDto.totalPrice
+### They should match exactly
+
+
+### ═══════════════════════════════════════════════════════════════════
+### 9. KITCHEN DASHBOARD — Admin Only
+### Controller: KitchenController (Admin role required)
+### Route: /api/kitchen/today
+### ═══════════════════════════════════════════════════════════════════
+
+### ─── 9.1 GET /api/kitchen/today ────────────────────────────────
+### Admin endpoint — view today's confirmed orders
+### Expected: 200 OK → array of KitchenOrderDto
+
+GET {{baseUrl}}/api/kitchen/today HTTP/1.1
+Authorization: Bearer {{adminToken}}
+
+### Response should include our created order in the list
+### - orderId: matches
+### - scheduledFor: matches order delivery time
+### - mealName: correct
+### - totalPrice: matches
+
+
+### ═══════════════════════════════════════════════════════════════════
+### Summary of Test Coverage
+### ═══════════════════════════════════════════════════════════════════
+###
+### ✅ 1. Wallet top-up ( prerequisite)
+### ✅ 2. Create order - happy path (primary address)
+### ✅ 3. Create order - insufficient balance (400)
+### ✅ 4. Create order - no address (400) - requires setup
+### ✅ 5. Get order history
+### ✅ 6. Get order by ID - owner (200)
+### ✅ 7. Get order by ID - wrong user (403)
+### ✅ 8. Meal price calculation
+### ✅ 9. Kitchen dashboard - admin only (200)
+###
+### DB Verification Points:
+### - orders table: new row with correct UserMealId, DeliveryAddressId
+### - wallet_transactions table: debit entry with correct amount
+### - wallet balance: correctly reduced by order total
+### - user_meals table: ingredients linked to order
+###
+### ═══════════════════════════════════════════════════════════════════

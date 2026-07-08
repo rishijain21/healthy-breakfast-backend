@@ -15,39 +15,64 @@ namespace Sovva.WebAPI.Controllers
     {
         private readonly IOrderService _orderService;
         private readonly ICurrentUserService _currentUserService;
+        private readonly ISupabaseStorageService _storageService;
         private readonly ILogger<OrdersController> _logger;
 
         public OrdersController(
             IOrderService orderService,
             ICurrentUserService currentUserService,
+            ISupabaseStorageService storageService,
             ILogger<OrdersController> logger)
         {
             _orderService = orderService;
             _currentUserService = currentUserService;
+            _storageService = storageService;
             _logger = logger;
         }
 
         /// <summary>Enhanced order history with nutritional info</summary>
         [HttpGet("users/me/orders")]
-        public async Task<ActionResult<IEnumerable<EnhancedOrderHistoryDto>>> GetMyOrders()
+        public async Task<ActionResult<PagedResult<EnhancedOrderHistoryDto>>> GetMyOrders(
+            [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
         {
             var userId = await _currentUserService.GetCurrentUserIdAsync();
             if (userId is null)
                 return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
 
-            var userOrders = await _orderService.GetUserOrdersWithDetailsAsync(userId.Value);
+            var userOrders = await _orderService.GetUserOrdersWithDetailsAsync(userId.Value, page, pageSize);
+
+            // ✅ Sign image URLs for storage
+            if (userOrders?.Items != null)
+            {
+                foreach (var item in userOrders.Items)
+                {
+                    if (!string.IsNullOrEmpty(item.MealImageUrl))
+                    {
+                        try
+                        {
+                            item.MealImageUrl = await _storageService.GetSignedUrlAsync(item.MealImageUrl);
+                        }
+                        catch
+                        {
+                            item.MealImageUrl = null;
+                        }
+                    }
+                }
+            }
+
             return Ok(ApiResponse.Ok(userOrders));
         }
 
         /// <summary>Simplified order history</summary>
         [HttpGet("users/me/orders/simple")]
-        public async Task<ActionResult<IEnumerable<OrderDto>>> GetMyOrdersSimple()
+        public async Task<ActionResult<PagedResult<OrderDto>>> GetMyOrdersSimple(
+            [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
         {
             var userId = await _currentUserService.GetCurrentUserIdAsync();
             if (userId is null)
                 return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
 
-            var userOrders = await _orderService.GetUserOrdersAsync(userId.Value);
+            var userOrders = await _orderService.GetUserOrdersAsync(userId.Value, page, pageSize);
             return Ok(ApiResponse.Ok(userOrders));
         }
 
@@ -76,23 +101,12 @@ namespace Sovva.WebAPI.Controllers
         public async Task<ActionResult<OrderCreationResponseDto>> CreateFromMealBuilder(
             [FromBody] CreateOrderFromMealBuilderDto dto)
         {
-            try
-            {
-                var userId = await _currentUserService.GetCurrentUserIdAsync();
-                if (userId is null)
-                    return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
+            var userId = await _currentUserService.GetCurrentUserIdAsync();
+            if (userId is null)
+                return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
 
-                var result = await _orderService.CreateOrderFromMealBuilderAsync(dto, userId.Value);
-                return Ok(ApiResponse.Ok(result));
-            }
-            catch (InvalidOperationException ex)
-            {
-                return BadRequest(ApiResponse.Fail("BAD_REQUEST", ex.Message));
-            }
-            catch (ArgumentException ex)
-            {
-                return BadRequest(ApiResponse.Fail("BAD_REQUEST", ex.Message));
-            }
+            var result = await _orderService.CreateOrderFromMealBuilderAsync(dto, userId.Value);
+            return Ok(ApiResponse.Ok(result));
         }
 
         // ==================== POST-DELIVERY ACTIONS ====================
@@ -101,18 +115,11 @@ namespace Sovva.WebAPI.Controllers
         [HttpPost("{id}/rating")]
         public async Task<IActionResult> RateOrder(long id, [FromBody] OrderRatingDto dto)
         {
-            try
-            {
-                var userId = await _currentUserService.GetCurrentUserIdAsync();
-                if (userId is null) return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
+            var userId = await _currentUserService.GetCurrentUserIdAsync();
+            if (userId is null) return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
 
-                await _orderService.RateOrderAsync(id, userId.Value, dto.Rating, dto.Review);
-                return Ok(ApiResponse.Ok(new { message = "Rating submitted successfully" }));
-            }
-            catch (InvalidOperationException ex)
-            {
-                return BadRequest(ApiResponse.Fail("BAD_REQUEST", ex.Message));
-            }
+            await _orderService.RateOrderAsync(id, userId.Value, dto.Rating, dto.Review);
+            return Ok(ApiResponse.Ok(new { message = "Rating submitted successfully" }));
         }
 
         /// <summary>One-click reorder of a past meal, scheduled for tomorrow</summary>
@@ -120,18 +127,11 @@ namespace Sovva.WebAPI.Controllers
         [Microsoft.AspNetCore.RateLimiting.EnableRateLimiting("financial")]
         public async Task<ActionResult<OrderCreationResponseDto>> Reorder(long id)
         {
-            try
-            {
-                var userId = await _currentUserService.GetCurrentUserIdAsync();
-                if (userId is null) return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
+            var userId = await _currentUserService.GetCurrentUserIdAsync();
+            if (userId is null) return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
 
-                var result = await _orderService.ReorderAsync(id, userId.Value);
-                return Ok(ApiResponse.Ok(result));
-            }
-            catch (InvalidOperationException ex)
-            {
-                return BadRequest(ApiResponse.Fail("BAD_REQUEST", ex.Message));
-            }
+            var result = await _orderService.ReorderAsync(id, userId.Value);
+            return Ok(ApiResponse.Ok(result));
         }
 
         // ==================== ADMIN ENDPOINTS ====================

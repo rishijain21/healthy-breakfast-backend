@@ -92,8 +92,8 @@ namespace Sovva.Application.Services
             var subscriptions = await _subscriptionRepository.GetByUserIdAsync(userId);
             var result = subscriptions.Select(MapToDto).ToList();
 
-            // Cache for 30 seconds - subscriptions rarely change but are queried often on dashboard/profile loads
-            await _cacheService.SetAsync(cacheKey, result, TimeSpan.FromSeconds(30));
+            // Cache for 5 minutes - subscriptions rarely change but are queried often on dashboard/profile loads
+            await _cacheService.SetAsync(cacheKey, result, TimeSpan.FromMinutes(5));
 
             return result;
         }
@@ -289,7 +289,7 @@ namespace Sovva.Application.Services
             
             try
             {
-                _logger.LogInformation($"Creating first order for subscription #{subscription.SubscriptionId}");
+                _logger.LogInformation("Creating first order for subscription #{SubscriptionId}", subscription.SubscriptionId);
 
                 var scheduledOrderIngredients = new List<ScheduledOrderIngredient>();
                 decimal totalPrice = subscription.AgreedPrice; // Base price
@@ -366,7 +366,7 @@ namespace Sovva.Application.Services
 
                 // Calculate first delivery date
                 var firstDeliveryDate = CalculateFirstDeliveryDate(subscription);
-                _logger.LogInformation($"First delivery: {firstDeliveryDate:yyyy-MM-dd}");
+                _logger.LogInformation("First delivery: {FirstDeliveryDate:yyyy-MM-dd}", firstDeliveryDate);
 
                 // Build scheduled order
                 var deliveryDateTimeUtc = _time.ToUtc(firstDeliveryDate.ToDateTime(TimeOnly.MinValue));
@@ -432,7 +432,7 @@ namespace Sovva.Application.Services
                 
                 if (!isScheduledDay)
                 {
-                    _logger.LogInformation($"Tomorrow is not a scheduled day, finding next delivery date");
+                    _logger.LogInformation("Tomorrow ({TomorrowDate}) is not a scheduled day, finding next delivery date", firstDeliveryDate);
                     
                     // Find next scheduled day
                     var scheduledDays = subscription.WeeklySchedule.Select(s => s.DayOfWeek).ToList();
@@ -504,13 +504,16 @@ namespace Sovva.Application.Services
 
                 await _subscriptionRepository.UpdateAsync(subscription);
 
-                // ✅ Clear user subscriptions cache
-                await _cacheService.RemoveAsync($"Subscriptions_User_{subscription.UserId}");
-
                 // FIX Bug 3: UpdateAsync already returns the saved entity.
                 // Re-fetching it from DB is a redundant round-trip.
                 return MapToDto(subscription);
             });
+
+            if (result != null)
+            {
+                // ✅ Clear user subscriptions cache
+                await _cacheService.RemoveAsync($"Subscriptions_User_{result.UserId}");
+            }
 
             return result;
         }
@@ -518,6 +521,8 @@ namespace Sovva.Application.Services
         public async Task<bool> DeleteSubscriptionAsync(int subscriptionId)
         {
             bool success = false;
+            long userIdToInvalidate = 0;
+            
             await _unitOfWork.ExecuteInTransactionAsync(async () =>
             {
                 // ── Step 1: Deactivate immediately ────────────────────────────
@@ -531,8 +536,7 @@ namespace Sovva.Application.Services
                     return;
                 }
                 
-                // ✅ Clear user subscriptions cache
-                await _cacheService.RemoveAsync($"Subscriptions_User_{subscription.UserId}");
+                userIdToInvalidate = subscription.UserId;
 
                 if (subscription.IsActive)
                 {
@@ -574,6 +578,12 @@ namespace Sovva.Application.Services
                 success = await _subscriptionRepository.DeleteAsync(subscriptionId);
             });
 
+            if (success && userIdToInvalidate != 0)
+            {
+                // ✅ Clear user subscriptions cache
+                await _cacheService.RemoveAsync($"Subscriptions_User_{userIdToInvalidate}");
+            }
+
             return success;
         }
 
@@ -601,6 +611,10 @@ namespace Sovva.Application.Services
             subscription.IsActive = true;
             subscription.PauseReason = null; // ✅ NEW: Clear the reason
             await _subscriptionRepository.UpdateAsync(subscription);
+            
+            // ✅ Clear user subscriptions cache
+            await _cacheService.RemoveAsync($"Subscriptions_User_{subscription.UserId}");
+            
             return true;
         }
 
@@ -619,6 +633,10 @@ namespace Sovva.Application.Services
 
             subscription.IsActive = false;
             await _subscriptionRepository.UpdateAsync(subscription);
+            
+            // ✅ Clear user subscriptions cache
+            await _cacheService.RemoveAsync($"Subscriptions_User_{subscription.UserId}");
+            
             return true;
         }
 
@@ -805,11 +823,7 @@ namespace Sovva.Application.Services
         public async Task ExpireSubscriptionsAsync()
         {
             var today = _time.TodayIst;
-            var activeSubscriptions = await _subscriptionRepository.GetActiveSubscriptionsAsync();
-
-            var expired = activeSubscriptions
-                .Where(s => s.EndDate <= today)
-                .ToList();
+            var expired = (await _subscriptionRepository.GetExpiredActiveSubscriptionsAsync(today)).ToList();
 
             if (!expired.Any())
             {
@@ -817,21 +831,34 @@ namespace Sovva.Application.Services
                 return;
             }
 
-            foreach (var sub in expired)
+            try
             {
-                sub.IsActive = false;
-                // UpdatedAt is handled by TimestampInterceptor automatically
+                foreach (var sub in expired)
+                {
+                    sub.IsActive = false;
+                    // UpdatedAt is handled by TimestampInterceptor automatically
+                    _logger.LogInformation(
+                        "Subscription #{Id} (User {UserId}) expired on {EndDate} — deactivating",
+                        sub.SubscriptionId, sub.UserId, sub.EndDate);
+                }
+
+                // Uses the existing UpdateBatchAsync — already wired up
+                await _subscriptionRepository.UpdateBatchAsync(expired);
+
+                foreach (var sub in expired)
+                {
+                    await _cacheService.RemoveAsync($"Subscriptions_User_{sub.UserId}");
+                }
+
                 _logger.LogInformation(
-                    "Subscription #{Id} (User {UserId}) expired on {EndDate} — deactivating",
-                    sub.SubscriptionId, sub.UserId, sub.EndDate);
+                    "Expiry job complete — {Count} subscriptions deactivated on {Date}",
+                    expired.Count, today);
             }
-
-            // Uses the existing UpdateBatchAsync — already wired up
-            await _subscriptionRepository.UpdateBatchAsync(expired);
-
-            _logger.LogInformation(
-                "Expiry job complete — {Count} subscriptions deactivated on {Date}",
-                expired.Count, today);
+            catch (Exception ex)
+            {
+                _logger.LogCritical(ex, "CRITICAL: Failed to persist {Count} expired subscriptions. These will remain active until the next successful run.", expired.Count);
+                throw;
+            }
         }
     }
 }

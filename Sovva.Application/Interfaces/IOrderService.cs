@@ -8,6 +8,7 @@ namespace Sovva.Application.Interfaces
     public interface IOrderService
     {
         // ✅ SECURE: Create order with userId from JWT token
+        [Obsolete("Do not use. Relies on client-trusted TotalPrice. Use ConfirmScheduledOrderAsync or MealBuilder paths.")]
         Task<long> CreateOrderAsync(CreateOrderDto dto, int userId);
         Task<OrderDto?> GetOrderByIdAsync(long id);
         
@@ -21,16 +22,16 @@ namespace Sovva.Application.Interfaces
             int? deliveryAddressId);
         
         // ✅ EXISTING: Keep for backward compatibility
-        Task<IEnumerable<OrderDto>> GetUserOrdersAsync(int userId);
+        Task<PagedResult<OrderDto>> GetUserOrdersAsync(int userId, int page = 1, int pageSize = 20);
         Task<PagedResult<OrderDto>> GetAllOrderHistoryAsync(int page = 1, int pageSize = 50);
         Task<PagedResult<OrderDto>> GetOrdersByStatusAsync(OrderStatus status, int page = 1, int pageSize = 50);
 
         // ✅ NEW: Enhanced methods with rich data
-        Task<IEnumerable<EnhancedOrderHistoryDto>> GetUserOrdersWithDetailsAsync(int userId);
+        Task<PagedResult<EnhancedOrderHistoryDto>> GetUserOrdersWithDetailsAsync(int userId, int page = 1, int pageSize = 20);
         Task<PagedResult<EnhancedOrderHistoryDto>> GetAllOrderHistoryWithDetailsAsync(int page = 1, int pageSize = 50);
 
         // ✅ NEW: Dedicated method for confirming scheduled orders (no catalogue lookup, no UserMeal creation)
-        Task<int> ConfirmScheduledOrderAsync(ScheduledOrder scheduledOrder);
+        Task<int> ConfirmScheduledOrderAsync(ScheduledOrder scheduledOrder, Order? existingOrder = null);
 
         /// <summary>
         /// ✅ NEW: Get order by ScheduledOrderId for idempotency check

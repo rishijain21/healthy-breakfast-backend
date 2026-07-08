@@ -34,9 +34,7 @@ namespace Sovva.Application.Services
                 MealId = dto.MealId,
                 MealName = dto.MealName ?? "Custom Meal", // ✅ FIXED: Handle potential null
 
-                TotalPrice = dto.TotalPrice,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
+                TotalPrice = dto.TotalPrice
             };
 
             await _repository.AddAsync(entity);
@@ -53,8 +51,7 @@ namespace Sovva.Application.Services
                     {
                         UserMealId = entity.UserMealId, // Set from created UserMeal
                         IngredientId = ingredientDto.IngredientId,
-                        Quantity = ingredientDto.Quantity,
-                        CreatedAt = DateTime.UtcNow
+                        Quantity = ingredientDto.Quantity
                     };
                     
                     await _ingredientRepository.AddAsync(userMealIngredient);

@@ -4,6 +4,7 @@ using Microsoft.Extensions.Caching.Memory;
 using Sovva.Application.Interfaces;
 using Sovva.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Sovva.WebAPI.Middleware
 {
@@ -40,7 +41,7 @@ namespace Sovva.WebAPI.Middleware
                 "/api/scheduledorders/time-until-midnight"
             };
 
-            if (publicEndpoints.Any(endpoint => path.StartsWith(endpoint)))
+            if (publicEndpoints.Any(endpoint => context.Request.Path.StartsWithSegments(endpoint, StringComparison.OrdinalIgnoreCase)))
             {
                 await _next(context);
                 return;
@@ -65,11 +66,11 @@ namespace Sovva.WebAPI.Middleware
             try
             {
                 var authId = ExtractAuthIdFromToken(context);
-                _logger.LogInformation("🔐 AuthMiddleware: Extracted authId: {AuthId}", authId);
+                _logger.LogDebug("AuthMiddleware: Extracted authId: {AuthId}", authId);
 
                 if (!string.IsNullOrEmpty(authId) && Guid.TryParse(authId, out var authGuid))
                 {
-                    using var scope = _serviceScopeFactory.CreateScope();
+                    await using var scope = _serviceScopeFactory.CreateAsyncScope();
                     var userRepository = scope.ServiceProvider.GetRequiredService<IUserRepository>();
                     var memoryCache = scope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Caching.Memory.IMemoryCache>();
 
@@ -125,14 +126,14 @@ namespace Sovva.WebAPI.Middleware
                             }
                         }
 
-                        _logger.LogInformation(
-                            "✅ AuthMiddleware: User {UserId} authenticated with role {Role}",
+                        _logger.LogDebug(
+                            "AuthMiddleware: User {UserId} authenticated with role {Role}",
                             authInfo.Value.UserId, authInfo.Value.Role);
                     }
                     else
                     {
                         _logger.LogInformation(
-                            "🆕 AuthMiddleware: New user detected (authId: {AuthId}) - awaiting registration",
+                            "AuthMiddleware: New user detected (authId: {AuthId}) - awaiting registration",
                             authId);
                         context.Items["auth_id"] = authId;
                         context.Items["AuthId"] = authGuid;
@@ -144,8 +145,12 @@ namespace Sovva.WebAPI.Middleware
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ AuthMiddleware error");
-                return true; // Let the request continue or return 500, we don't block here unless we specifically know why
+                _logger.LogError(ex, "AuthMiddleware error");
+                context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+                context.Response.ContentType = "application/json";
+                var errorResponse = new { success = false, code = "SERVICE_UNAVAILABLE", message = "Authentication service temporarily unavailable." };
+                await context.Response.WriteAsync(System.Text.Json.JsonSerializer.Serialize(errorResponse));
+                return false; // Block the request — return 503
             }
         }
 
@@ -162,7 +167,7 @@ namespace Sovva.WebAPI.Middleware
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ Token extraction error");
+                _logger.LogError(ex, "Token extraction error");
                 return null;
             }
         }

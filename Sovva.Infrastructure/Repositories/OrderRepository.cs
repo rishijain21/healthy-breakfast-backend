@@ -46,6 +46,18 @@ namespace Sovva.Infrastructure.Repositories
             return await _context.Orders.AsNoTracking().Where(o => o.UserId == userId).ToListAsync();
         }
 
+        public async Task<(IEnumerable<Order> Items, int TotalCount)> GetByUserIdPagedAsync(int userId, int page, int pageSize)
+        {
+            var query = _context.Orders.AsNoTracking().Where(o => o.UserId == userId);
+            var totalCount = await query.CountAsync();
+            var items = await query.OrderByDescending(o => o.CreatedAt)
+                                 .ThenByDescending(o => o.OrderId) // deterministic tiebreak
+                                 .Skip((page - 1) * pageSize)
+                                 .Take(pageSize)
+                                 .ToListAsync();
+            return (items, totalCount);
+        }
+
         public async Task<IEnumerable<Order>> GetByStatusAsync(OrderStatus status, int page = 1, int pageSize = 50)
         {
             return await _context.Orders.AsNoTracking()
@@ -83,6 +95,30 @@ namespace Sovva.Infrastructure.Repositories
                 .OrderByDescending(o => o.CreatedAt)
                 .AsSplitQuery()
                 .ToListAsync();
+        }
+
+        public async Task<(IEnumerable<Order> Items, int TotalCount)> GetUserOrdersWithDetailsPagedAsync(int userId, int page, int pageSize)
+        {
+            var query = _context.Orders.AsNoTracking().Where(o => o.UserId == userId);
+            var totalCount = await query.CountAsync();
+            
+            var items = await query
+                .Include(o => o.UserMeal)
+                    .ThenInclude(um => um!.Meal)
+                .Include(o => o.UserMeal)
+                    .ThenInclude(um => um!.UserMealIngredients)
+                        .ThenInclude(umi => umi.Ingredient)
+                .Include(o => o.SourceScheduledOrder)
+                    .ThenInclude(so => so!.Ingredients)
+                        .ThenInclude(i => i.Ingredient)
+                .OrderByDescending(o => o.CreatedAt)
+                .ThenByDescending(o => o.OrderId) // deterministic tiebreak
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .AsSplitQuery()
+                .ToListAsync();
+                
+            return (items, totalCount);
         }
 
         public async Task<IEnumerable<Order>> GetAllOrdersWithDetailsAsync(int page = 1, int pageSize = 50)

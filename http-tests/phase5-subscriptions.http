@@ -1,0 +1,611 @@
+### ═══════════════════════════════════════════════════════════════════
+### Phase 5 — Subscriptions & Scheduled Orders Test Suite
+### Sovva Backend (.NET 8)
+###
+### PREREQUISITES:
+###   - User registered with primary address set (phase2)
+###   - Wallet has sufficient balance (phase4 top-up)
+###   - At least 1 meal + ingredients in DB
+###
+### FLOW (execute in order):
+###   A. Create subscription → verify → deactivate → activate → delete
+###   B. Duplicate prevention (same mealId → 409)
+###   C. Admin manual processing
+###   D. Scheduled order modification
+###
+### ENUM: SubscriptionFrequency
+###   Daily=1, Alternate=2, Weekly=7, Monthly=30
+### ═══════════════════════════════════════════════════════════════════
+
+@baseUrl = http://localhost:5257
+@token = eyJhbGciOiJFUzI1NiIsImtpZCI6IjE4OTNiMDM2LWYyMTAtNDM4Ni1hNWJkLTk5ODA3N2FhOWYwNyIsInR5cCI6IkpXVCJ9.eyJhYWwiOiJhYWwxIiwiYW1yIjpbeyJtZXRob2QiOiJvdHAiLCJ0aW1lc3RhbXAiOjE3NzUxMjE3NTF9XSwiYXBwX21ldGFkYXRhIjp7InByb3ZpZGVyIjoiZW1haWwiLCJwcm92aWRlcnMiOlsiZW1haWwiXX0sImF1ZCI6ImF1dGhlbnRpY2F0ZWQiLCJlbWFpbCI6ImphaW5ucmlzaGlpMjFAZ21haWwuY29tIiwiZXhwIjoxNzc2ODUxMjA0LCJpYXQiOjE3NzY4NDc2MDQsImlzX2Fub255bW91cyI6ZmFsc2UsImlzcyI6Imh0dHBzOi8vYmVlcWFtd3B0bWJwb3dzd2F3Znguc3VwYWJhc2UuY28vYXV0aC92MSIsInBob25lIjoiIiwicm9sZSI6ImF1dGhlbnRpY2F0ZWQiLCJzZXNzaW9uX2lkIjoiZDYzOTVkNmQtNjg0MC00ODQzLWFjY2MtZGUzMzA1ODk3ZmJhIiwic3ViIjoiODAwNzlkNzMtM2YxNS00Mjk3LThkNjQtZGViZmY0NzY0NjAwIiwidXNlcl9tZXRhZGF0YSI6eyJlbWFpbCI6ImphaW5ucmlzaGlpMjFAZ21haWwuY29tIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsInBob25lX3ZlcmlmaWVkIjpmYWxzZSwic3ViIjoiODAwNzlkNzMtM2YxNS00Mjk3LThkNjQtZGViZmY0NzY0NjAwIn19.WGeKXQVoqbHwBu5wJtUdQ4Ap2EnuKsmQlly4c7uxYgzqk1y1NTWpZva49lnHvr3KVG_QkU8qyX0xKQxRjFtc6A
+
+# Set from response values
+@subscriptionId = 1
+@scheduledOrderId = 1
+@mealId = 1
+@ingredientId1 = 1
+@ingredientId2 = 2
+
+
+### ═══════════════════════════════════════════════════════════════════
+### SCENARIO A — Create, Verify, Lifecycle
+### ═══════════════════════════════════════════════════════════════════
+
+### ─── A.1 POST create subscription — Daily ───────────────────────
+### Expected: 201 Created → SubscriptionDto
+### DTO: CreateSubscriptionDto {
+###   mealId (required), frequency (required, enum int),
+###   startDate (required, DateOnly), endDate (required, DateOnly),
+###   active (default true), weeklySchedule? (for Weekly frequency)
+### }
+###
+### IMPORTANT: startDate must be today or future
+### endDate must be after startDate
+### Service auto-creates first scheduled order for tomorrow
+
+POST {{baseUrl}}/api/Subscriptions HTTP/1.1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+    "mealId": {{mealId}},
+    "frequency": 1,
+    "startDate": "2026-04-23",
+    "endDate": "2026-05-23",
+    "active": true
+}
+
+### SAVE: subscriptionId from response
+###
+### DB CHECK: SELECT * FROM subscriptions WHERE subscription_id = <id>
+###   → active = true, frequency = 'Daily', meal_id = <mealId>
+### DB CHECK: SELECT * FROM scheduled_orders WHERE subscription_id = <id>
+###   → scheduled_for = tomorrow, order_status = 'Scheduled'
+###   → has ingredients snapshot from the meal
+
+###
+
+### ─── A.2 GET active subscriptions — verify appears ──────────────
+### Expected: 200 OK → array containing the subscription we just created
+### Verify: subscriptionId from A.1 is in the list, active=true
+
+GET {{baseUrl}}/api/Subscriptions/active HTTP/1.1
+Authorization: Bearer {{token}}
+
+###
+
+### ─── A.3 GET subscription by ID — verify details ────────────────
+### Expected: 200 OK → SubscriptionDto with mealId + mealName
+### Verify: mealId matches, frequency matches
+
+GET {{baseUrl}}/api/Subscriptions/{{subscriptionId}} HTTP/1.1
+Authorization: Bearer {{token}}
+
+###
+
+### ─── A.4 GET all subscriptions ──────────────────────────────────
+### Expected: 200 OK → array of all user's subscriptions
+
+GET {{baseUrl}}/api/Subscriptions HTTP/1.1
+Authorization: Bearer {{token}}
+
+###
+
+### ─── A.5 GET my subscriptions ───────────────────────────────────
+### Expected: 200 OK → same as above (user/me endpoint)
+
+GET {{baseUrl}}/api/Subscriptions/user/me HTTP/1.1
+Authorization: Bearer {{token}}
+
+###
+
+### ─── A.6 PATCH deactivate subscription ──────────────────────────
+### Expected: 200 OK → { message: "Subscription paused and order cancelled" }
+###
+### Side effects:
+###   1. Subscription.IsActive = false
+###   2. Tomorrow's scheduled_order status → Cancelled
+###   3. SubscriptionSchedulingService.CancelOrderForSubscriptionAsync called
+
+PATCH {{baseUrl}}/api/Subscriptions/{{subscriptionId}}/deactivate HTTP/1.1
+Authorization: Bearer {{token}}
+
+### DB CHECK: SELECT active FROM subscriptions WHERE subscription_id = <id>
+###   → active = false
+### DB CHECK: SELECT order_status FROM scheduled_orders
+###           WHERE subscription_id = <id> AND scheduled_for = tomorrow
+###   → order_status = 'Cancelled'
+
+###
+
+### ─── A.7 GET active — subscription should NOT appear ────────────
+### Expected: 200 OK → empty array (or without our subscription)
+
+GET {{baseUrl}}/api/Subscriptions/active HTTP/1.1
+Authorization: Bearer {{token}}
+
+###
+
+### ─── A.8 PATCH activate subscription ────────────────────────────
+### Expected: 200 OK → { message: "Subscription activated and order generated" }
+###
+### Side effects:
+###   1. Subscription.IsActive = true
+###   2. Tomorrow's scheduled_order recreated (status = Scheduled)
+
+PATCH {{baseUrl}}/api/Subscriptions/{{subscriptionId}}/activate HTTP/1.1
+Authorization: Bearer {{token}}
+
+### DB CHECK: SELECT active FROM subscriptions WHERE subscription_id = <id>
+###   → active = true
+### DB CHECK: SELECT * FROM scheduled_orders
+###           WHERE subscription_id = <id> AND scheduled_for = tomorrow
+###   → order_status = 'Scheduled' (new row created)
+
+###
+
+### ─── A.9 GET active — subscription should appear again ──────────
+### Expected: 200 OK → array containing our subscription
+
+GET {{baseUrl}}/api/Subscriptions/active HTTP/1.1
+Authorization: Bearer {{token}}
+
+###
+
+### ─── A.10 PUT update subscription ───────────────────────────────
+### Expected: 200 OK → updated SubscriptionDto
+
+PUT {{baseUrl}}/api/Subscriptions/{{subscriptionId}} HTTP/1.1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+    "endDate": "2026-06-23",
+    "active": true
+}
+
+###
+
+### ─── A.11 DELETE subscription ───────────────────────────────────
+### Expected: 204 No Content
+###
+### Side effects (DeleteSubscriptionAsync):
+###   - Deletes subscription row
+###   - Deletes pending scheduled_orders (isProcessedToOrder = false)
+###   - Keeps processed orders (isProcessedToOrder = true) for history
+
+DELETE {{baseUrl}}/api/Subscriptions/{{subscriptionId}} HTTP/1.1
+Authorization: Bearer {{token}}
+
+### DB CHECK: SELECT * FROM subscriptions WHERE subscription_id = <id>
+###   → row deleted (or not found)
+### DB CHECK: SELECT * FROM scheduled_orders WHERE subscription_id = <id>
+###   → pending orders deleted
+###   → processed orders (is_processed_to_order = true) still exist
+
+###
+
+### ─── A.12 GET subscription after delete — not found ─────────────
+### Expected: 404 Not Found
+
+GET {{baseUrl}}/api/Subscriptions/{{subscriptionId}} HTTP/1.1
+Authorization: Bearer {{token}}
+
+###
+
+### ─── A.13 DELETE subscription — already deleted ─────────────────
+### Expected: 404 Not Found
+
+DELETE {{baseUrl}}/api/Subscriptions/99999 HTTP/1.1
+Authorization: Bearer {{token}}
+
+###
+
+
+### ═══════════════════════════════════════════════════════════════════
+### SCENARIO B — Duplicate Prevention
+### ═══════════════════════════════════════════════════════════════════
+
+### ─── B.1 POST create subscription — first (setup) ───────────────
+### Expected: 201 Created
+
+POST {{baseUrl}}/api/Subscriptions HTTP/1.1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+    "mealId": {{mealId}},
+    "frequency": 1,
+    "startDate": "2026-04-23",
+    "endDate": "2026-05-23"
+}
+
+### SAVE: subscriptionId for cleanup
+
+###
+
+### ─── B.2 POST create subscription — same mealId → 409 ──────────
+### Expected: 409 Conflict → { error: "..." }
+### SubscriptionService.CreateSubscriptionAsync checks
+### GetAnyActiveSubscriptionByMealIdAsync before creating
+
+POST {{baseUrl}}/api/Subscriptions HTTP/1.1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+    "mealId": {{mealId}},
+    "frequency": 1,
+    "startDate": "2026-04-23",
+    "endDate": "2026-05-23"
+}
+
+###
+
+### ─── B.3 Cleanup — delete the test subscription ─────────────────
+### Expected: 204 No Content
+
+DELETE {{baseUrl}}/api/Subscriptions/{{subscriptionId}} HTTP/1.1
+Authorization: Bearer {{token}}
+
+###
+
+
+### ═══════════════════════════════════════════════════════════════════
+### SCENARIO B2 — Auth & Ownership Tests
+### ═══════════════════════════════════════════════════════════════════
+
+### ─── B2.1 POST create subscription — no auth ────────────────────
+### Expected: 401 Unauthorized
+
+POST {{baseUrl}}/api/Subscriptions HTTP/1.1
+Content-Type: application/json
+
+{
+    "mealId": {{mealId}},
+    "frequency": 1,
+    "startDate": "2026-04-23",
+    "endDate": "2026-05-23"
+}
+
+###
+
+### ─── B2.2 POST create subscription — invalid frequency ──────────
+### Expected: 400 → { error: "..." } (ArgumentException from validator)
+
+POST {{baseUrl}}/api/Subscriptions HTTP/1.1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+    "mealId": {{mealId}},
+    "frequency": 999,
+    "startDate": "2026-04-23",
+    "endDate": "2026-05-23"
+}
+
+###
+
+### ─── B2.3 POST create subscription — endDate before startDate ───
+### Expected: 400 → { error: "..." }
+
+POST {{baseUrl}}/api/Subscriptions HTTP/1.1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+    "mealId": {{mealId}},
+    "frequency": 1,
+    "startDate": "2026-05-23",
+    "endDate": "2026-04-23"
+}
+
+###
+
+### ─── B2.4 GET subscription — other user's subscription → 403 ────
+### Expected: 403 Forbidden (ownership check: subscription.UserId != userId)
+
+GET {{baseUrl}}/api/Subscriptions/99999 HTTP/1.1
+Authorization: Bearer {{token}}
+
+###
+
+### ─── B2.5 PATCH activate — other user's subscription → 403 ──────
+### Expected: 403 Forbidden
+
+PATCH {{baseUrl}}/api/Subscriptions/99999/activate HTTP/1.1
+Authorization: Bearer {{token}}
+
+###
+
+### ─── B2.6 PATCH deactivate — other user's subscription → 403 ────
+### Expected: 403 Forbidden
+
+PATCH {{baseUrl}}/api/Subscriptions/99999/deactivate HTTP/1.1
+Authorization: Bearer {{token}}
+
+###
+
+
+### ═══════════════════════════════════════════════════════════════════
+### SCENARIO C — Admin Manual Processing
+### Controller: ScheduledOrdersController
+### Base route: /api/ScheduledOrders
+###
+### IMPORTANT: Process endpoints convert scheduled_orders → orders:
+###   1. Finds all Scheduled orders for target date
+###   2. For each: deducts wallet → creates Order → marks processed
+###   3. Returns ProcessOrdersResponseDto with counts
+### ═══════════════════════════════════════════════════════════════════
+
+### ─── C.0 Setup — create subscription so there's an order to process
+### Expected: 201 Created → save subscriptionId
+
+POST {{baseUrl}}/api/Subscriptions HTTP/1.1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+    "mealId": {{mealId}},
+    "frequency": 1,
+    "startDate": "2026-04-22",
+    "endDate": "2026-05-22"
+}
+
+### SAVE: subscriptionId
+
+###
+
+### ─── C.1 POST process-today-manual (admin) ──────────────────────
+### Expected: 200 OK → ProcessOrdersResponseDto {
+###   processedDate, totalScheduled, successfullyProcessed,
+###   alreadyProcessed, failed, results[]
+### }
+
+POST {{baseUrl}}/api/ScheduledOrders/process-today-manual HTTP/1.1
+Authorization: Bearer {{token}}
+
+### DB CHECK: SELECT * FROM scheduled_orders
+###           WHERE scheduled_for = today AND is_processed_to_order = true
+###   → order_status = 'Confirmed'
+### DB CHECK: SELECT * FROM orders WHERE scheduled_order_id IS NOT NULL
+###   → new confirmed order row exists
+### DB CHECK: SELECT * FROM wallet_transactions
+###           WHERE description LIKE 'Order #%'
+###   → exactly ONE debit per scheduled order (idempotency)
+### DB CHECK: wallet_balance = previous - totalPrice (debited once only)
+
+###
+
+### ─── C.2 POST process-today-manual — idempotent ─────────────────
+### Run again — should NOT double-charge
+### Expected: 200 OK → alreadyProcessed count = previous successfullyProcessed
+### No new wallet transactions created
+
+POST {{baseUrl}}/api/ScheduledOrders/process-today-manual HTTP/1.1
+Authorization: Bearer {{token}}
+
+### DB CHECK: wallet_balance unchanged from C.1
+### DB CHECK: No new wallet_transactions rows
+
+###
+
+### ─── C.3 POST process-yesterday-manual (admin) ──────────────────
+### Expected: 200 OK → ProcessOrdersResponseDto (may have 0 scheduled)
+
+POST {{baseUrl}}/api/ScheduledOrders/process-yesterday-manual HTTP/1.1
+Authorization: Bearer {{token}}
+
+###
+
+### ─── C.4 POST process-tomorrow-manual (admin) ───────────────────
+### Expected: 200 OK → ProcessOrdersResponseDto
+
+POST {{baseUrl}}/api/ScheduledOrders/process-tomorrow-manual HTTP/1.1
+Authorization: Bearer {{token}}
+
+###
+
+### ─── C.5 POST process-today — no auth ───────────────────────────
+### Expected: 401 Unauthorized
+
+POST {{baseUrl}}/api/ScheduledOrders/process-today-manual HTTP/1.1
+
+###
+
+### ─── C.6 Cleanup — delete test subscription ─────────────────────
+
+DELETE {{baseUrl}}/api/Subscriptions/{{subscriptionId}} HTTP/1.1
+Authorization: Bearer {{token}}
+
+###
+
+
+### ═══════════════════════════════════════════════════════════════════
+### SCENARIO D — Scheduled Order Cart Modification
+### Controller: ScheduledOrdersController
+###
+### FLOW:
+###   1. Create a subscription (generates tomorrow's order)
+###   2. View tomorrow's cart
+###   3. Modify ingredients
+###   4. Cancel the order
+### ═══════════════════════════════════════════════════════════════════
+
+### ─── D.0 Setup — create subscription for cart testing ────────────
+
+POST {{baseUrl}}/api/Subscriptions HTTP/1.1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+    "mealId": {{mealId}},
+    "frequency": 1,
+    "startDate": "2026-04-23",
+    "endDate": "2026-05-23"
+}
+
+### SAVE: subscriptionId from response
+
+###
+
+### ─── D.1 GET tomorrow's scheduled orders ────────────────────────
+### Expected: 200 OK → array of ScheduledOrderResponseDto
+### Only shows orders with status = "Scheduled" (filtered by controller)
+### SAVE: scheduledOrderId from first item
+
+GET {{baseUrl}}/api/ScheduledOrders/tomorrow HTTP/1.1
+Authorization: Bearer {{token}}
+
+###
+
+### ─── D.2 GET tomorrow — no auth ─────────────────────────────────
+### Expected: 401 Unauthorized
+
+GET {{baseUrl}}/api/ScheduledOrders/tomorrow HTTP/1.1
+
+###
+
+### ─── D.3 PUT modify scheduled order — change ingredients ────────
+### Expected: 200 OK → { message: "Scheduled order modified successfully" }
+###
+### DTO: ModifyScheduledOrderDto {
+###   selectedIngredients: [{ ingredientId, quantity }],
+###   deliveryTimeSlot?, nutritionalSummary?
+### }
+
+PUT {{baseUrl}}/api/ScheduledOrders/{{scheduledOrderId}}/modify HTTP/1.1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+    "selectedIngredients": [
+        { "ingredientId": {{ingredientId1}}, "quantity": 2 },
+        { "ingredientId": {{ingredientId2}}, "quantity": 3 }
+    ],
+    "deliveryTimeSlot": "9:00 AM"
+}
+
+### DB CHECK: SELECT * FROM scheduled_order_ingredients
+###           WHERE scheduled_order_id = <id>
+###   → quantities updated to 2 and 3
+### DB CHECK: SELECT delivery_time_slot FROM scheduled_orders WHERE id = <id>
+###   → "9:00 AM"
+
+###
+
+### ─── D.4 PUT modify — not found ─────────────────────────────────
+### Expected: 400 → { error: "..." } (InvalidOperationException)
+
+PUT {{baseUrl}}/api/ScheduledOrders/99999/modify HTTP/1.1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+    "selectedIngredients": [
+        { "ingredientId": {{ingredientId1}}, "quantity": 1 }
+    ]
+}
+
+###
+
+### ─── D.5 POST duplicate scheduled order ─────────────────────────
+### Expected: 200 OK → ScheduledOrderResponseDto (new order for tomorrow)
+
+POST {{baseUrl}}/api/ScheduledOrders/{{scheduledOrderId}}/duplicate HTTP/1.1
+Authorization: Bearer {{token}}
+
+###
+
+### ─── D.6 DELETE cancel scheduled order ──────────────────────────
+### Expected: 200 OK → { message: "Scheduled order cancelled successfully" }
+### NOTE: Only works for Scheduled status, not already processed
+
+DELETE {{baseUrl}}/api/ScheduledOrders/{{scheduledOrderId}}/cancel HTTP/1.1
+Authorization: Bearer {{token}}
+
+### DB CHECK: SELECT order_status FROM scheduled_orders WHERE id = <id>
+###   → 'Cancelled'
+
+###
+
+### ─── D.7 DELETE cancel — already cancelled ──────────────────────
+### Expected: 400 → { error: "..." } (InvalidOperationException)
+
+DELETE {{baseUrl}}/api/ScheduledOrders/{{scheduledOrderId}}/cancel HTTP/1.1
+Authorization: Bearer {{token}}
+
+###
+
+### ─── D.8 DELETE cancel — not found ──────────────────────────────
+### Expected: 400 → { error: "..." }
+
+DELETE {{baseUrl}}/api/ScheduledOrders/99999/cancel HTTP/1.1
+Authorization: Bearer {{token}}
+
+###
+
+### ─── D.9 POST create from meal builder (direct) ─────────────────
+### Creates a standalone scheduled order (not from subscription)
+### Expected: 200 OK → ScheduledOrderResponseDto
+###
+### DTO: CreateScheduledOrderDto {
+###   mealName?, mealId?, mealImageUrl?, mealPrice?,
+###   selectedIngredients[{ ingredientId, quantity }],
+###   scheduledFor (DateTimeOffset), deliveryTimeSlot,
+###   deliveryAddressId?, nutritionalSummary?, subscriptionId?
+### }
+
+POST {{baseUrl}}/api/ScheduledOrders/create-from-meal-builder HTTP/1.1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+    "mealName": "Test Standalone Order",
+    "mealId": {{mealId}},
+    "selectedIngredients": [
+        { "ingredientId": {{ingredientId1}}, "quantity": 1 },
+        { "ingredientId": {{ingredientId2}}, "quantity": 1 }
+    ],
+    "scheduledFor": "2026-04-23T10:00:00+05:30",
+    "deliveryTimeSlot": "10:00 AM"
+}
+
+###
+
+
+### ═══════════════════════════════════════════════════════════════════
+### SCENARIO E — Utility Endpoints
+### ═══════════════════════════════════════════════════════════════════
+
+### ─── E.1 GET time until midnight ────────────────────────────────
+### AllowAnonymous — frontend uses this for cart cutoff timer
+### Expected: 200 OK → integer (minutes until midnight IST)
+
+GET {{baseUrl}}/api/ScheduledOrders/time-until-midnight HTTP/1.1
+
+###
+
+### ─── E.2 POST sync subscription dates (admin) ──────────────────
+### Admin only — recalculates nextScheduledDate for all active subs
+### Expected: 200 OK → { success: true, message: "...", timestamp }
+
+POST {{baseUrl}}/api/Subscriptions/sync-dates HTTP/1.1
+Authorization: Bearer {{token}}
+
+###
+
+### ─── E.3 POST sync dates — no auth ──────────────────────────────
+### Expected: 401 Unauthorized
+
+POST {{baseUrl}}/api/Subscriptions/sync-dates HTTP/1.1
+
+###
+
+### ─── E.4 Cleanup — delete test subscription ─────────────────────
+
+DELETE {{baseUrl}}/api/Subscriptions/{{subscriptionId}} HTTP/1.1
+Authorization: Bearer {{token}}
+
+###

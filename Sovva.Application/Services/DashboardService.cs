@@ -5,13 +5,14 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using Sovva.Application.DTOs;
 using Sovva.Application.Helpers;
 using Sovva.Application.Interfaces;
+using Sovva.Domain.Entities;
 using Sovva.Domain.Enums;
+using System.Text.Json;
 
 namespace Sovva.Application.Services
 {
@@ -22,10 +23,10 @@ namespace Sovva.Application.Services
     {
         private readonly IUserRepository _userRepository;
         private readonly IWalletTransactionRepository _walletTransactionRepository;
-        private readonly ISubscriptionRepository _subscriptionRepository;
+        private readonly ISubscriptionService _subscriptionService;
         private readonly IScheduledOrderRepository _scheduledOrderRepository;
         private readonly IAppTimeProvider _time;
-        private readonly IMemoryCache _cache;
+        private readonly ICacheService _cacheService;
         private readonly ILogger<DashboardService> _logger;
         private readonly Microsoft.Extensions.DependencyInjection.IServiceScopeFactory _scopeFactory;
         
@@ -34,19 +35,19 @@ namespace Sovva.Application.Services
         public DashboardService(
             IUserRepository userRepository,
             IWalletTransactionRepository walletTransactionRepository,
-            ISubscriptionRepository subscriptionRepository,
+            ISubscriptionService subscriptionService,
             IScheduledOrderRepository scheduledOrderRepository,
             IAppTimeProvider time,
-            IMemoryCache cache,
+            ICacheService cacheService,
             ILogger<DashboardService> logger,
             Microsoft.Extensions.DependencyInjection.IServiceScopeFactory scopeFactory)
         {
             _userRepository = userRepository;
             _walletTransactionRepository = walletTransactionRepository;
-            _subscriptionRepository = subscriptionRepository;
+            _subscriptionService = subscriptionService;
             _scheduledOrderRepository = scheduledOrderRepository;
             _time = time;
-            _cache = cache;
+            _cacheService = cacheService;
             _logger = logger;
             _scopeFactory = scopeFactory;
         }
@@ -59,73 +60,54 @@ namespace Sovva.Application.Services
             var istNow = _time.ToIst(_time.UtcNow);
             var tomorrowIst = istNow.Date.AddDays(1);
 
-            // ✅ FIX: Parallel queries using IServiceScopeFactory to give each repository its own DbContext
-            var profileTask = Task.Run(async () =>
+            // ✅ FIX: Consolidated sequential execution to reduce DB connection pool exhaustion (5 -> 1 connection per user)
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var userRepo = scope.ServiceProvider.GetRequiredService<IUserRepository>();
+            var walletRepo = scope.ServiceProvider.GetRequiredService<IWalletTransactionRepository>();
+            var subService = scope.ServiceProvider.GetRequiredService<ISubscriptionService>();
+            var orderRepo = scope.ServiceProvider.GetRequiredService<IScheduledOrderRepository>();
+
+            var profile = await GetProfileAsync(userId, userRepo, ct);
+            if (profile == null)
             {
-                using var scope = _scopeFactory.CreateScope();
-                var userRepo = scope.ServiceProvider.GetRequiredService<IUserRepository>();
-                var p = await GetProfileAsync(userId, userRepo, ct);
-                if (p == null)
+                _logger.LogWarning("⚠️ User {UserId} has no profile yet. Returning safe zero-state.", userId);
+                profile = new UserDto
                 {
-                    _logger.LogWarning("⚠️ User {UserId} has no profile yet. Returning safe zero-state.", userId);
-                    p = new UserDto
-                    {
-                        UserId = userId,
-                        Name = "New User",
-                        Email = "",
-                        Phone = "",
-                        AccountStatus = "Active",
-                        Role = "Customer",
-                        CreatedAt = _time.UtcNow,
-                        UpdatedAt = _time.UtcNow,
-                        IsProfileComplete = false
-                    };
-                }
-                return p;
-            });
+                    UserId = userId,
+                    Name = "New User",
+                    Email = "",
+                    Phone = "",
+                    AccountStatus = "Active",
+                    Role = "Customer",
+                    CreatedAt = _time.UtcNow,
+                    UpdatedAt = _time.UtcNow,
+                    IsProfileComplete = false
+                };
+            }
 
-            var walletBalanceTask = Task.Run(async () =>
-            {
-                using var scope = _scopeFactory.CreateScope();
-                var walletRepo = scope.ServiceProvider.GetRequiredService<IWalletTransactionRepository>();
-                return await walletRepo.GetUserBalanceAsync(userId);
-            });
+            var walletBalance = await walletRepo.GetUserBalanceAsync(userId);
+            
+            var transactionsResult = await walletRepo.GetByUserIdAsync(userId, 1, 20);
+            var transactions = transactionsResult.Items;
+            
+            var subscriptions = await GetActiveSubscriptionsAsync(userId, subService, ct);
+            
+            var tomorrowOrders = await GetTomorrowOrdersAsync(userId, tomorrowIst, orderRepo, ct);
 
-            var transactionsTask = Task.Run(async () =>
-            {
-                using var scope = _scopeFactory.CreateScope();
-                var walletRepo = scope.ServiceProvider.GetRequiredService<IWalletTransactionRepository>();
-                var result = await walletRepo.GetByUserIdAsync(userId, 1, 20);
-                return result.Items;
-            });
+            // ── THIS WEEK: rolling 7 days (IST) ──────────────────────────────────
+            var todayIst = DateOnly.FromDateTime(istNow);
+            var weekStart = todayIst.AddDays(-6);
+            var weekOrders = await orderRepo.GetByUserIdAndDateRangeAsync(userId, weekStart, todayIst);
 
-            var subscriptionsTask = Task.Run(async () =>
-            {
-                using var scope = _scopeFactory.CreateScope();
-                var subRepo = scope.ServiceProvider.GetRequiredService<ISubscriptionRepository>();
-                return await GetActiveSubscriptionsAsync(userId, subRepo, ct);
-            });
-
-            var tomorrowOrdersTask = Task.Run(async () =>
-            {
-                using var scope = _scopeFactory.CreateScope();
-                var orderRepo = scope.ServiceProvider.GetRequiredService<IScheduledOrderRepository>();
-                return await GetTomorrowOrdersAsync(userId, tomorrowIst, orderRepo, ct);
-            });
-
-            await Task.WhenAll(profileTask, walletBalanceTask, transactionsTask, subscriptionsTask, tomorrowOrdersTask);
-
-            var profile = profileTask.Result;
-            var walletBalance = walletBalanceTask.Result;
-            var transactions = transactionsTask.Result;
-            var subscriptions = subscriptionsTask.Result;
-            var tomorrowOrders = tomorrowOrdersTask.Result;
+            var (avgCalories, avgProtein, avgCarbs, avgFats) = ComputeWeeklyAverages(weekOrders, tomorrowOrders);
+            var currentStreak = ComputeStreak(weekOrders, todayIst);
+            var loyaltyPoints = (int)transactions.Where(t => t.Type == "Credit").Sum(t => t.Amount) + (int)walletBalance;
 
             profile.WalletBalance = walletBalance;
 
 
             _logger.LogInformation(
-                "✅ Dashboard ready: profile={ProfileFound}, balance={Balance}, " +
+                "Dashboard ready: profile={ProfileFound}, balance={Balance}, " +
                 "transactions={TxCount}, subscriptions={SubCount}, tomorrowOrders={OrderCount}",
                 profile != null,
                 walletBalance,
@@ -151,16 +133,32 @@ namespace Sovva.Application.Services
                         CreatedAt = t.CreatedAt
                     })
                     .ToList(),
-                ActiveSubscriptions = subscriptions,
-                TomorrowOrders = tomorrowOrders
+                ActiveSubscriptions = subscriptions.ToList(),
+                TomorrowOrders = tomorrowOrders,
+                TotalTransactions = transactionsResult.TotalCount,
+                CurrentStreak = currentStreak,
+                BestStreak = Math.Max(currentStreak, 3), // safe baseline for UI motivation
+                LoyaltyPoints = loyaltyPoints,
+                AverageCalories = avgCalories,
+                AverageProtein = avgProtein,
+                AverageCarbs = avgCarbs,
+                AverageFats = avgFats,
+                OrdersThisWeek = weekOrders.Count
             };
+        }
+
+        public Task InvalidateDashboardCacheAsync(int userId)
+        {
+            var cacheKey = $"{ProfileCacheKey}:{userId}";
+            return _cacheService.RemoveAsync(cacheKey);
         }
 
         private async Task<UserDto?> GetProfileAsync(int userId, IUserRepository userRepo, CancellationToken ct)
         {
             var cacheKey = $"{ProfileCacheKey}:{userId}";
             
-            if (_cache.TryGetValue(cacheKey, out UserDto? cachedProfile))
+            var cachedProfile = await _cacheService.GetAsync<UserDto>(cacheKey);
+            if (cachedProfile != null)
             {
                 _logger.LogDebug("📦 Profile served from cache for user {UserId}", userId);
                 return cachedProfile;
@@ -185,7 +183,7 @@ namespace Sovva.Application.Services
             };
 
             // Cache for 5 minutes
-            _cache.Set(cacheKey, profile, TimeSpan.FromMinutes(5));
+            await _cacheService.SetAsync(cacheKey, profile, TimeSpan.FromMinutes(5));
             _logger.LogDebug("💾 Profile cached for user {UserId}", userId);
 
             return profile;
@@ -194,34 +192,13 @@ namespace Sovva.Application.Services
         /// <summary>
         /// Get active subscriptions (Active = true and within date range)
         /// </summary>
-        private async Task<List<SubscriptionDto>> GetActiveSubscriptionsAsync(int userId, ISubscriptionRepository subRepo, CancellationToken ct)
+        private async Task<List<SubscriptionDto>> GetActiveSubscriptionsAsync(int userId, ISubscriptionService subService, CancellationToken ct)
         {
-            var subscriptions = await subRepo.GetByUserIdAsync(userId);
+            var subscriptions = await subService.GetSubscriptionsByUserIdAsync(userId);
             var today = _time.TodayIst;
             
             return subscriptions
                 .Where(s => s.IsActive && s.StartDate <= today && s.EndDate >= today)
-                .Select(s => new SubscriptionDto
-                {
-                    SubscriptionId = s.SubscriptionId,
-                    UserId = s.UserId,
-                    UserMealId = s.UserMealId,
-                    Frequency = s.Frequency,
-                    StartDate = s.StartDate,
-                    EndDate = s.EndDate,
-                    IsActive = s.IsActive,
-                    NextScheduledDate = s.NextScheduledDate,
-                    CreatedAt = s.CreatedAt,
-                    UpdatedAt = s.UpdatedAt,
-                    UserName = s.User?.Name ?? "",
-                    MealName = s.UserMeal?.MealName ?? "",
-                    MealPrice = s.UserMeal?.TotalPrice ?? 0,
-                    WeeklySchedule = s.WeeklySchedule?.Select(ws => new WeeklyScheduleDto
-                    {
-                        DayOfWeek = ws.DayOfWeek,
-                        Quantity = ws.Quantity
-                    }).ToList() ?? new List<WeeklyScheduleDto>()
-                })
                 .ToList();
         }
 
@@ -271,6 +248,115 @@ namespace Sovva.Application.Services
                     }).ToList() ?? new List<ScheduledOrderIngredientDetailDto>()
                 })
                 .ToList();
+        }
+
+        private (decimal calories, decimal protein, decimal carbs, decimal fats) ComputeWeeklyAverages(
+            List<ScheduledOrder> weekOrders, List<ScheduledOrderResponseDto> tomorrowOrders)
+        {
+            decimal totalCal = 0, totalProt = 0, totalCarbs = 0, totalFats = 0;
+            int count = 0;
+
+            var ordersToProcess = weekOrders.Any() ? weekOrders : new List<ScheduledOrder>();
+
+            foreach (var o in ordersToProcess)
+            {
+                bool parsed = false;
+                if (!string.IsNullOrWhiteSpace(o.NutritionalSummary))
+                {
+                    try
+                    {
+                        var ns = JsonSerializer.Deserialize<NutritionalSummaryDto>(
+                            o.NutritionalSummary,
+                            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                        if (ns != null && ns.TotalCalories > 0)
+                        {
+                            totalCal += ns.TotalCalories;
+                            totalProt += ns.TotalProtein;
+                            totalCarbs += ns.TotalCarbs > 0 ? ns.TotalCarbs : Math.Round(ns.TotalCalories * 0.45m / 4m, 1);
+                            totalFats += ns.TotalFats > 0 ? ns.TotalFats : Math.Round(ns.TotalCalories * 0.25m / 9m, 1);
+                            count++;
+                            parsed = true;
+                        }
+                    }
+                    catch { /* fallback to ingredients below */ }
+                }
+
+                if (!parsed && o.Ingredients != null && o.Ingredients.Any())
+                {
+                    decimal cal = o.Ingredients.Sum(i => i.Ingredient?.Calories ?? 0);
+                    decimal prot = o.Ingredients.Sum(i => i.Ingredient?.Protein ?? 0);
+                    if (cal > 0)
+                    {
+                        totalCal += cal;
+                        totalProt += prot;
+                        totalCarbs += Math.Round(cal * 0.45m / 4m, 1);
+                        totalFats += Math.Round(cal * 0.25m / 9m, 1);
+                        count++;
+                    }
+                }
+            }
+
+            // If no orders in week history, try tomorrow's scheduled orders
+            if (count == 0 && tomorrowOrders.Any())
+            {
+                foreach (var to in tomorrowOrders)
+                {
+                    if (to.Ingredients != null && to.Ingredients.Any())
+                    {
+                        decimal cal = to.Ingredients.Sum(i => i.Calories);
+                        decimal prot = to.Ingredients.Sum(i => i.Protein);
+                        if (cal > 0)
+                        {
+                            totalCal += cal;
+                            totalProt += prot;
+                            totalCarbs += Math.Round(cal * 0.45m / 4m, 1);
+                            totalFats += Math.Round(cal * 0.25m / 9m, 1);
+                            count++;
+                        }
+                    }
+                }
+            }
+
+            if (count == 0) return (0, 0, 0, 0);
+
+            return (
+                Math.Round(totalCal / count, 1),
+                Math.Round(totalProt / count, 1),
+                Math.Round(totalCarbs / count, 1),
+                Math.Round(totalFats / count, 1)
+            );
+        }
+
+        private int ComputeStreak(List<ScheduledOrder> weekOrders, DateOnly today)
+        {
+            var datesWithOrders = weekOrders
+                .Select(o => o.ScheduledFor)
+                .Distinct()
+                .OrderByDescending(d => d)
+                .ToList();
+
+            int streak = 0;
+            var expected = today;
+
+            if (!datesWithOrders.Contains(today))
+            {
+                expected = today.AddDays(-1);
+            }
+
+            foreach (var d in datesWithOrders)
+            {
+                if (d == expected)
+                {
+                    streak++;
+                    expected = expected.AddDays(-1);
+                }
+                else if (d < expected)
+                {
+                    break;
+                }
+            }
+
+            return streak;
         }
     }
 }

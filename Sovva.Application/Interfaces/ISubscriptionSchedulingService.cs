@@ -7,7 +7,7 @@ namespace Sovva.Application.Interfaces
 {
     public interface ISubscriptionSchedulingService
     {
-        Task GenerateScheduledOrdersFromSubscriptionsAsync();
+        Task GenerateScheduledOrdersFromSubscriptionsAsync(string? correlationId = null);
         
         Task GenerateOrderForSubscriptionAsync(int subscriptionId, int userId, Guid authId);
         

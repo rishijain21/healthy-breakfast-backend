@@ -22,6 +22,7 @@ using Hangfire.PostgreSql;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Npgsql;
 using Serilog;
+using Microsoft.Extensions.Http.Resilience;
 
 namespace Sovva.WebAPI.Extensions;
 
@@ -37,14 +38,25 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddAppConfiguration(
         this IServiceCollection services, IConfiguration configuration)
     {
-        services.Configure<SupabaseOptions>(
-            configuration.GetSection(SupabaseOptions.Section));
-        services.Configure<HangfireOptions>(
-            configuration.GetSection(HangfireOptions.Section));
-        services.Configure<DatabaseOptions>(
-            configuration.GetSection(DatabaseOptions.Section));
-        services.Configure<CorsOptions>(
-            configuration.GetSection(CorsOptions.Section));
+        services.AddOptions<SupabaseOptions>()
+            .Bind(configuration.GetSection(SupabaseOptions.Section))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
+        services.AddOptions<HangfireOptions>()
+            .Bind(configuration.GetSection(HangfireOptions.Section))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
+        services.AddOptions<DatabaseOptions>()
+            .Bind(configuration.GetSection(DatabaseOptions.Section))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
+        services.AddOptions<CorsOptions>()
+            .Bind(configuration.GetSection(CorsOptions.Section))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
 
         return services;
     }
@@ -112,7 +124,7 @@ public static class ServiceCollectionExtensions
                 new PostgreSqlStorageOptions
                 {
                     QueuePollInterval = TimeSpan.FromSeconds(15),
-                    InvisibilityTimeout = TimeSpan.FromMinutes(30),
+                    InvisibilityTimeout = TimeSpan.FromMinutes(5),
                     DistributedLockTimeout = TimeSpan.FromSeconds(30),
                     PrepareSchemaIfNecessary = true,
                     EnableTransactionScopeEnlistment = true
@@ -120,8 +132,8 @@ public static class ServiceCollectionExtensions
 
         services.AddHangfireServer(options =>
         {
-            options.WorkerCount = 2;
-            options.Queues = new[] { "default" };
+            options.WorkerCount = 5;
+            options.Queues = new[] { "critical", "default" };
         });
 
         return services;
@@ -209,6 +221,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IServiceableLocationRepository, ServiceableLocationRepository>();
         services.AddScoped<IUserAddressRepository, UserAddressRepository>();
         services.AddScoped<IScheduledOrderRepository, ScheduledOrderRepository>();
+        services.AddScoped<IFailedOrderAttemptRepository, FailedOrderAttemptRepository>();
 
         // Application services
         services.AddScoped<IUserService, UserService>();
@@ -228,11 +241,13 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IScheduledOrderService, ScheduledOrderService>();
         services.AddScoped<ISubscriptionSchedulingService, SubscriptionSchedulingService>();
         services.AddScoped<IDashboardService, DashboardService>();
+        services.AddScoped<IDailyMaintenanceOrchestrator, DailyMaintenanceOrchestrator>();
 
         // Infrastructure & helpers
         services.AddSingleton<IAppTimeProvider, AppTimeProvider>();
         services.AddSingleton<TimestampInterceptor>();
-        services.AddHttpClient<ISupabaseStorageService, SupabaseStorageService>();
+        services.AddHttpClient<ISupabaseStorageService, SupabaseStorageService>()
+                .AddStandardResilienceHandler(); // ✅ FIX 6.1: Add Circuit Breaker / Retry
         services.AddHttpContextAccessor();
         services.AddScoped<ICurrentUserService, CurrentUserService>();
         services.AddMemoryCache();
@@ -315,28 +330,48 @@ public static class ServiceCollectionExtensions
     {
         services.AddRateLimiter(options =>
         {
-            options.AddFixedWindowLimiter("auth", o =>
+            options.AddPolicy("auth", context =>
             {
-                o.PermitLimit = 10;
-                o.Window = TimeSpan.FromMinutes(1);
-                o.QueueLimit = 0;
-                o.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
+                // ✅ FIX B-3: Read from RemoteIpAddress instead of raw X-Forwarded-For header to prevent spoofing
+                // UseForwardedHeaders middleware handles proxy translation upstream
+                var key = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                return RateLimitPartition.GetFixedWindowLimiter(key, _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = 10,
+                    Window = TimeSpan.FromMinutes(1),
+                    QueueLimit = 0,
+                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst
+                });
             });
 
-            options.AddFixedWindowLimiter("default", o =>
+            options.AddPolicy("default", context =>
             {
-                o.PermitLimit = 100;
-                o.Window = TimeSpan.FromMinutes(1);
-                o.QueueLimit = 5;
-                o.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
+                var key = context.User.Identity?.IsAuthenticated == true
+                    ? context.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown"
+                    : context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+                return RateLimitPartition.GetFixedWindowLimiter(key, _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = 100,
+                    Window = TimeSpan.FromMinutes(1),
+                    QueueLimit = 5,
+                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst
+                });
             });
 
-            options.AddFixedWindowLimiter("financial", o =>
+            options.AddPolicy("financial", context =>
             {
-                o.PermitLimit = 15;
-                o.Window = TimeSpan.FromMinutes(1);
-                o.QueueLimit = 2;
-                o.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
+                var key = context.User.Identity?.IsAuthenticated == true
+                    ? context.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown"
+                    : context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+                return RateLimitPartition.GetFixedWindowLimiter(key, _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = 15,
+                    Window = TimeSpan.FromMinutes(1),
+                    QueueLimit = 2,
+                    QueueProcessingOrder = QueueProcessingOrder.OldestFirst
+                });
             });
 
             options.RejectionStatusCode = 429;
@@ -348,8 +383,9 @@ public static class ServiceCollectionExtensions
                         .Append("Access-Control-Allow-Origin", origin);
 
                 context.HttpContext.Response.StatusCode = 429;
+                context.HttpContext.Response.ContentType = "application/json";
                 await context.HttpContext.Response.WriteAsJsonAsync(
-                    new { success = false, message = "Too many requests. Please try again later." },
+                    Sovva.Application.DTOs.ApiResponse.Fail("TOO_MANY_REQUESTS", "Too many requests. Please try again later."),
                     token);
             };
         });
@@ -367,9 +403,9 @@ public static class ServiceCollectionExtensions
             .GetSection(SupabaseOptions.Section)
             .Get<SupabaseOptions>() ?? new SupabaseOptions();
 
-        var supabaseUrl = (supabaseOptions.Url.Length > 0
+        var supabaseUrl = (!string.IsNullOrWhiteSpace(supabaseOptions.Url)
             ? supabaseOptions.Url
-            : "https://beeqamwptmbpowswawfx.supabase.co").TrimEnd('/');
+            : throw new InvalidOperationException("Supabase:Url is required")).TrimEnd('/');
 
         services.AddAuthentication(options =>
         {

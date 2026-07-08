@@ -21,6 +21,13 @@ namespace Sovva.Infrastructure.Repositories
             return await _context.IngredientCategories.ToListAsync();
         }
 
+        public async Task<IEnumerable<IngredientCategory>> GetAllWithIngredientsAsync()
+        {
+            return await _context.IngredientCategories
+                .Include(c => c.Ingredients)
+                .ToListAsync();
+        }
+
         public async Task AddAsync(IngredientCategory entity)
         {
             await _context.IngredientCategories.AddAsync(entity);

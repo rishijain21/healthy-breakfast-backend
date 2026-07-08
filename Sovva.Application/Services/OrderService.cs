@@ -129,11 +129,11 @@ namespace Sovva.Application.Services
             };
         }
 
-        public async Task<IEnumerable<OrderDto>> GetUserOrdersAsync(int userId)
+        public async Task<PagedResult<OrderDto>> GetUserOrdersAsync(int userId, int page = 1, int pageSize = 20)
         {
-            var orders = await _orderRepository.GetByUserIdAsync(userId);
+            var (orders, totalCount) = await _orderRepository.GetByUserIdPagedAsync(userId, page, pageSize);
             
-            return orders.Select(order => new OrderDto
+            var items = orders.Select(order => new OrderDto
             {
                 OrderId = order.OrderId,
                 UserId = order.UserId,
@@ -141,14 +141,29 @@ namespace Sovva.Application.Services
                 TotalPrice = order.TotalPrice,
                 CreatedAt = order.CreatedAt,
                 UpdatedAt = order.UpdatedAt
-            }).OrderByDescending(o => o.CreatedAt);
+            }).ToList();
+
+            return new PagedResult<OrderDto>
+            {
+                Items = items,
+                TotalCount = totalCount,
+                Page = page,
+                PageSize = pageSize
+            };
         }
 
         // ✅ NEW: Enhanced methods with rich data
-        public async Task<IEnumerable<EnhancedOrderHistoryDto>> GetUserOrdersWithDetailsAsync(int userId)
+        public async Task<PagedResult<EnhancedOrderHistoryDto>> GetUserOrdersWithDetailsAsync(int userId, int page = 1, int pageSize = 20)
         {
-            var orders = await _orderRepository.GetUserOrdersWithDetailsAsync(userId);
-            return MapToEnhancedDto(orders);
+            var (orders, totalCount) = await _orderRepository.GetUserOrdersWithDetailsPagedAsync(userId, page, pageSize);
+            
+            return new PagedResult<EnhancedOrderHistoryDto>
+            {
+                Items = MapToEnhancedDto(orders).ToList(),
+                TotalCount = totalCount,
+                Page = page,
+                PageSize = pageSize
+            };
         }
 
         public async Task<PagedResult<EnhancedOrderHistoryDto>> GetAllOrderHistoryWithDetailsAsync(int page = 1, int pageSize = 50)
@@ -184,11 +199,12 @@ namespace Sovva.Application.Services
                     UpdatedAt = order.UpdatedAt,
                     ScheduledFor = order.ScheduledFor,
 
-                    // ✅ Meal name: UserMeal → ScheduledOrder snapshot → fallback
+                    // ✅ Meal name & image: UserMeal → ScheduledOrder snapshot → fallback
                     MealId = order.UserMeal?.MealId ?? order.SourceScheduledOrder?.MealId ?? 0,
                     MealName = order.UserMeal?.MealName
                             ?? order.SourceScheduledOrder?.MealName
                             ?? "Order",
+                    MealImageUrl = order.UserMeal?.Meal?.ImageUrl ?? order.SourceScheduledOrder?.MealImageUrl,
 
                     // ✅ Nutritional info from UserMeal ingredients (only available for real-time orders)
                     NutritionalInfo = new NutritionalInfoDto
@@ -513,11 +529,11 @@ namespace Sovva.Application.Services
         // NOTE: Wallet deduction is now done atomically in ScheduledOrderService.ConfirmAllScheduledOrdersAsync
         // before calling this method, to prevent race conditions
         // NOTE: No manual transaction - NpgsqlRetryingExecutionStrategy blocks user-initiated transactions
-        public async Task<int> ConfirmScheduledOrderAsync(ScheduledOrder scheduledOrder)
+        public async Task<int> ConfirmScheduledOrderAsync(ScheduledOrder scheduledOrder, Order? existingOrder = null)
         {
-            // ✅ IDEMPOTENCY: If a previous attempt already created the Order row,
+            // ✅ IDEMPOTENCY: If preloaded or a previous attempt already created the Order row,
             // return its ID immediately — no duplicate insert, no double charge
-            var existingOrder = await _orderRepository
+            existingOrder ??= await _orderRepository
                 .GetByScheduledOrderIdAsync(scheduledOrder.ScheduledOrderId);
             
             if (existingOrder != null)

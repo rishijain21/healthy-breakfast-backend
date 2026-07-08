@@ -34,8 +34,19 @@ namespace Sovva.WebAPI.Controllers
             if (string.IsNullOrWhiteSpace(email))
                 return BadRequest(ApiResponse.Fail("BAD_REQUEST", "Email is required"));
 
-            var exists = await _userService.UserExistsAsync(email);
-            return Ok(ApiResponse.Ok(new { exists }));
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            await _userService.UserExistsAsync(email);
+            sw.Stop();
+
+            // A-2: Mitigate user enumeration by always returning true and enforcing a constant minimum response time.
+            var targetMs = 500;
+            var elapsedMs = (int)sw.ElapsedMilliseconds;
+            if (elapsedMs < targetMs)
+            {
+                await Task.Delay(targetMs - elapsedMs);
+            }
+
+            return Ok(ApiResponse.Ok(new { exists = true }));
         }
 
         /// <summary>
@@ -76,7 +87,7 @@ namespace Sovva.WebAPI.Controllers
 
             _logger.LogInformation(
                 "Registering user - AuthId: {AuthId}, Email: {Email}, Name: {Name}",
-                authId, email, request.Name
+                authId, "***@***", request.Name
             );
 
             try
@@ -93,7 +104,7 @@ namespace Sovva.WebAPI.Controllers
                 var existingUserByEmail = await _userService.GetUserByEmailAsync(email);
                 if (existingUserByEmail != null)
                 {
-                    _logger.LogWarning("User already exists with Email: {Email}", email);
+                    _logger.LogWarning("User already exists with Email: {Email}", "***@***");
                     return Conflict(ApiResponse.Fail("CONFLICT", "Email already registered. Please login instead."));
                 }
 
@@ -109,8 +120,8 @@ namespace Sovva.WebAPI.Controllers
                 var userDto = await _userService.RegisterUserAsync(registrationRequest);
 
                 _logger.LogInformation(
-                    "✅ User registered successfully - UserId: {UserId}, Email: {Email}",
-                    userDto.UserId, userDto.Email
+                    "User registered successfully - UserId: {UserId}, Email: {Email}",
+                    userDto.UserId, "***@***"
                 );
 
                 return Ok(ApiResponse.Ok(new { user = userDto, isNewUser = true, message = "User registered successfully" }));

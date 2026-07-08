@@ -44,6 +44,30 @@ namespace Sovva.Domain.Entities
                 throw new InvalidOperationException("Cannot transition from Delivered state.");
             }
 
+            // Allow no-op transition
+            if (OrderStatus == newStatus) return;
+
+            // Allow cancellation from any non-terminal state
+            if (newStatus == OrderStatus.Cancelled)
+            {
+                OrderStatus = newStatus;
+                return;
+            }
+
+            bool isValid = (OrderStatus, newStatus) switch
+            {
+                (OrderStatus.Pending, OrderStatus.Confirmed) => true,
+                (OrderStatus.Confirmed, OrderStatus.Preparing) => true,
+                (OrderStatus.Preparing, OrderStatus.OutForDelivery) => true,
+                (OrderStatus.OutForDelivery, OrderStatus.Delivered) => true,
+                _ => false
+            };
+
+            if (!isValid)
+            {
+                throw new InvalidOperationException($"Invalid order state transition from {OrderStatus} to {newStatus}.");
+            }
+
             OrderStatus = newStatus;
         }
 

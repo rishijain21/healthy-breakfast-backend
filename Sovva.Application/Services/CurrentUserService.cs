@@ -86,11 +86,21 @@ namespace Sovva.Application.Services
             if (_cache.TryGetValue(cacheKey, out int cachedUserId))
                 return cachedUserId;
 
-            var user = await _userRepository.GetUserByAuthIdAsync(authGuid);
-            if (user == null) return null;
+            try
+            {
+                var user = await _userRepository.GetUserByAuthIdAsync(authGuid);
+                if (user == null) return null;
 
-            _cache.Set(cacheKey, user.UserId, TimeSpan.FromMinutes(5));
-            return user.UserId;
+                _cache.Set(cacheKey, user.UserId, TimeSpan.FromMinutes(5));
+                return user.UserId;
+            }
+            catch (Exception ex) when (ex is not System.Data.Common.DbException 
+                                        and not TimeoutException
+                                        and not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "CurrentUserService: Non-critical error resolving userId for authId {AuthId}", authId);
+                return null;
+            }
         }
 
         // Returns the currently logged-in user's details as UserDto
@@ -108,22 +118,32 @@ namespace Sovva.Application.Services
             if (_cache.TryGetValue(cacheKey, out UserDto? cachedUser))
                 return cachedUser;
 
-            var user = await _userRepository.GetUserByAuthIdAsync(authGuid);
-            if (user == null) return null;
-
-            var userDto = new UserDto
+            try
             {
-                UserId = user.UserId,
-                Name = user.Name,
-                Email = user.Email,
-                Phone = user.Phone,
-                // WalletBalance omitted — always use GET /api/WalletTransactions/my-balance
-                CreatedAt = user.CreatedAt,
-                UpdatedAt = user.UpdatedAt
-            };
+                var user = await _userRepository.GetUserByAuthIdAsync(authGuid);
+                if (user == null) return null;
 
-            _cache.Set(cacheKey, userDto, TimeSpan.FromMinutes(5));
-            return userDto;
+                var userDto = new UserDto
+                {
+                    UserId = user.UserId,
+                    Name = user.Name,
+                    Email = user.Email,
+                    Phone = user.Phone,
+                    // WalletBalance omitted — always use GET /api/WalletTransactions/my-balance
+                    CreatedAt = user.CreatedAt,
+                    UpdatedAt = user.UpdatedAt
+                };
+
+                _cache.Set(cacheKey, userDto, TimeSpan.FromMinutes(5));
+                return userDto;
+            }
+            catch (Exception ex) when (ex is not System.Data.Common.DbException 
+                                        and not TimeoutException
+                                        and not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "CurrentUserService: Non-critical error resolving user for authId {AuthId}", authId);
+                return null;
+            }
         }
 
         public async Task InvalidateCacheAsync(int userId)

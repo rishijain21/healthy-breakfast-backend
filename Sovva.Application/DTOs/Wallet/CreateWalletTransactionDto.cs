@@ -13,6 +13,7 @@ namespace Sovva.Application.DTOs
 
         [Required]
         [StringLength(20)]
+        [RegularExpression("^(Credit|Debit)$", ErrorMessage = "Type must be either 'Credit' or 'Debit'")]
         public string Type { get; set; } = null!; // "Credit" or "Debit"
 
         [Required]
@@ -21,5 +22,7 @@ namespace Sovva.Application.DTOs
 
         public bool IsAdminCredit { get; set; } = false;
         public int? ScheduledOrderId { get; set; }
+        public string? ReferenceType { get; set; }
+        public int? ReferenceId { get; set; }
     }
 }

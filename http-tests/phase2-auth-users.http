@@ -1,0 +1,569 @@
+### ═══════════════════════════════════════════════════════════════════
+### Phase 2 — Auth, Users & Addresses Test Suite
+### Sovva Backend (.NET 8)
+###
+### FLOW: These tests follow a user lifecycle:
+###   Register → Profile → Add Address → Set Primary → Delete
+###
+### IMPORTANT: AuthMiddleware resolves Supabase JWT "sub" claim to
+### sovva_user_id. User must exist in user_auth_mapping for most
+### endpoints to work. Register creates this mapping.
+###
+### Token format: Supabase JWT with claims:
+###   sub: <auth-uuid>        ← Supabase auth ID
+###   aud: "authenticated"
+###   role: "authenticated"
+###   exp: <unix-timestamp>   ← expires in 1hr
+### ═══════════════════════════════════════════════════════════════════
+
+@baseUrl = http://localhost:5257
+@adminToken = eyJhbGciOiJFUzI1NiIsImtpZCI6IjE4OTNiMDM2LWYyMTAtNDM4Ni1hNWJkLTk5ODA3N2FhOWYwNyIsInR5cCI6IkpXVCJ9.eyJhYWwiOiJhYWwxIiwiYW1yIjpbeyJtZXRob2QiOiJvdHAiLCJ0aW1lc3RhbXAiOjE3NzUxMjE3NTF9XSwiYXBwX21ldGFkYXRhIjp7InByb3ZpZGVyIjoiZW1haWwiLCJwcm92aWRlcnMiOlsiZW1haWwiXX0sImF1ZCI6ImF1dGhlbnRpY2F0ZWQiLCJlbWFpbCI6ImphaW5ucmlzaGlpMjFAZ21haWwuY29tIiwiZXhwIjoxNzc2ODUxMjA0LCJpYXQiOjE3NzY4NDc2MDQsImlzX2Fub255bW91cyI6ZmFsc2UsImlzcyI6Imh0dHBzOi8vYmVlcWFtd3B0bWJwb3dzd2F3Znguc3VwYWJhc2UuY28vYXV0aC92MSIsInBob25lIjoiIiwicm9sZSI6ImF1dGhlbnRpY2F0ZWQiLCJzZXNzaW9uX2lkIjoiZDYzOTVkNmQtNjg0MC00ODQzLWFjY2MtZGUzMzA1ODk3ZmJhIiwic3ViIjoiODAwNzlkNzMtM2YxNS00Mjk3LThkNjQtZGViZmY0NzY0NjAwIiwidXNlcl9tZXRhZGF0YSI6eyJlbWFpbCI6ImphaW5ucmlzaGlpMjFAZ21haWwuY29tIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsInBob25lX3ZlcmlmaWVkIjpmYWxzZSwic3ViIjoiODAwNzlkNzMtM2YxNS00Mjk3LThkNjQtZGViZmY0NzY0NjAwIn19.WGeKXQVoqbHwBu5wJtUdQ4Ap2EnuKsmQlly4c7uxYgzqk1y1NTWpZva49lnHvr3KVG_QkU8qyX0xKQxRjFtc6A
+@userToken = eyJhbGciOiJFUzI1NiIsImtpZCI6IjE4OTNiMDM2LWYyMTAtNDM4Ni1hNWJkLTk5ODA3N2FhOWYwNyIsInR5cCI6IkpXVCJ9.eyJhYWwiOiJhYWwxIiwiYW1yIjpbeyJtZXRob2QiOiJvdHAiLCJ0aW1lc3RhbXAiOjE3NzUxMjE3NTF9XSwiYXBwX21ldGFkYXRhIjp7InByb3ZpZGVyIjoiZW1haWwiLCJwcm92aWRlcnMiOlsiZW1haWwiXX0sImF1ZCI6ImF1dGhlbnRpY2F0ZWQiLCJlbWFpbCI6ImphaW5ucmlzaGlpMjFAZ21haWwuY29tIiwiZXhwIjoxNzc2ODUxMjA0LCJpYXQiOjE3NzY4NDc2MDQsImlzX2Fub255bW91cyI6ZmFsc2UsImlzcyI6Imh0dHBzOi8vYmVlcWFtd3B0bWJwb3dzd2F3Znguc3VwYWJhc2UuY28vYXV0aC92MSIsInBob25lIjoiIiwicm9sZSI6ImF1dGhlbnRpY2F0ZWQiLCJzZXNzaW9uX2lkIjoiZDYzOTVkNmQtNjg0MC00ODQzLWFjY2MtZGUzMzA1ODk3ZmJhIiwic3ViIjoiODAwNzlkNzMtM2YxNS00Mjk3LThkNjQtZGViZmY0NzY0NjAwIiwidXNlcl9tZXRhZGF0YSI6eyJlbWFpbCI6ImphaW5ucmlzaGlpMjFAZ21haWwuY29tIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsInBob25lX3ZlcmlmaWVkIjpmYWxzZSwic3ViIjoiODAwNzlkNzMtM2YxNS00Mjk3LThkNjQtZGViZmY0NzY0NjAwIn19.WGeKXQVoqbHwBu5wJtUdQ4Ap2EnuKsmQlly4c7uxYgzqk1y1NTWpZva49lnHvr3KVG_QkU8qyX0xKQxRjFtc6A
+
+# These come from the JWT "sub" claim — must match the token
+@userAuthId = 80079d73-3f15-4297-8d64-debff4764600
+@mismatchAuthId = 00000000-0000-0000-0000-000000000001
+
+# Set these after running the create/register requests
+@userId = 1
+@addressId = 1
+@otherUserAddressId = 999
+
+
+### ═══════════════════════════════════════════════════════════════════
+### 1. AUTHENTICATION
+### Controller: AuthController
+### Base route: /api/Auth
+###
+### Flow: Supabase OTP → get JWT → POST /register → user created
+### AuthMiddleware adds sovva_user_id claim on subsequent requests
+### ═══════════════════════════════════════════════════════════════════
+
+### ─── 1.1 GET check-user-exists — happy path ─────────────────────
+### AllowAnonymous + rate limited
+### Expected: 200 OK → { exists: true/false }
+
+GET {{baseUrl}}/api/Auth/check-user-exists?email=test@example.com HTTP/1.1
+
+###
+
+### ─── 1.2 GET check-user-exists — missing email ──────────────────
+### Expected: 400 → { error: "Email is required" }
+
+GET {{baseUrl}}/api/Auth/check-user-exists HTTP/1.1
+
+###
+
+### ─── 1.3 GET check-user-exists — empty email ───────────────────
+### Expected: 400 → { error: "Email is required" }
+
+GET {{baseUrl}}/api/Auth/check-user-exists?email= HTTP/1.1
+
+###
+
+### ─── 1.4 POST register — happy path ─────────────────────────────
+### Requires valid Supabase JWT [Authorize]
+### authId + email read from JWT sub+email claims — NOT sent in body
+### Expected: 200 OK → { user: UserDto, isNewUser: true, message }
+###
+### Client sends ONLY: { name, phone? }
+
+POST {{baseUrl}}/api/Auth/register HTTP/1.1
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{
+    "name": "Rishi Jain",
+    "phone": "+918319910839"
+}
+
+###
+
+### ─── 1.5 POST register — no auth ────────────────────────────────
+### Expected: 401 Unauthorized
+
+POST {{baseUrl}}/api/Auth/register HTTP/1.1
+Content-Type: application/json
+
+{
+    "name": "Test User"
+}
+
+###
+
+### ─── 1.6 POST register — invalid token (no valid sub claim) ─────
+### SECURITY: Server can't extract authId from JWT → 401
+### NOTE: With a real invalid JWT the middleware returns 401 before reaching controller
+### Expected: 401 Unauthorized
+
+POST {{baseUrl}}/api/Auth/register HTTP/1.1
+Authorization: Bearer invalid.jwt.token
+Content-Type: application/json
+
+{
+    "name": "Attacker"
+}
+
+###
+
+### ─── 1.7 POST register — duplicate (same authId already exists) ──
+### Returns existing user — idempotent registration
+### Expected: 200 OK → { user: UserDto, isNewUser: false, message: "User already registered" }
+
+POST {{baseUrl}}/api/Auth/register HTTP/1.1
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{
+    "name": "Rishi Jain",
+    "phone": "+918319910839"
+}
+
+###
+
+### ─── 1.8 POST register — missing name (validation) ──────────────
+### name is still required in body (only field client must send)
+### Expected: 400 Bad Request → validation error
+
+POST {{baseUrl}}/api/Auth/register HTTP/1.1
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{
+    "name": "A"
+}
+
+###
+
+### ─── 1.9 POST login — test endpoint ────────────────────────────
+### AllowAnonymous — just returns info message
+### Expected: 200 OK → { message: "Use Supabase authentication for login" }
+
+POST {{baseUrl}}/api/Auth/login HTTP/1.1
+Content-Type: application/json
+
+{
+    "email": "test@example.com",
+    "password": "anything"
+}
+
+###
+
+
+### ═══════════════════════════════════════════════════════════════════
+### 2. USER PROFILE
+### Controller: UsersController
+### Base route: /api/Users
+###
+### NOTE: GetUserProfile uses ClaimTypes.NameIdentifier / "sub" claim
+### to look up user by AuthId. GetDashboardSummary uses sovva_user_id.
+### ═══════════════════════════════════════════════════════════════════
+
+### ─── 2.1 GET profile — happy path ───────────────────────────────
+### Authenticated user — reads authId from JWT "sub" claim
+### Expected: 200 OK → UserDto { userId, name, email, phone, role, walletBalance }
+
+GET {{baseUrl}}/api/Users/profile HTTP/1.1
+Authorization: Bearer {{userToken}}
+
+###
+
+### ─── 2.2 GET profile — no auth ──────────────────────────────────
+### Expected: 401 Unauthorized
+
+GET {{baseUrl}}/api/Users/profile HTTP/1.1
+
+###
+
+### ─── 2.3 GET profile — expired token ────────────────────────────
+### Use an expired JWT (1hr+ old) to test token validation
+### Expected: 401 Unauthorized (JWT lifetime validation failed)
+### Log: "JWT auth failed on /api/Users/profile: IDX10223: Lifetime validation failed"
+
+GET {{baseUrl}}/api/Users/profile HTTP/1.1
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDAiLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwicm9sZSI6ImF1dGhlbnRpY2F0ZWQiLCJleHAiOjE2MDAwMDAwMDB9.invalid
+
+###
+
+### ─── 2.4 GET dashboard-summary — happy path ─────────────────────
+### Aggregated endpoint — 5 parallel queries
+### Expected: 200 OK → DashboardSummaryDto
+### Response cached for 60s (ResponseCache VaryByHeader=Authorization)
+
+GET {{baseUrl}}/api/Users/dashboard-summary HTTP/1.1
+Authorization: Bearer {{userToken}}
+
+###
+
+### ─── 2.5 GET dashboard-summary — no auth ────────────────────────
+### Expected: 401 Unauthorized
+
+GET {{baseUrl}}/api/Users/dashboard-summary HTTP/1.1
+
+###
+
+### ─── 2.6 PUT profile — happy path ───────────────────────────────
+### Update user name and phone
+### Expected: 200 OK → updated UserDto
+### DTO: UpdateUserProfileDto { name?, phone? }
+
+PUT {{baseUrl}}/api/Users/profile HTTP/1.1
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{
+    "name": "Updated Name",
+    "phone": "+919876543211"
+}
+
+###
+
+### ─── 2.7 PUT profile — update name only ─────────────────────────
+### Partial update — only name
+### Expected: 200 OK → UserDto with updated name, unchanged phone
+
+PUT {{baseUrl}}/api/Users/profile HTTP/1.1
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{
+    "name": "New Name Only"
+}
+
+###
+
+### ─── 2.8 PUT profile — no auth ──────────────────────────────────
+### Expected: 401 Unauthorized
+
+PUT {{baseUrl}}/api/Users/profile HTTP/1.1
+Content-Type: application/json
+
+{
+    "name": "Should Fail"
+}
+
+###
+
+### ─── 2.9 PUT profile — empty name ───────────────────────────────
+### Validation: Name cannot be whitespace-only
+### Expected: 400 → { error: "Name cannot be empty" }
+
+PUT {{baseUrl}}/api/Users/profile HTTP/1.1
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{
+    "name": "   "
+}
+
+###
+
+### ─── 2.10 PATCH user role — admin only ──────────────────────────
+### Admin promotes/demotes users
+### Expected: 200 OK → { message: "User 1 role updated to Admin" }
+
+PATCH {{baseUrl}}/api/Users/{{userId}}/role HTTP/1.1
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+    "role": "Admin"
+}
+
+###
+
+### ─── 2.11 PATCH user role — invalid role ────────────────────────
+### Expected: 400 → { error: "Invalid role. Must be one of: User, Admin" }
+
+PATCH {{baseUrl}}/api/Users/{{userId}}/role HTTP/1.1
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+    "role": "SuperAdmin"
+}
+
+###
+
+### ─── 2.12 PATCH user role — self-demotion ───────────────────────
+### Admin cannot remove their own Admin role
+### Expected: 400 → { error: "You cannot remove your own admin role" }
+### NOTE: Set userId to the admin's own ID for this test
+
+PATCH {{baseUrl}}/api/Users/{{userId}}/role HTTP/1.1
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+    "role": "User"
+}
+
+###
+
+### ─── 2.13 PATCH user role — user token (not admin) ──────────────
+### Expected: 403 Forbidden
+
+PATCH {{baseUrl}}/api/Users/1/role HTTP/1.1
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{
+    "role": "Admin"
+}
+
+###
+
+
+### ═══════════════════════════════════════════════════════════════════
+### 3. USER ADDRESSES
+### Controller: UserAddressesController
+### Base route: /api/UserAddresses
+###
+### FLOW (execute in order):
+###   3.1  GET /primary → 404 (no addresses yet)
+###   3.3  POST create address → 201 (save addressId)
+###   3.5  GET /primary → 200 (first address auto-primary)
+###   3.8  PUT /{id}/set-primary → 200
+###   3.10 DELETE /{id} → when primary → 400
+###   3.12 GET /{id} → other user's address → 403
+### ═══════════════════════════════════════════════════════════════════
+
+### ─── 3.1 GET primary — no addresses yet ─────────────────────────
+### Expected: 404 → { error: "No primary address found. Please add an address." }
+### Run this BEFORE creating any address
+
+GET {{baseUrl}}/api/UserAddresses/primary HTTP/1.1
+Authorization: Bearer {{userToken}}
+
+###
+
+### ─── 3.2 GET all addresses — happy path ─────────────────────────
+### Expected: 200 OK → array of UserAddressDetailDto (may be empty)
+
+GET {{baseUrl}}/api/UserAddresses HTTP/1.1
+Authorization: Bearer {{userToken}}
+
+###
+
+### ─── 3.3 POST create address — happy path ───────────────────────
+### Expected: 201 Created → UserAddressDetailDto + Location header
+### SAVE the returned "id" as @addressId for subsequent tests
+###
+### DTO: CreateUserAddressDto {
+###   serviceableLocationId (required),
+###   wing?, block?, flatNumber (required),
+###   floor?, additionalInstructions?, label?,
+###   setAsPrimary (default false)
+### }
+
+POST {{baseUrl}}/api/UserAddresses HTTP/1.1
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{
+    "serviceableLocationId": 1,
+    "flatNumber": "A-401",
+    "wing": "North",
+    "block": "B",
+    "floor": "4",
+    "label": "Home",
+    "additionalInstructions": "Ring doorbell twice",
+    "setAsPrimary": true
+}
+
+###
+
+### ─── 3.4 POST create address — no auth ──────────────────────────
+### Expected: 401 Unauthorized
+
+POST {{baseUrl}}/api/UserAddresses HTTP/1.1
+Content-Type: application/json
+
+{
+    "serviceableLocationId": 1,
+    "flatNumber": "B-202"
+}
+
+###
+
+### ─── 3.5 POST create address — invalid serviceableLocationId ────
+### Expected: 400 → { error: "..." } (InvalidOperationException from service)
+### ServiceableLocationId 99999 doesn't exist
+
+POST {{baseUrl}}/api/UserAddresses HTTP/1.1
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{
+    "serviceableLocationId": 99999,
+    "flatNumber": "C-303"
+}
+
+###
+
+### ─── 3.6 POST create address — missing required fields ──────────
+### Expected: 400 Bad Request (ModelState: flatNumber required)
+
+POST {{baseUrl}}/api/UserAddresses HTTP/1.1
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{
+    "serviceableLocationId": 1
+}
+
+###
+
+### ─── 3.7 POST create second address — for set-primary test ──────
+### Expected: 201 Created → save this id for set-primary test
+
+POST {{baseUrl}}/api/UserAddresses HTTP/1.1
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{
+    "serviceableLocationId": 1,
+    "flatNumber": "D-505",
+    "label": "Office",
+    "setAsPrimary": false
+}
+
+###
+
+### ─── 3.8 GET primary — after creating ───────────────────────────
+### Expected: 200 OK → UserAddressDetailDto (the first address with setAsPrimary=true)
+
+GET {{baseUrl}}/api/UserAddresses/primary HTTP/1.1
+Authorization: Bearer {{userToken}}
+
+###
+
+### ─── 3.9 GET address by ID — happy path ─────────────────────────
+### Expected: 200 OK → UserAddressDetailDto
+
+GET {{baseUrl}}/api/UserAddresses/{{addressId}} HTTP/1.1
+Authorization: Bearer {{userToken}}
+
+###
+
+### ─── 3.10 GET address by ID — not found ─────────────────────────
+### Expected: 404 → { error: "Address not found" }
+
+GET {{baseUrl}}/api/UserAddresses/99999 HTTP/1.1
+Authorization: Bearer {{userToken}}
+
+###
+
+### ─── 3.11 GET address by ID — different user's address ──────────
+### Ownership check: address.UserId != current userId → Forbid
+### Expected: 403 Forbidden
+### Use an address ID that belongs to another user
+
+GET {{baseUrl}}/api/UserAddresses/{{otherUserAddressId}} HTTP/1.1
+Authorization: Bearer {{userToken}}
+
+###
+
+### ─── 3.12 PUT set-primary — happy path ──────────────────────────
+### Switch primary to second address
+### Expected: 200 OK → UserAddressDetailDto with isPrimary=true
+
+PUT {{baseUrl}}/api/UserAddresses/{{addressId}}/set-primary HTTP/1.1
+Authorization: Bearer {{userToken}}
+
+###
+
+### ─── 3.13 PUT set-primary — no auth ─────────────────────────────
+### Expected: 401 Unauthorized
+
+PUT {{baseUrl}}/api/UserAddresses/{{addressId}}/set-primary HTTP/1.1
+
+###
+
+### ─── 3.14 PUT set-primary — address not found ───────────────────
+### Expected: 404 → { error: "Address not found" }
+
+PUT {{baseUrl}}/api/UserAddresses/99999/set-primary HTTP/1.1
+Authorization: Bearer {{userToken}}
+
+###
+
+### ─── 3.15 PUT update address — happy path ───────────────────────
+### Expected: 200 OK → updated UserAddressDetailDto
+
+PUT {{baseUrl}}/api/UserAddresses/{{addressId}} HTTP/1.1
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{
+    "serviceableLocationId": 1,
+    "flatNumber": "A-401-Updated",
+    "wing": "South",
+    "label": "Home Updated"
+}
+
+###
+
+### ─── 3.16 PUT update address — not found ────────────────────────
+### Expected: 404 → { error: "..." } (KeyNotFoundException)
+
+PUT {{baseUrl}}/api/UserAddresses/99999 HTTP/1.1
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{
+    "serviceableLocationId": 1,
+    "flatNumber": "X-999"
+}
+
+###
+
+### ─── 3.17 DELETE address — non-primary ──────────────────────────
+### Expected: 200 OK → { message: "Address deleted successfully" }
+### Delete the SECOND address (non-primary)
+
+DELETE {{baseUrl}}/api/UserAddresses/{{addressId}} HTTP/1.1
+Authorization: Bearer {{userToken}}
+
+###
+
+### ─── 3.18 DELETE address — primary address ──────────────────────
+### Some services may block deleting the primary address
+### Expected: 400 → { error: "..." } (InvalidOperationException)
+###        or 200 OK if deletion is allowed
+
+DELETE {{baseUrl}}/api/UserAddresses/{{addressId}} HTTP/1.1
+Authorization: Bearer {{userToken}}
+
+###
+
+### ─── 3.19 DELETE address — no auth ──────────────────────────────
+### Expected: 401 Unauthorized
+
+DELETE {{baseUrl}}/api/UserAddresses/{{addressId}} HTTP/1.1
+
+###
+
+### ─── 3.20 DELETE address — not found ────────────────────────────
+### Expected: 404 → { error: "Address not found" }
+
+DELETE {{baseUrl}}/api/UserAddresses/99999 HTTP/1.1
+Authorization: Bearer {{userToken}}
+
+###
+
+### ─── 3.21 GET validate address ──────────────────────────────────
+### Checks if address change would affect active subscriptions
+### Expected: 200 OK → ValidateAddressDto
+
+GET {{baseUrl}}/api/UserAddresses/{{addressId}}/validate HTTP/1.1
+Authorization: Bearer {{userToken}}
+
+###
+
+### ─── 3.22 GET validate address — no auth ────────────────────────
+### Expected: 401 Unauthorized
+
+GET {{baseUrl}}/api/UserAddresses/{{addressId}}/validate HTTP/1.1
+
+###

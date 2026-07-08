@@ -95,6 +95,13 @@ namespace Sovva.Infrastructure.Repositories
                 .ToListAsync();
         }
 
+        public async Task<IEnumerable<Subscription>> GetExpiredActiveSubscriptionsAsync(DateOnly today)
+        {
+            return await _context.Subscriptions
+                .Where(s => s.IsActive && s.EndDate < today)
+                .ToListAsync();
+        }
+
         public async Task<Subscription> CreateAsync(Subscription subscription)
         {
             // CreatedAt/UpdatedAt handled by TimestampInterceptor

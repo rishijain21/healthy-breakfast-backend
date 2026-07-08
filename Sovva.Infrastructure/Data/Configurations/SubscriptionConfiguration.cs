@@ -23,6 +23,8 @@ namespace Sovva.Infrastructure.Data.Configurations
                     "\"EndDate\" > \"StartDate\"");
                 t.HasCheckConstraint("CK_Subscription_MealType",
                     "(\"MealId\" IS NOT NULL AND \"UserMealId\" IS NULL) OR (\"MealId\" IS NULL AND \"UserMealId\" IS NOT NULL)");
+                t.HasCheckConstraint("CK_Subscriptions_AgreedPrice",
+                    "\"AgreedPrice\" > 0");
             });
 
             // Relationships
@@ -64,7 +66,7 @@ namespace Sovva.Infrastructure.Data.Configurations
                 .HasDatabaseName("IX_Subscriptions_UserId_Active");
 
             builder.HasIndex(e => new { e.IsActive, e.NextScheduledDate })
-                .HasFilter("\"Active\" = true")
+                .HasFilter("\"IsActive\" = true")
                 .HasDatabaseName("IX_Subscriptions_Active_NextScheduledDate");
         }
     }

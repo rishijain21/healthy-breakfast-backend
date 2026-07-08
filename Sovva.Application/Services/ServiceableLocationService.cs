@@ -7,16 +7,32 @@ namespace Sovva.Application.Services
     public class ServiceableLocationService : IServiceableLocationService
     {
         private readonly IServiceableLocationRepository _repository;
+        private readonly ICacheService _cacheService;
 
-        public ServiceableLocationService(IServiceableLocationRepository repository)
+        private const string ActiveLocationsCacheKey = "locations:all:active";
+        private const string LocationByIdCacheKeyPrefix = "locations:id:";
+
+        public ServiceableLocationService(IServiceableLocationRepository repository, ICacheService cacheService)
         {
             _repository = repository;
+            _cacheService = cacheService;
         }
 
         public async Task<ServiceableLocationDto?> GetByIdAsync(int id)
         {
+            var cacheKey = LocationByIdCacheKeyPrefix + id;
+            var cached = await _cacheService.GetAsync<ServiceableLocationDto>(cacheKey);
+            if (cached != null) return cached;
+
             var location = await _repository.GetByIdAsync(id);
-            return location == null ? null : MapToDto(location);
+            var result = location == null ? null : MapToDto(location);
+
+            if (result != null)
+            {
+                await _cacheService.SetAsync(cacheKey, result, TimeSpan.FromMinutes(60));
+            }
+
+            return result;
         }
 
         /// <summary>
@@ -33,8 +49,14 @@ namespace Sovva.Application.Services
         /// </summary>
         public async Task<IEnumerable<ServiceableLocationDto>> GetActiveLocationsAsync()
         {
+            var cached = await _cacheService.GetAsync<IEnumerable<ServiceableLocationDto>>(ActiveLocationsCacheKey);
+            if (cached != null) return cached;
+
             var locations = await _repository.GetActiveLocationsAsync();
-            return locations.Select(MapToDto);
+            var result = locations.Select(MapToDto).ToList();
+
+            await _cacheService.SetAsync(ActiveLocationsCacheKey, result, TimeSpan.FromMinutes(15));
+            return result;
         }
 
         public async Task<IEnumerable<ServiceableLocationDto>> SearchByPincodeAsync(string pincode)
@@ -77,11 +99,14 @@ namespace Sovva.Application.Services
                 Latitude          = dto.Latitude,
                 Longitude         = dto.Longitude,
                 DeliveryTimeSlot  = dto.DeliveryTimeSlot?.Trim(),
-                IsActive          = true,
-                CreatedAt         = DateTime.UtcNow
+                IsActive          = true
             };
 
             var created = await _repository.CreateAsync(location);
+
+            await _cacheService.RemoveAsync(ActiveLocationsCacheKey);
+            await _cacheService.RemoveAsync(LocationByIdCacheKeyPrefix + created.Id);
+
             return MapToDto(created);
         }
 
@@ -120,15 +145,25 @@ namespace Sovva.Application.Services
             if (dto.DeliveryTimeSlot != null)
                 location.DeliveryTimeSlot = dto.DeliveryTimeSlot.Trim();
 
-            location.UpdatedAt = DateTime.UtcNow;
+
 
             var updated = await _repository.UpdateAsync(location);
+
+            await _cacheService.RemoveAsync(ActiveLocationsCacheKey);
+            await _cacheService.RemoveAsync(LocationByIdCacheKeyPrefix + updated.Id);
+
             return MapToDto(updated);
         }
 
         public async Task<bool> DeleteAsync(int id)
         {
-            return await _repository.DeleteAsync(id);
+            var result = await _repository.DeleteAsync(id);
+            if (result)
+            {
+                await _cacheService.RemoveAsync(ActiveLocationsCacheKey);
+                await _cacheService.RemoveAsync(LocationByIdCacheKeyPrefix + id);
+            }
+            return result;
         }
 
         public async Task<ValidateAddressDto> ValidateLocationAsync(int locationId)

@@ -5,6 +5,7 @@ namespace Sovva.Application.Interfaces
     public interface IWalletTransactionService
     {
         Task<IEnumerable<WalletTransactionDto>> GetAllTransactionsAsync();
+        Task<PagedResult<WalletTransactionDto>> GetAllTransactionsPagedAsync(int page, int pageSize);
         Task<WalletTransactionDto?> GetTransactionByIdAsync(long transactionId);
         Task<PagedResult<WalletTransactionDto>> GetUserTransactionsAsync(int userId, int page, int pageSize);
         Task<IEnumerable<WalletTransactionDto>> GetUserTransactionsByTypeAsync(int userId, string type);
@@ -17,7 +18,7 @@ Task<decimal> GetWalletBalanceAsync(int userId);
         Task<WalletTransactionDto> TopUpWalletAsync(int userId, WalletTopUpDto topUpDto);
         Task<WalletTransactionDto> DebitWalletAsync(int userId, decimal amount, string description);
         Task<bool> HasSufficientBalanceAsync(int userId, decimal amount);
-        Task<WalletTransactionDto> AdminCreditWalletAsync(long userId, decimal amount, string description);
+        Task<WalletTransactionDto> AdminCreditWalletAsync(long userId, decimal amount, string description, int adminUserId);
 
         // ✅ NEW: Write transaction record without balance check (balance already deducted atomically)
         Task WriteTransactionRecordAsync(int userId, decimal amount, string type, string description, int? scheduledOrderId = null);
@@ -26,10 +27,13 @@ Task<decimal> GetWalletBalanceAsync(int userId);
         Task<bool> TransactionExistsForScheduledOrderAsync(int scheduledOrderId);
 
         /// <summary>
-        /// Atomically checks ledger balance and inserts a Debit record in a single SQL statement.
+        /// Atomically checks the ledger balance and inserts a Debit in one SQL statement.
+        /// CALLER CONTRACT: This method MUST be called inside an active DB transaction
+        /// (IUnitOfWork.ExecuteInTransactionAsync) to prevent overdraft under concurrent load.
+        /// Using Read Committed isolation, the INSERT...SELECT WHERE is safe only when
+        /// the surrounding transaction prevents another connection from interleaving.
         /// Returns true if the debit was recorded (balance sufficient), false otherwise.
-        /// Replaces the broken DeductWalletBalanceAtomicAsync + WriteTransactionRecordAsync combo.
         /// </summary>
-        Task<bool> AtomicDebitAsync(int userId, decimal amount, string description, int? scheduledOrderId = null);
+        Task<(bool Success, long? TransactionId)> AtomicDebitAsync(int userId, decimal amount, string description, int? scheduledOrderId = null);
     }
 }

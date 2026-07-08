@@ -6,7 +6,6 @@ using Sovva.Application.DTOs;
 using Sovva.Application.Helpers;
 using Sovva.Application.Interfaces;
 using Sovva.Domain.Entities;
-using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 
 namespace Sovva.Application.Services
@@ -19,11 +18,11 @@ namespace Sovva.Application.Services
         private readonly IIngredientCategoryRepository _ingredientCategoryRepository;
         private readonly IMealOptionIngredientRepository _mealOptionIngredientRepository;
         private readonly ISupabaseStorageService _storageService;
-        private readonly IMemoryCache _cache;
+        private readonly ICacheService _cacheService;
         private readonly ILogger<MealService> _logger;
         private readonly IAppTimeProvider _time;
-        private const string ActiveMealsCacheKey = "active_meals";
         private const string CategoriesWithIngredientsCacheKey = "meals:categories_with_ingredients";
+        private const string MealByIdCacheKeyPrefix = "meals:id:";
 
         public MealService(
             IMealRepository mealRepository,
@@ -32,7 +31,7 @@ namespace Sovva.Application.Services
             IIngredientCategoryRepository ingredientCategoryRepository,
             IMealOptionIngredientRepository mealOptionIngredientRepository,
             ISupabaseStorageService storageService,
-            IMemoryCache cache,
+            ICacheService cacheService,
             ILogger<MealService> logger,
             IAppTimeProvider time)
         {
@@ -42,17 +41,25 @@ namespace Sovva.Application.Services
             _ingredientCategoryRepository = ingredientCategoryRepository;
             _mealOptionIngredientRepository = mealOptionIngredientRepository;
             _storageService = storageService;
-            _cache = cache;
+            _cacheService = cacheService;
             _logger = logger;
             _time = time;
         }
 
-        // Public method for meal builder - returns only complete meals for public browsing
+        // ✅ FIX 3.2: Pagination-Aware Cache for Active Meals (10-minute TTL)
         public async Task<PagedResult<MealDto>> GetActiveMealsAsync(int page, int pageSize)
         {
             // Clamp inputs
             page = Math.Max(1, page);
             pageSize = Math.Clamp(pageSize, 1, 50);
+
+            var cacheKey = $"meals:active:p{page}:s{pageSize}";
+            var cachedResult = await _cacheService.GetAsync<PagedResult<MealDto>>(cacheKey);
+            
+            if (cachedResult != null)
+            {
+                return cachedResult;
+            }
 
             var (meals, totalCount) = await _mealRepository.GetActiveMealsAsync(page, pageSize);
             var result = new List<MealDto>();
@@ -75,13 +82,16 @@ namespace Sovva.Application.Services
                 result.Add(dto);
             }
             
-            return new PagedResult<MealDto>
+            var pagedResult = new PagedResult<MealDto>
             {
                 Items = result,
                 TotalCount = totalCount,
                 Page = page,
                 PageSize = pageSize
             };
+
+            await _cacheService.SetAsync(cacheKey, pagedResult, TimeSpan.FromMinutes(10));
+            return pagedResult;
         }
 
         // Helper to extract storage path from full URL or clean path
@@ -119,13 +129,17 @@ namespace Sovva.Application.Services
             await _mealRepository.SaveChangesAsync();
 
             // Bust the cache when a meal is created
-            _cache.Remove(ActiveMealsCacheKey);
+            await InvalidateMealCachesAsync(meal.MealId);
 
             return meal.MealId;
         }
 
         public async Task<MealDto?> GetMealByIdAsync(int id)
         {
+            var cacheKey = MealByIdCacheKeyPrefix + id;
+            var cached = await _cacheService.GetAsync<MealDto>(cacheKey);
+            if (cached != null) return cached;
+
             var meal = await _mealRepository.GetByIdAsync(id);
             if (meal == null) return null;
 
@@ -142,6 +156,8 @@ namespace Sovva.Application.Services
             // Generate signed URL for secure image access (expires in 1 hour)
             dto.ImageUrl = await GetSafeSignedUrlAsync(meal.ImageUrl);
 
+            await _cacheService.SetAsync(cacheKey, dto, TimeSpan.FromMinutes(30));
+
             return dto;
         }
 
@@ -151,13 +167,16 @@ namespace Sovva.Application.Services
             if (meal == null)
                 throw new ArgumentException("Meal not found");
 
-            var isValidSelection = await ValidateIngredientSelectionAsync(calculationDto.MealId, calculationDto.SelectedIngredients);
+            var ids = calculationDto.SelectedIngredients?.Select(i => i.IngredientId) ?? Enumerable.Empty<int>();
+            var ingredientMap = await _ingredientRepository.GetByIdsAsync(ids);
+
+            var isValidSelection = await ValidateIngredientSelectionAsync(calculationDto.MealId, calculationDto.SelectedIngredients, ingredientMap);
             if (!isValidSelection)
                 throw new InvalidOperationException("Invalid ingredient selection based on meal options");
 
-            var ingredientsPrice = await GetIngredientsTotalPriceAsync(calculationDto.SelectedIngredients);
-            var (totalCalories, totalProtein, totalFiber) = await GetNutritionalSummaryAsync(calculationDto.SelectedIngredients);
-            var ingredientBreakdown = await GetIngredientBreakdownAsync(calculationDto.SelectedIngredients);
+            var ingredientsPrice = await GetIngredientsTotalPriceAsync(calculationDto.SelectedIngredients, ingredientMap);
+            var (totalCalories, totalProtein, totalFiber) = await GetNutritionalSummaryAsync(calculationDto.SelectedIngredients, ingredientMap);
+            var ingredientBreakdown = await GetIngredientBreakdownAsync(calculationDto.SelectedIngredients, ingredientMap);
 
             return new MealPriceResponseDto
             {
@@ -173,12 +192,9 @@ namespace Sovva.Application.Services
             };
         }
 
-        public async Task<decimal> GetIngredientsTotalPriceAsync(List<SelectedIngredientDto> ingredients)
+        public Task<decimal> GetIngredientsTotalPriceAsync(List<SelectedIngredientDto> ingredients, IDictionary<int, Ingredient> ingredientMap)
         {
-            if (ingredients == null || !ingredients.Any()) return 0;
-            
-            var ids = ingredients.Select(i => i.IngredientId);
-            var ingredientMap = await _ingredientRepository.GetByIdsAsync(ids);
+            if (ingredients == null || !ingredients.Any()) return Task.FromResult(0m);
             
             decimal total = 0;
             foreach (var item in ingredients)
@@ -189,15 +205,12 @@ namespace Sovva.Application.Services
                 }
             }
             
-            return total;
+            return Task.FromResult(total);
         }
 
-        public async Task<(int calories, decimal protein, decimal fiber)> GetNutritionalSummaryAsync(List<SelectedIngredientDto> ingredients)
+        public Task<(int calories, decimal protein, decimal fiber)> GetNutritionalSummaryAsync(List<SelectedIngredientDto> ingredients, IDictionary<int, Ingredient> ingredientMap)
         {
-            if (ingredients == null || !ingredients.Any()) return (0, 0, 0);
-
-            var ids = ingredients.Select(i => i.IngredientId);
-            var ingredientMap = await _ingredientRepository.GetByIdsAsync(ids);
+            if (ingredients == null || !ingredients.Any()) return Task.FromResult((0, 0m, 0m));
 
             int totalCalories = 0;
             decimal totalProtein = 0;
@@ -213,16 +226,13 @@ namespace Sovva.Application.Services
                 }
             }
 
-            return (totalCalories, totalProtein, totalFiber);
+            return Task.FromResult((totalCalories, totalProtein, totalFiber));
         }
 
-        public async Task<bool> ValidateIngredientSelectionAsync(int mealId, List<SelectedIngredientDto> ingredients)
+        public async Task<bool> ValidateIngredientSelectionAsync(int mealId, List<SelectedIngredientDto> ingredients, IDictionary<int, Ingredient> ingredientMap)
         {
             var mealOptions = await _mealOptionRepository.GetByMealIdAsync(mealId);
             var ingredientsByCategory = new Dictionary<int, List<SelectedIngredientDto>>();
-            
-            var ids = ingredients.Select(i => i.IngredientId);
-            var ingredientMap = await _ingredientRepository.GetByIdsAsync(ids);
             
             foreach (var selectedIngredient in ingredients)
             {
@@ -249,13 +259,9 @@ namespace Sovva.Application.Services
             return true;
         }
 
-        private async Task<List<IngredientBreakdownDto>> GetIngredientBreakdownAsync(List<SelectedIngredientDto> selectedIngredients)
+        private Task<List<IngredientBreakdownDto>> GetIngredientBreakdownAsync(List<SelectedIngredientDto> selectedIngredients, IDictionary<int, Ingredient> ingredientMap)
         {
-            if (selectedIngredients == null || !selectedIngredients.Any()) return new List<IngredientBreakdownDto>();
-
-            var ids = selectedIngredients.Select(i => i.IngredientId);
-            var ingredientMap = await _ingredientRepository.GetByIdsAsync(ids);
-            
+            if (selectedIngredients == null || !selectedIngredients.Any()) return Task.FromResult(new List<IngredientBreakdownDto>());
             var breakdown = new List<IngredientBreakdownDto>();
 
             foreach (var item in selectedIngredients)
@@ -275,7 +281,7 @@ namespace Sovva.Application.Services
                 }
             }
 
-            return breakdown;
+            return Task.FromResult(breakdown);
         }
 
         // ========== ADMIN METHODS (UPDATED) ==========
@@ -506,7 +512,7 @@ namespace Sovva.Application.Services
             }
 
             // Bust the cache when a meal is created
-            _cache.Remove(ActiveMealsCacheKey);
+            await _cacheService.RemoveAsync(CategoriesWithIngredientsCacheKey);
 
             return meal.MealId;
         }
@@ -584,7 +590,7 @@ namespace Sovva.Application.Services
             await _mealRepository.UpdateMealAsync(meal);
             
             // Bust the cache when a meal is updated
-            _cache.Remove(ActiveMealsCacheKey);
+            await InvalidateMealCachesAsync(id);
             
             return true;
         }
@@ -598,51 +604,47 @@ namespace Sovva.Application.Services
             await _mealRepository.DeleteMealAsync(meal);
             
             // Bust the cache when a meal is deleted
-            _cache.Remove(ActiveMealsCacheKey);
+            await InvalidateMealCachesAsync(id);
             
             return true;
         }
 
         public async Task<bool> UpdateMealStatusAsync(int id, bool isComplete)
         {
-            return await _mealRepository.UpdateMealStatusAsync(id, isComplete);
+            var result = await _mealRepository.UpdateMealStatusAsync(id, isComplete);
+            if (result)
+            {
+                await InvalidateMealCachesAsync(id);
+            }
+            return result;
         }
 
         public async Task<List<CategoryWithIngredientsDto>> GetCategoriesWithIngredientsAsync()
         {
-            // Try to get from cache first
-            if (_cache.TryGetValue(CategoriesWithIngredientsCacheKey, out List<CategoryWithIngredientsDto>? cached))
-                return cached!;
+            var cached = await _cacheService.GetAsync<List<CategoryWithIngredientsDto>>(CategoriesWithIngredientsCacheKey);
+            if (cached != null) return cached;
 
-            var categories = await _ingredientCategoryRepository.GetAllAsync();
-            var result = new List<CategoryWithIngredientsDto>();
-
-            foreach (var category in categories)
+            var categories = await _ingredientCategoryRepository.GetAllWithIngredientsAsync();
+            var result = categories.Select(category => new CategoryWithIngredientsDto
             {
-                var ingredients = await _ingredientRepository.GetByCategoryIdAsync(category.CategoryId);
-                
-                result.Add(new CategoryWithIngredientsDto
+                CategoryId = category.CategoryId,
+                CategoryName = category.CategoryName,
+                Ingredients = category.Ingredients.Select(i => new IngredientDto
                 {
-                    CategoryId = category.CategoryId,
-                    CategoryName = category.CategoryName,
-                    Ingredients = ingredients.Select(i => new IngredientDto
-                    {
-                        IngredientId = i.IngredientId,
-                        CategoryId = i.CategoryId,
-                        IngredientName = i.IngredientName,
-                        Price = i.Price,
-                        Available = i.IsAvailable,
-                        Calories = i.Calories,
-                        Protein = i.Protein,
-                        Fiber = i.Fiber,
-                        IconEmoji = i.IconEmoji,
-                        Description = i.Description
-                    }).ToList()
-                });
-            }
+                    IngredientId = i.IngredientId,
+                    CategoryId = i.CategoryId,
+                    IngredientName = i.IngredientName,
+                    Price = i.Price,
+                    Available = i.IsAvailable,
+                    Calories = i.Calories,
+                    Protein = i.Protein,
+                    Fiber = i.Fiber,
+                    IconEmoji = i.IconEmoji,
+                    Description = i.Description
+                }).ToList()
+            }).ToList();
 
-            // Cache for 10 minutes
-            _cache.Set(CategoriesWithIngredientsCacheKey, result, TimeSpan.FromMinutes(10));
+            await _cacheService.SetAsync(CategoriesWithIngredientsCacheKey, result, TimeSpan.FromMinutes(30));
             
             return result;
         }
@@ -656,7 +658,7 @@ namespace Sovva.Application.Services
             meal.ImageUrl = imageUrl;
             meal.UpdatedAt = _time.UtcNow;
             await _mealRepository.UpdateMealAsync(meal);
-            _cache.Remove(ActiveMealsCacheKey);
+            await InvalidateMealCachesAsync(mealId);
             return true;
         }
 
@@ -670,7 +672,7 @@ namespace Sovva.Application.Services
             meal.ImageUrl = null;
             meal.UpdatedAt = _time.UtcNow;
             await _mealRepository.UpdateMealAsync(meal);
-            _cache.Remove(ActiveMealsCacheKey);
+            await InvalidateMealCachesAsync(mealId);
             return existingUrl;
         }
 
@@ -777,6 +779,19 @@ namespace Sovva.Application.Services
             }
 
             return dto;
+        }
+
+        private async Task InvalidateMealCachesAsync(int? mealId = null)
+        {
+            if (mealId.HasValue)
+            {
+                await _cacheService.RemoveAsync(MealByIdCacheKeyPrefix + mealId.Value);
+            }
+            await _cacheService.RemoveAsync(CategoriesWithIngredientsCacheKey);
+            await _cacheService.RemoveAsync("meals:active:p1:s20");
+            await _cacheService.RemoveAsync("meals:active:p1:s200");
+            await _cacheService.RemoveAsync("meals:active:p1:s10");
+            await _cacheService.RemoveAsync("meals:active:p1:s50");
         }
     }
 }

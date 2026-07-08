@@ -1,0 +1,268 @@
+### ═══════════════════════════════════════════════════════════════════
+### Phase 6 — Dashboard Summary Test Suite
+### Sovva Backend (.NET 8)
+###
+### Endpoint: GET /api/Users/dashboard-summary
+### Controller: UsersController → DashboardService.GetDashboardSummaryAsync
+###
+### This endpoint aggregates 5 sequential DB queries:
+###   1. User profile (cached 5 min)
+###   2. Wallet balance
+###   3. Recent transactions (last 20)
+###   4. Active subscriptions (active=true, within date range)
+###   5. Tomorrow's scheduled orders (status=Scheduled only)
+###
+### Response caching: 60s via [ResponseCache] VaryByHeader=Authorization
+### ═══════════════════════════════════════════════════════════════════
+
+@baseUrl = http://localhost:5257
+@token = eyJhbGciOiJFUzI1NiIsImtpZCI6IjE4OTNiMDM2LWYyMTAtNDM4Ni1hNWJkLTk5ODA3N2FhOWYwNyIsInR5cCI6IkpXVCJ9.eyJhYWwiOiJhYWwxIiwiYW1yIjpbeyJtZXRob2QiOiJvdHAiLCJ0aW1lc3RhbXAiOjE3NzUxMjE3NTF9XSwiYXBwX21ldGFkYXRhIjp7InByb3ZpZGVyIjoiZW1haWwiLCJwcm92aWRlcnMiOlsiZW1haWwiXX0sImF1ZCI6ImF1dGhlbnRpY2F0ZWQiLCJlbWFpbCI6ImphaW5ucmlzaGlpMjFAZ21haWwuY29tIiwiZXhwIjoxNzc2ODUxMjA0LCJpYXQiOjE3NzY4NDc2MDQsImlzX2Fub255bW91cyI6ZmFsc2UsImlzcyI6Imh0dHBzOi8vYmVlcWFtd3B0bWJwb3dzd2F3Znguc3VwYWJhc2UuY28vYXV0aC92MSIsInBob25lIjoiIiwicm9sZSI6ImF1dGhlbnRpY2F0ZWQiLCJzZXNzaW9uX2lkIjoiZDYzOTVkNmQtNjg0MC00ODQzLWFjY2MtZGUzMzA1ODk3ZmJhIiwic3ViIjoiODAwNzlkNzMtM2YxNS00Mjk3LThkNjQtZGViZmY0NzY0NjAwIiwidXNlcl9tZXRhZGF0YSI6eyJlbWFpbCI6ImphaW5ucmlzaGlpMjFAZ21haWwuY29tIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsInBob25lX3ZlcmlmaWVkIjpmYWxzZSwic3ViIjoiODAwNzlkNzMtM2YxNS00Mjk3LThkNjQtZGViZmY0NzY0NjAwIn19.WGeKXQVoqbHwBu5wJtUdQ4Ap2EnuKsmQlly4c7uxYgzqk1y1NTWpZva49lnHvr3KVG_QkU8qyX0xKQxRjFtc6A
+
+
+### ═══════════════════════════════════════════════════════════════════
+### 1. DASHBOARD — Happy Path
+### ═══════════════════════════════════════════════════════════════════
+
+### ─── 1.1 GET dashboard-summary — full validation ────────────────
+### Expected: 200 OK → DashboardSummaryDto
+###
+### RESPONSE SCHEMA CHECK (verify ALL fields present):
+###
+### {
+###   "profile": {
+###     "userId": int,        ✅ Real — from DB
+###     "name": string,       ✅ Real — NOTE: field is "name", NOT "fullName"
+###     "email": string,      ✅ Real — from DB
+###     "phone": string|null, ✅ Real — from DB
+###     "accountStatus": str, ✅ Real — from DB
+###     "walletBalance": dec, ✅ Real — from DB user.WalletBalance
+###     "role": string,       ✅ Real — "User" or "Admin"
+###     "createdAt": datetime, ✅ Real
+###     "updatedAt": datetime, ✅ Real
+###     "profileComplete": bool ✅ Computed — name && phone both non-empty
+###   },
+###   "walletBalance": decimal,         ✅ Real — from wallet_transactions SUM
+###   "recentTransactions": [           ✅ Real — last 20 transactions
+###     {
+###       "transactionId": long,
+###       "userId": int,
+###       "amount": decimal,
+###       "type": string,               // "Credit" or "Debit"
+###       "description": string,
+###       "createdAt": datetime
+###     }
+###   ],
+###   "activeSubscriptions": [          ✅ Real — but MISSING fields (see below)
+###     {
+###       "subscriptionId": int,
+###       "userId": int,
+###       "userMealId": int,            // ✅ Present
+###       "frequency": int/string,
+###       "startDate": dateonly,
+###       "endDate": dateonly,
+###       "active": true,
+###       "nextScheduledDate": dateonly|null,
+###       "userName": string,
+###       "mealName": string,
+###       "mealPrice": decimal,
+###       "weeklySchedule": [],
+###       // SUSPECTED PLACEHOLDER: mealId — NOT mapped in DashboardService L151-172
+###       // SUSPECTED PLACEHOLDER: imageUrl — NOT mapped in DashboardService L151-172
+###       // Frontend needs mealId for navigation and imageUrl for display
+###     }
+###   ],
+###   "tomorrowOrders": [               ✅ Real — tomorrow's Scheduled orders
+###     {
+###       "scheduledOrderId": int,
+###       "mealName": string,
+###       "mealId": int|null,           ✅ Real — from scheduled_order snapshot
+###       "mealImageUrl": string|null,  ✅ Real — from scheduled_order snapshot
+###       "scheduledFor": datetime,
+###       "deliveryTimeSlot": string,
+###       "totalPrice": decimal,
+###       "orderStatus": "Scheduled",
+###       "canModify": bool,
+###       "subscriptionId": int|null,
+###       "ingredients": []
+###     }
+###   ],
+###   "totalTransactions": 0,     // SUSPECTED PLACEHOLDER: never set in DashboardService
+###   "currentStreak": 0,         // SUSPECTED PLACEHOLDER: never set in DashboardService
+###   "bestStreak": 0,            // SUSPECTED PLACEHOLDER: never set in DashboardService
+###   "loyaltyPoints": 0,         // SUSPECTED PLACEHOLDER: never set in DashboardService
+###   "averageCarbs": 0,          // SUSPECTED PLACEHOLDER: never set in DashboardService
+###   "averageFats": 0            // SUSPECTED PLACEHOLDER: never set in DashboardService
+### }
+
+GET {{baseUrl}}/api/Users/dashboard-summary HTTP/1.1
+Authorization: Bearer {{token}}
+
+### AFTER RUNNING, CHECK:
+###
+### ✅ profile.name — should be non-null string (NOT "fullName")
+### ✅ profile.walletBalance — should match walletBalance (top-level)
+### ✅ walletBalance — decimal > 0 (if topped up in phase4)
+### ✅ recentTransactions — array length > 0 (if topped up in phase4)
+### ✅ activeSubscriptions — array length > 0 (if created in phase5)
+### ✅ tomorrowOrders — array length > 0 (if subscription active with tomorrow order)
+###
+### ⚠️ KNOWN PLACEHOLDERS (always return 0):
+###   - totalTransactions: NEVER SET (DashboardService L81-101 omits it)
+###   - currentStreak: NEVER SET
+###   - bestStreak: NEVER SET
+###   - loyaltyPoints: NEVER SET
+###   - averageCarbs: NEVER SET
+###   - averageFats: NEVER SET
+###
+### ⚠️ MISSING FIELDS in activeSubscriptions:
+###   - mealId: Dashboard maps userMealId but NOT mealId
+###   - imageUrl: not mapped at all
+###   Frontend LocationService uses mealId for "View Meal" navigation
+
+###
+
+
+### ═══════════════════════════════════════════════════════════════════
+### 2. DASHBOARD — Auth Tests
+### ═══════════════════════════════════════════════════════════════════
+
+### ─── 2.1 GET dashboard-summary — no auth ────────────────────────
+### Expected: 401 Unauthorized
+
+GET {{baseUrl}}/api/Users/dashboard-summary HTTP/1.1
+
+###
+
+### ─── 2.2 GET dashboard-summary — expired token ──────────────────
+### Expected: 401 Unauthorized
+
+GET {{baseUrl}}/api/Users/dashboard-summary HTTP/1.1
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIwMDAwIiwiZXhwIjoxNjAwMDAwMDAwfQ.invalid
+
+###
+
+
+### ═══════════════════════════════════════════════════════════════════
+### 3. COMPARISON TESTS — Verify dashboard matches individual endpoints
+### ═══════════════════════════════════════════════════════════════════
+
+### ─── 3.1 GET profile — compare with dashboard.profile ───────────
+### Expected: 200 OK → UserDto
+### VERIFY: All fields match dashboard.profile exactly
+
+GET {{baseUrl}}/api/Users/profile HTTP/1.1
+Authorization: Bearer {{token}}
+
+###
+
+### ─── 3.2 GET wallet balance — compare with dashboard.walletBalance
+### Expected: 200 OK → { balance, userId }
+### VERIFY: balance == dashboard.walletBalance
+
+GET {{baseUrl}}/api/WalletTransactions/my-balance HTTP/1.1
+Authorization: Bearer {{token}}
+
+###
+
+### ─── 3.3 GET transactions — compare with dashboard.recentTransactions
+### Expected: 200 OK → array
+### VERIFY: first 20 match dashboard.recentTransactions (same order)
+
+GET {{baseUrl}}/api/WalletTransactions/my-transactions HTTP/1.1
+Authorization: Bearer {{token}}
+
+###
+
+### ─── 3.4 GET active subscriptions — compare with dashboard.activeSubscriptions
+### Expected: 200 OK → array
+### VERIFY: count matches, subscription IDs match
+### NOTE: Dashboard may have FEWER fields than the direct endpoint
+###       (missing mealId, imageUrl in dashboard mapping)
+
+GET {{baseUrl}}/api/Subscriptions/active HTTP/1.1
+Authorization: Bearer {{token}}
+
+###
+
+### ─── 3.5 GET tomorrow orders — compare with dashboard.tomorrowOrders
+### Expected: 200 OK → array of ScheduledOrderResponseDto
+### VERIFY: count matches, only Scheduled status
+
+GET {{baseUrl}}/api/ScheduledOrders/tomorrow HTTP/1.1
+Authorization: Bearer {{token}}
+
+###
+
+
+### ═══════════════════════════════════════════════════════════════════
+### 4. CACHING BEHAVIOR
+### ═══════════════════════════════════════════════════════════════════
+
+### ─── 4.1 Top up wallet then immediately check dashboard ─────────
+### The profile is cached for 5 minutes.
+### The dashboard response is cached for 60 seconds.
+### After top-up:
+###   - walletBalance should update (NOT cached, fresh query)
+###   - profile.walletBalance MAY be stale (5-min profile cache)
+###   - recentTransactions should include the new top-up
+
+POST {{baseUrl}}/api/WalletTransactions/topup HTTP/1.1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+    "amount": 1.00,
+    "description": "Cache test top-up"
+}
+
+###
+
+### ─── 4.2 Immediately fetch dashboard ────────────────────────────
+### Expected: 200 OK
+### CHECK:
+###   ✅ walletBalance includes the ₹1 (fresh from wallet repo)
+###   ⚠️ profile.walletBalance may NOT include the ₹1 (5-min cache)
+###   ✅ recentTransactions[0] should be "Cache test top-up"
+
+GET {{baseUrl}}/api/Users/dashboard-summary HTTP/1.1
+Authorization: Bearer {{token}}
+
+### NOTE: If profile.walletBalance != walletBalance, this confirms
+### the cache inconsistency. The frontend should use top-level
+### walletBalance, not profile.walletBalance.
+
+###
+
+
+### ═══════════════════════════════════════════════════════════════════
+### 5. FIELD AUDIT SUMMARY
+### ═══════════════════════════════════════════════════════════════════
+###
+### After running all tests, update FRONTEND_INTEGRATION.md §7.2:
+###
+### ┌─────────────────────────┬─────────┬──────────────────────────────┐
+### │ Field                   │ Status  │ Notes                        │
+### ├─────────────────────────┼─────────┼──────────────────────────────┤
+### │ profile.name            │ ✅ REAL │ Not "fullName"               │
+### │ profile.walletBalance   │ ⚠️ STALE│ 5-min cache, use top-level   │
+### │ walletBalance           │ ✅ REAL │ Fresh from wallet repo        │
+### │ recentTransactions      │ ✅ REAL │ Last 20, ordered by date     │
+### │ activeSubscriptions     │ ⚠️ GAPS │ Missing mealId, imageUrl     │
+### │ tomorrowOrders          │ ✅ REAL │ Only Scheduled status         │
+### │ tomorrowOrders[].mealId │ ✅ REAL │ From snapshot                 │
+### │ tomorrowOrders[].imgUrl │ ✅ REAL │ From snapshot                 │
+### │ totalTransactions       │ ❌ ZERO │ Never set in service          │
+### │ currentStreak           │ ❌ ZERO │ Never set in service          │
+### │ bestStreak              │ ❌ ZERO │ Never set in service          │
+### │ loyaltyPoints           │ ❌ ZERO │ Never set in service          │
+### │ averageCarbs            │ ❌ ZERO │ Never set in service          │
+### │ averageFats             │ ❌ ZERO │ Never set in service          │
+### └─────────────────────────┴─────────┴──────────────────────────────┘
+###
+### ACTIONS NEEDED:
+### 1. DashboardService: Add totalTransactions = transactions.Count()
+### 2. DashboardService: Add mealId to activeSubscriptions mapping
+### 3. DashboardService: Add imageUrl to activeSubscriptions mapping
+### 4. Frontend: Use walletBalance (top-level), not profile.walletBalance
+### 5. Decision: Implement streak/loyalty/nutrition or remove from DTO
+###

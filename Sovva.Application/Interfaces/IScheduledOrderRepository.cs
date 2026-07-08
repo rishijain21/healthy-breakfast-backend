@@ -10,8 +10,10 @@ namespace Sovva.Application.Interfaces
         Task<ScheduledOrder> CreateAsync(ScheduledOrder scheduledOrder);
         Task<List<ScheduledOrder>> GetByAuthIdAndDateAsync(Guid authId, DateTime date);
         Task<List<ScheduledOrder>> GetByUserIdAndDateAsync(int userId, DateTime date);
+        Task<List<ScheduledOrder>> GetByUserIdAndDateRangeAsync(int userId, DateOnly from, DateOnly to);
         Task<ScheduledOrder?> GetByIdAndAuthIdAsync(int scheduledOrderId, Guid authId);
         Task<ScheduledOrder> UpdateAsync(ScheduledOrder scheduledOrder);
+        Task CreateBatchAsync(IEnumerable<ScheduledOrder> scheduledOrders);
         Task UpdateBatchAsync(IEnumerable<ScheduledOrder> scheduledOrders);
         Task DeleteAsync(int scheduledOrderId);
         Task DeleteBatchAsync(IEnumerable<int> scheduledOrderIds);
@@ -22,6 +24,7 @@ namespace Sovva.Application.Interfaces
         /// Queries ScheduledFor (DATE column) by equality - no UTC conversion needed.
         /// </summary>
         Task<List<ScheduledOrder>> GetScheduledOrdersForDateAsync(DateOnly date);
+        Task<List<ScheduledOrder>> GetFailedScheduledOrdersAsync(DateOnly? targetDate);
         
         /// <summary>
         /// Fetches scheduled orders whose IST delivery date falls within the given UTC range.

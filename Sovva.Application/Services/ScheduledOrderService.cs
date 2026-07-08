@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
 using Sovva.Application.Interfaces;
 using Sovva.Application.Exceptions;
 using Sovva.Application.Helpers;
@@ -186,7 +187,7 @@ namespace Sovva.Application.Services
                 AuthId = authId,
                 MealName = dto.MealName ?? DeliveryConstants.DefaultMealName,
                 MealId = dto.MealId,               // ✅ ADD: Soft reference for traceability
-                MealImageUrl = dto.MealImageUrl,   // ✅ ADD: Snapshot for display
+                MealImageUrl = CleanMealImageUrl(dto.MealImageUrl),   // ✅ ADD: Clean snapshot for display
                 ScheduledFor = deliveryDate,       // ← DateOnly directly
                 DeliveryTimeSlot = dto.DeliveryTimeSlot ?? DeliveryConstants.DefaultTimeSlot,
                 TotalPrice = totalPrice,
@@ -298,7 +299,7 @@ namespace Sovva.Application.Services
                     AuthId = authId,
                     MealName = originalOrder.MealName,
                     MealId = originalOrder.MealId,               // ✅ ADD: Copy soft reference
-                    MealImageUrl = originalOrder.MealImageUrl,   // ✅ ADD: Copy snapshot
+                    MealImageUrl = CleanMealImageUrl(originalOrder.MealImageUrl),   // ✅ ADD: Copy clean snapshot
                     ScheduledFor = originalOrder.ScheduledFor,  // DateOnly → DateOnly
                     DeliveryTimeSlot = originalOrder.DeliveryTimeSlot,
                     TotalPrice = originalOrder.TotalPrice,
@@ -561,7 +562,7 @@ namespace Sovva.Application.Services
                 try
                 {
                     // Isolated scope per order to ensure thread safety with EF Core DbContext
-                    using var scope = _scopeFactory.CreateScope();
+                    await using var scope = _scopeFactory.CreateAsyncScope();
                     var scopedService = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<IScheduledOrderService>(scope.ServiceProvider);
                     
                     var success = await scopedService.ProcessSingleScheduledOrderAsync(
@@ -598,9 +599,6 @@ namespace Sovva.Application.Services
             _logger.LogInformation("[MIDNIGHT JOB] Complete! Confirmed: {Confirmed}, Failed: {Failed}, Already processed: {AlreadyProcessed}",
                 confirmedCount, failedCount, scheduledOrders.Count - pendingOrders.Count);
 
-            // ✅ FIX: If EVERY order failed, throw so Hangfire records a job failure.
-            //    This triggers Hangfire's retry policy and surfaces the problem in the dashboard.
-            //    Partial failures (some confirmed, some failed) are normal and do NOT throw.
             if (failedCount > 0 && confirmedCount == 0 && pendingOrders.Count > 0)
             {
                 throw new InvalidOperationException(
@@ -621,6 +619,90 @@ namespace Sovva.Application.Services
                 OrdersFailed          = failedCount,
                 Timestamp             = _time.UtcNow,
                 Note                  = "Safe to call multiple times — idempotent"
+            };
+        }
+
+        public async Task<ProcessOrdersResponseDto> RetryFailedOrdersAsync(DateOnly? targetDate = null, string? correlationId = null)
+        {
+            var cid = correlationId ?? Guid.NewGuid().ToString("N")[..8];
+            using var scope = _logger.BeginScope(new Dictionary<string, object> { { "CorrelationId", cid } });
+
+            var failedOrders = await _scheduledOrderRepository.GetFailedScheduledOrdersAsync(targetDate);
+            
+            if (failedOrders.Count == 0)
+            {
+                return new ProcessOrdersResponseDto
+                {
+                    Success = true,
+                    Message = "No failed orders found to retry.",
+                    DeliveryDate = targetDate?.ToDateTime(TimeOnly.MinValue) ?? _time.UtcNow,
+                    OrdersFound = 0,
+                    OrdersPending = 0,
+                    OrdersAlreadyConfirmed = 0,
+                    OrdersConfirmed = 0,
+                    OrdersFailed = 0,
+                    Timestamp = _time.UtcNow
+                };
+            }
+
+            var authIds = failedOrders.Select(o => o.AuthId).Distinct().ToList();
+            var users = await _userRepository.GetByAuthIdsAsync(authIds);
+            var usersByAuthId = users
+                .Where(u => u.AuthMapping != null)
+                .ToDictionary(u => u.AuthMapping!.AuthId);
+
+            var scheduledOrderIds = failedOrders.Select(o => o.ScheduledOrderId).ToList();
+            var existingOrdersByScheduledOrderId = await _orderRepository.GetByScheduledOrderIdsAsync(scheduledOrderIds);
+            var existingTransactionsByScheduledOrderId = await _walletTransactionRepository.GetByScheduledOrderIdsAsync(scheduledOrderIds);
+
+            var addressIds = failedOrders
+                .Where(o => o.DeliveryAddressId.HasValue)
+                .Select(o => o.DeliveryAddressId!.Value)
+                .Distinct().ToList();
+            var addressesMap = (await _userAddressRepository.GetByIdsWithDetailsAsync(addressIds))
+                .ToDictionary(a => a.Id);
+
+            int confirmedCount = 0;
+            int failedCount = 0;
+
+            var semaphore = new SemaphoreSlim(10);
+            var tasks = failedOrders.Select(async scheduledOrder =>
+            {
+                await semaphore.WaitAsync();
+                try
+                {
+                    await using var s = _scopeFactory.CreateAsyncScope();
+                    var scopedService = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<IScheduledOrderService>(s.ServiceProvider);
+                    
+                    var success = await scopedService.ProcessSingleScheduledOrderAsync(
+                        scheduledOrder, 
+                        usersByAuthId, 
+                        existingOrdersByScheduledOrderId, 
+                        existingTransactionsByScheduledOrderId,
+                        addressesMap);
+                        
+                    if (success) System.Threading.Interlocked.Increment(ref confirmedCount);
+                    else System.Threading.Interlocked.Increment(ref failedCount);
+                }
+                finally
+                {
+                    semaphore.Release();
+                }
+            });
+
+            await Task.WhenAll(tasks);
+
+            return new ProcessOrdersResponseDto
+            {
+                Success = true,
+                Message = $"Retry complete. {confirmedCount} succeeded, {failedCount} failed.",
+                DeliveryDate = targetDate?.ToDateTime(TimeOnly.MinValue) ?? _time.UtcNow,
+                OrdersFound = failedOrders.Count,
+                OrdersPending = failedOrders.Count,
+                OrdersAlreadyConfirmed = 0,
+                OrdersConfirmed = confirmedCount,
+                OrdersFailed = failedCount,
+                Timestamp = _time.UtcNow
             };
         }
 
@@ -707,10 +789,10 @@ namespace Sovva.Application.Services
         // ----------------------------------------------------------------------------------------
         public async Task<bool> ProcessSingleScheduledOrderAsync(
             ScheduledOrder scheduledOrder,
-            Dictionary<Guid, User> usersByAuthId,
-            Dictionary<int, Order> existingOrders,
-            Dictionary<int, WalletTransaction> existingTransactions,
-            Dictionary<int, UserAddress> addressesMap)
+            IReadOnlyDictionary<Guid, User> usersByAuthId,
+            IReadOnlyDictionary<int, Order> existingOrders,
+            IReadOnlyDictionary<int, WalletTransaction> existingTransactions,
+            IReadOnlyDictionary<int, UserAddress> addressesMap)
         {
             try
             {
@@ -793,13 +875,13 @@ namespace Sovva.Application.Services
                             "Order #{OrderId} exists but no wallet transaction found - completing payment now",
                             existingOrder.OrderId);
 
-                        bool paymentSucceeded = await _walletService.AtomicDebitAsync(
+                        var debitResult = await _walletService.AtomicDebitAsync(
                             user.UserId,
                             scheduledOrder.TotalPrice,
                             $"Order #{existingOrder.OrderId} - {scheduledOrder.MealName}",
                             scheduledOrder.ScheduledOrderId);
 
-                        if (!paymentSucceeded)
+                        if (!debitResult.Success)
                         {
                             await _scheduledOrderRepository.MarkAsAsync(
                                 scheduledOrder.ScheduledOrderId, ScheduledOrderStatus.Cancelled.ToString());
@@ -822,20 +904,20 @@ namespace Sovva.Application.Services
                 await _unitOfWork.ExecuteInTransactionAsync(async () =>
                 {
                     // ── STEP 4: Atomic wallet deduction + ledger write (single SQL) ──
-                    bool deducted = await _walletService.AtomicDebitAsync(
+                    var debitResult = await _walletService.AtomicDebitAsync(
                         user.UserId,
                         scheduledOrder.TotalPrice,
                         $"Scheduled Order #{scheduledOrder.ScheduledOrderId} - {scheduledOrder.MealName}",
                         scheduledOrder.ScheduledOrderId);
 
-                    if (!deducted)
+                    if (!debitResult.Success)
                     {
                         var currentBalance = await _walletService.GetUserBalanceAsync(user.UserId);
                         throw new InsufficientBalanceException(scheduledOrder.TotalPrice, currentBalance);
                     }
 
                     // ── STEP 5: Create Order row ──
-                    var orderId = await _orderService.ConfirmScheduledOrderAsync(scheduledOrder);
+                    var orderId = await _orderService.ConfirmScheduledOrderAsync(scheduledOrder, existingOrder);
 
                     // ── STEP 6: Mark scheduled order processed ──
                     await _scheduledOrderRepository.MarkAsProcessedAsync(
@@ -864,6 +946,15 @@ namespace Sovva.Application.Services
                 
                 return false;
             }
+        }
+
+        private static string? CleanMealImageUrl(string? url)
+        {
+            if (string.IsNullOrWhiteSpace(url)) return null;
+            var idx = url.IndexOf("meal-images/", StringComparison.OrdinalIgnoreCase);
+            var clean = idx >= 0 ? url.Substring(idx) : url;
+            var qIdx = clean.IndexOf('?');
+            return qIdx >= 0 ? clean.Substring(0, qIdx) : clean;
         }
     }
 }

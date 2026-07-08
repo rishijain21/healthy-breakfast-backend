@@ -19,12 +19,14 @@ namespace Sovva.WebAPI.Controllers
         private readonly IUserService _userService;
         private readonly IDashboardService _dashboardService;
         private readonly ILogger<UsersController> _logger;
+        private readonly ISupabaseStorageService _storageService;
 
-        public UsersController(IUserService userService, IDashboardService dashboardService, ILogger<UsersController> logger)
+        public UsersController(IUserService userService, IDashboardService dashboardService, ILogger<UsersController> logger, ISupabaseStorageService storageService)
         {
             _userService = userService;
             _dashboardService = dashboardService;
             _logger = logger;
+            _storageService = storageService;
         }
 
         [HttpGet]
@@ -99,7 +101,6 @@ namespace Sovva.WebAPI.Controllers
         /// </summary>
         [HttpGet("dashboard-summary")]
         [Authorize]
-        [ResponseCache(Duration = 60, VaryByHeader = "Authorization")]
         public async Task<ActionResult<DashboardSummaryDto>> GetDashboardSummary(CancellationToken ct)
         {
             try
@@ -109,6 +110,33 @@ namespace Sovva.WebAPI.Controllers
                     return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
 
                 var summary = await _dashboardService.GetDashboardSummaryAsync(userId.Value, ct);
+
+                // ✅ FIX: Sign raw storage paths for subscription meal images so frontend can render them
+                if (summary.ActiveSubscriptions != null)
+                {
+                    foreach (var sub in summary.ActiveSubscriptions)
+                    {
+                        if (!string.IsNullOrEmpty(sub.MealImageUrl))
+                        {
+                            try { sub.MealImageUrl = await _storageService.GetSignedUrlAsync(sub.MealImageUrl); }
+                            catch { sub.MealImageUrl = null; }
+                        }
+                    }
+                }
+
+                // ✅ FIX: Sign raw storage paths for tomorrow's order meal images
+                if (summary.TomorrowOrders != null)
+                {
+                    foreach (var order in summary.TomorrowOrders)
+                    {
+                        if (!string.IsNullOrEmpty(order.MealImageUrl))
+                        {
+                            try { order.MealImageUrl = await _storageService.GetSignedUrlAsync(order.MealImageUrl); }
+                            catch { order.MealImageUrl = null; }
+                        }
+                    }
+                }
+
                 return Ok(ApiResponse.Ok(summary));
             }
             catch (InvalidOperationException ex)

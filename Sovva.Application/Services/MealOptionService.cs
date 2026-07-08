@@ -22,9 +22,7 @@ namespace Sovva.Application.Services
                 MealId = dto.MealId,
                 CategoryId = dto.CategoryId,
                 IsRequired = dto.IsRequired,
-                MaxSelectable = dto.MaxSelectable,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
+                MaxSelectable = dto.MaxSelectable
             };
 
             await _repository.AddAsync(entity);

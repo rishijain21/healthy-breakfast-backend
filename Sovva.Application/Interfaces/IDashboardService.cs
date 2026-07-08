@@ -15,5 +15,10 @@ namespace Sovva.Application.Interfaces
         /// Runs 5 queries in parallel for fast response
         /// </summary>
         Task<DashboardSummaryDto> GetDashboardSummaryAsync(int userId, CancellationToken ct = default);
+
+        /// <summary>
+        /// Invalidate the dashboard profile cache for a user
+        /// </summary>
+        Task InvalidateDashboardCacheAsync(int userId);
     }
 }

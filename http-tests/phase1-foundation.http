@@ -1,0 +1,524 @@
+### ═══════════════════════════════════════════════════════════════════
+### Phase 1 Foundation — API Test Suite
+### Sovva Backend (.NET 8)
+###
+### Usage: Install "REST Client" VS Code extension, then click
+###        "Send Request" above each request block.
+###
+### Replace @adminToken and @userToken with real Supabase JWTs.
+### Tokens expire after 1 hour — refresh via supabase.auth.getSession()
+### ═══════════════════════════════════════════════════════════════════
+
+@baseUrl = http://localhost:5257
+@adminToken = eyJhbGciOiJFUzI1NiIsImtpZCI6IjE4OTNiMDM2LWYyMTAtNDM4Ni1hNWJkLTk5ODA3N2FhOWYwNyIsInR5cCI6IkpXVCJ9.eyJhYWwiOiJhYWwxIiwiYW1yIjpbeyJtZXRob2QiOiJvdHAiLCJ0aW1lc3RhbXAiOjE3NzUxMjE3NTF9XSwiYXBwX21ldGFkYXRhIjp7InByb3ZpZGVyIjoiZW1haWwiLCJwcm92aWRlcnMiOlsiZW1haWwiXX0sImF1ZCI6ImF1dGhlbnRpY2F0ZWQiLCJlbWFpbCI6ImphaW5ucmlzaGlpMjFAZ21haWwuY29tIiwiZXhwIjoxNzc2ODUxMjA0LCJpYXQiOjE3NzY4NDc2MDQsImlzX2Fub255bW91cyI6ZmFsc2UsImlzcyI6Imh0dHBzOi8vYmVlcWFtd3B0bWJwb3dzd2F3Znguc3VwYWJhc2UuY28vYXV0aC92MSIsInBob25lIjoiIiwicm9sZSI6ImF1dGhlbnRpY2F0ZWQiLCJzZXNzaW9uX2lkIjoiZDYzOTVkNmQtNjg0MC00ODQzLWFjY2MtZGUzMzA1ODk3ZmJhIiwic3ViIjoiODAwNzlkNzMtM2YxNS00Mjk3LThkNjQtZGViZmY0NzY0NjAwIiwidXNlcl9tZXRhZGF0YSI6eyJlbWFpbCI6ImphaW5ucmlzaGlpMjFAZ21haWwuY29tIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsInBob25lX3ZlcmlmaWVkIjpmYWxzZSwic3ViIjoiODAwNzlkNzMtM2YxNS00Mjk3LThkNjQtZGViZmY0NzY0NjAwIn19.WGeKXQVoqbHwBu5wJtUdQ4Ap2EnuKsmQlly4c7uxYgzqk1y1NTWpZva49lnHvr3KVG_QkU8qyX0xKQxRjFtc6A
+@userToken = eyJhbGciOiJFUzI1NiIsImtpZCI6IjE4OTNiMDM2LWYyMTAtNDM4Ni1hNWJkLTk5ODA3N2FhOWYwNyIsInR5cCI6IkpXVCJ9.eyJhYWwiOiJhYWwxIiwiYW1yIjpbeyJtZXRob2QiOiJvdHAiLCJ0aW1lc3RhbXAiOjE3NzUxMjE3NTF9XSwiYXBwX21ldGFkYXRhIjp7InByb3ZpZGVyIjoiZW1haWwiLCJwcm92aWRlcnMiOlsiZW1haWwiXX0sImF1ZCI6ImF1dGhlbnRpY2F0ZWQiLCJlbWFpbCI6ImphaW5ucmlzaGlpMjFAZ21haWwuY29tIiwiZXhwIjoxNzc2ODUxMjA0LCJpYXQiOjE3NzY4NDc2MDQsImlzX2Fub255bW91cyI6ZmFsc2UsImlzcyI6Imh0dHBzOi8vYmVlcWFtd3B0bWJwb3dzd2F3Znguc3VwYWJhc2UuY28vYXV0aC92MSIsInBob25lIjoiIiwicm9sZSI6ImF1dGhlbnRpY2F0ZWQiLCJzZXNzaW9uX2lkIjoiZDYzOTVkNmQtNjg0MC00ODQzLWFjY2MtZGUzMzA1ODk3ZmJhIiwic3ViIjoiODAwNzlkNzMtM2YxNS00Mjk3LThkNjQtZGViZmY0NzY0NjAwIiwidXNlcl9tZXRhZGF0YSI6eyJlbWFpbCI6ImphaW5ucmlzaGlpMjFAZ21haWwuY29tIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsInBob25lX3ZlcmlmaWVkIjpmYWxzZSwic3ViIjoiODAwNzlkNzMtM2YxNS00Mjk3LThkNjQtZGViZmY0NzY0NjAwIn19.WGeKXQVoqbHwBu5wJtUdQ4Ap2EnuKsmQlly4c7uxYgzqk1y1NTWpZva49lnHvr3KVG_QkU8qyX0xKQxRjFtc6A
+
+
+### ═══════════════════════════════════════════════════════════════════
+### 1. INGREDIENT CATEGORIES
+### Controller: IngredientCategoriesController
+### Base route: /api/IngredientCategories
+### ═══════════════════════════════════════════════════════════════════
+
+### ─── 1.1 GET all categories ──────────────────────────────────────
+### Happy path — AllowAnonymous, no auth needed
+### Expected: 200 OK → array of { categoryId, categoryName }
+
+GET {{baseUrl}}/api/IngredientCategories HTTP/1.1
+
+###
+
+### ─── 1.2 GET category by ID ──────────────────────────────────────
+### Happy path — AllowAnonymous
+### Expected: 200 OK → { categoryId, categoryName }
+
+GET {{baseUrl}}/api/IngredientCategories/1 HTTP/1.1
+
+###
+
+### ─── 1.3 GET category by ID — not found ──────────────────────────
+### Expected: 404 Not Found
+
+GET {{baseUrl}}/api/IngredientCategories/99999 HTTP/1.1
+
+###
+
+### ─── 1.4 POST create category — happy path ──────────────────────
+### Admin only — requires Admin JWT
+### Expected: 201 Created → Location header
+
+POST {{baseUrl}}/api/IngredientCategories HTTP/1.1
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+    "categoryName": "Test Category"
+}
+
+###
+
+### ─── 1.5 POST create category — no auth ─────────────────────────
+### Expected: 401 Unauthorized
+
+POST {{baseUrl}}/api/IngredientCategories HTTP/1.1
+Content-Type: application/json
+
+{
+    "categoryName": "Should Fail"
+}
+
+###
+
+### ─── 1.6 POST create category — user token (not admin) ──────────
+### Expected: 403 Forbidden (user role != Admin)
+
+POST {{baseUrl}}/api/IngredientCategories HTTP/1.1
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{
+    "categoryName": "Should Fail"
+}
+
+###
+
+### ─── 1.7 POST create category — invalid input ──────────────────
+### Expected: 400 Bad Request (empty body)
+
+POST {{baseUrl}}/api/IngredientCategories HTTP/1.1
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+}
+
+###
+
+
+### ═══════════════════════════════════════════════════════════════════
+### 2. INGREDIENTS
+### Controller: IngredientsController
+### Base route: /api/Ingredients
+### ═══════════════════════════════════════════════════════════════════
+
+### ─── 2.1 GET all ingredients — happy path ────────────────────────
+### Requires auth (any role)
+### Expected: 200 OK → array of IngredientDto
+
+GET {{baseUrl}}/api/Ingredients HTTP/1.1
+Authorization: Bearer {{userToken}}
+
+###
+
+### ─── 2.2 GET all ingredients — no auth ──────────────────────────
+### Expected: 401 Unauthorized
+
+GET {{baseUrl}}/api/Ingredients HTTP/1.1
+
+###
+
+### ─── 2.3 GET ingredients by category ─────────────────────────────
+### Expected: 200 OK → filtered array
+
+GET {{baseUrl}}/api/Ingredients/category/1 HTTP/1.1
+Authorization: Bearer {{userToken}}
+
+###
+
+### ─── 2.4 GET ingredient by ID — happy path ──────────────────────
+### Expected: 200 OK → single IngredientDto
+
+GET {{baseUrl}}/api/Ingredients/1 HTTP/1.1
+Authorization: Bearer {{userToken}}
+
+###
+
+### ─── 2.5 GET ingredient by ID — not found ───────────────────────
+### Expected: 404 → { error: "Ingredient with ID 99999 not found" }
+
+GET {{baseUrl}}/api/Ingredients/99999 HTTP/1.1
+Authorization: Bearer {{userToken}}
+
+###
+
+### ─── 2.6 POST create ingredient — happy path ────────────────────
+### Admin only
+### Expected: 201 Created → { ingredientId, message }
+### DTO: CreateIngredientDto { categoryId, ingredientName, price, available }
+
+POST {{baseUrl}}/api/Ingredients HTTP/1.1
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+    "categoryId": 1,
+    "ingredientName": "Test Ingredient",
+    "price": 25.50,
+    "available": true
+}
+
+###
+
+### ─── 2.7 POST create ingredient — no auth ───────────────────────
+### Expected: 401 Unauthorized
+
+POST {{baseUrl}}/api/Ingredients HTTP/1.1
+Content-Type: application/json
+
+{
+    "categoryId": 1,
+    "ingredientName": "Should Fail",
+    "price": 10.00,
+    "available": true
+}
+
+###
+
+### ─── 2.8 POST create ingredient — user token (not admin) ────────
+### Expected: 403 Forbidden
+
+POST {{baseUrl}}/api/Ingredients HTTP/1.1
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{
+    "categoryId": 1,
+    "ingredientName": "Should Fail",
+    "price": 10.00,
+    "available": true
+}
+
+###
+
+### ─── 2.9 POST create ingredient — invalid input ─────────────────
+### Expected: 400 Bad Request (missing required fields)
+
+POST {{baseUrl}}/api/Ingredients HTTP/1.1
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+    "categoryId": 0,
+    "ingredientName": "",
+    "price": -5
+}
+
+###
+
+### ─── 2.10 PATCH toggle availability — happy path ────────────────
+### Admin only — toggles ingredient.Available between true/false
+### Expected: 200 OK → { message, ingredientId, available }
+### Replace {id} with a real ingredient ID
+
+PATCH {{baseUrl}}/api/Ingredients/1/toggle-availability HTTP/1.1
+Authorization: Bearer {{adminToken}}
+
+###
+
+### ─── 2.11 PATCH toggle availability — no auth ──────────────────
+### Expected: 401 Unauthorized
+
+PATCH {{baseUrl}}/api/Ingredients/1/toggle-availability HTTP/1.1
+
+###
+
+### ─── 2.12 PATCH toggle availability — not found ─────────────────
+### Expected: 404 → { error: "Ingredient with ID 99999 not found" }
+
+PATCH {{baseUrl}}/api/Ingredients/99999/toggle-availability HTTP/1.1
+Authorization: Bearer {{adminToken}}
+
+###
+
+
+### ═══════════════════════════════════════════════════════════════════
+### 3. SERVICEABLE LOCATIONS
+### Controller: ServiceableLocationsController
+### Base route: /api/ServiceableLocations
+### ═══════════════════════════════════════════════════════════════════
+
+### ─── 3.1 GET all active locations — happy path ──────────────────
+### AllowAnonymous — public endpoint for delivery address selection
+### Expected: 200 OK → array of ServiceableLocationDto
+
+GET {{baseUrl}}/api/ServiceableLocations HTTP/1.1
+
+###
+
+### ─── 3.2 GET location by ID — happy path ────────────────────────
+### AllowAnonymous
+### Expected: 200 OK → single ServiceableLocationDto
+
+GET {{baseUrl}}/api/ServiceableLocations/1 HTTP/1.1
+
+###
+
+### ─── 3.3 GET location by ID — not found ─────────────────────────
+### Expected: 404 → { error: "Serviceable location not found" }
+
+GET {{baseUrl}}/api/ServiceableLocations/99999 HTTP/1.1
+
+###
+
+### ─── 3.4 GET search by pincode — happy path ─────────────────────
+### AllowAnonymous
+### Expected: 200 OK → filtered array (may be empty)
+
+GET {{baseUrl}}/api/ServiceableLocations/search/pincode/560001 HTTP/1.1
+
+###
+
+### ─── 3.5 GET search by pincode — no results ─────────────────────
+### Expected: 200 OK → empty array []
+
+GET {{baseUrl}}/api/ServiceableLocations/search/pincode/000000 HTTP/1.1
+
+###
+
+### ─── 3.6 GET search by city ──────────────────────────────────────
+### AllowAnonymous
+### Expected: 200 OK → filtered array
+
+GET {{baseUrl}}/api/ServiceableLocations/search/city/Bangalore HTTP/1.1
+
+###
+
+### ─── 3.7 GET free-text search ────────────────────────────────────
+### AllowAnonymous — frontend LocationService.searchServiceableLocations()
+### Expected: 200 OK → filtered array
+
+GET {{baseUrl}}/api/ServiceableLocations/search?query=koramangala HTTP/1.1
+
+###
+
+### ─── 3.8 GET validate location ───────────────────────────────────
+### AllowAnonymous — checks if location is serviceable
+### Expected: 200 OK → ValidateAddressDto
+
+GET {{baseUrl}}/api/ServiceableLocations/validate/1 HTTP/1.1
+
+###
+
+### ─── 3.9 GET admin — all locations (including inactive) ─────────
+### Admin only
+### Expected: 200 OK → full list including IsActive=false
+
+GET {{baseUrl}}/api/ServiceableLocations/admin/all HTTP/1.1
+Authorization: Bearer {{adminToken}}
+
+###
+
+### ─── 3.10 GET admin/all — no auth ───────────────────────────────
+### Expected: 401 Unauthorized
+
+GET {{baseUrl}}/api/ServiceableLocations/admin/all HTTP/1.1
+
+###
+
+
+### ═══════════════════════════════════════════════════════════════════
+### 4. WALLET TRANSACTIONS
+### Controller: WalletTransactionsController
+### Base route: /api/WalletTransactions
+###
+### NOTE: All user endpoints use User.GetSovvaUserId() from JWT.
+###       User must exist in user_auth_mapping (completed registration).
+### ═══════════════════════════════════════════════════════════════════
+
+### ─── 4.1 GET my-balance — happy path ─────────────────────────────
+### Authenticated user
+### Expected: 200 OK → { balance: decimal, userId: int }
+
+GET {{baseUrl}}/api/WalletTransactions/my-balance HTTP/1.1
+Authorization: Bearer {{userToken}}
+
+###
+
+### ─── 4.2 GET my-balance — no auth ───────────────────────────────
+### Expected: 401 Unauthorized
+
+GET {{baseUrl}}/api/WalletTransactions/my-balance HTTP/1.1
+
+###
+
+### ─── 4.3 GET my-transactions — happy path ───────────────────────
+### Authenticated user
+### Expected: 200 OK → array of WalletTransactionDto
+
+GET {{baseUrl}}/api/WalletTransactions/my-transactions HTTP/1.1
+Authorization: Bearer {{userToken}}
+
+###
+
+### ─── 4.4 GET my-transactions — no auth ──────────────────────────
+### Expected: 401 Unauthorized
+
+GET {{baseUrl}}/api/WalletTransactions/my-transactions HTTP/1.1
+
+###
+
+### ─── 4.5 POST topup — happy path ─────────────────────────────────
+### Authenticated user
+### Expected: 200 OK → WalletTransactionDto
+### DTO: WalletTopUpDto { amount (1-10000), description? }
+
+POST {{baseUrl}}/api/WalletTransactions/topup HTTP/1.1
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{
+    "amount": 500.00,
+    "description": "Test top-up"
+}
+
+###
+
+### ─── 4.6 POST topup — no auth ───────────────────────────────────
+### Expected: 401 Unauthorized
+
+POST {{baseUrl}}/api/WalletTransactions/topup HTTP/1.1
+Content-Type: application/json
+
+{
+    "amount": 500.00
+}
+
+###
+
+### ─── 4.7 POST topup — invalid: zero amount ──────────────────────
+### Expected: 400 → { error: "Amount must be greater than 0" }
+
+POST {{baseUrl}}/api/WalletTransactions/topup HTTP/1.1
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{
+    "amount": 0
+}
+
+###
+
+### ─── 4.8 POST topup — invalid: negative amount ──────────────────
+### Expected: 400 → { error: "Amount must be greater than 0" }
+
+POST {{baseUrl}}/api/WalletTransactions/topup HTTP/1.1
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{
+    "amount": -100
+}
+
+###
+
+### ─── 4.9 POST topup — invalid: exceeds max ──────────────────────
+### Expected: 400 Bad Request (FluentValidation: Range 1-10000)
+
+POST {{baseUrl}}/api/WalletTransactions/topup HTTP/1.1
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+
+{
+    "amount": 99999
+}
+
+###
+
+### ─── 4.10 GET check-balance — happy path ─────────────────────────
+### Authenticated user — checks if balance >= amount
+### Expected: 200 OK → { hasSufficientBalance, currentBalance, requiredAmount, shortfall }
+
+GET {{baseUrl}}/api/WalletTransactions/check-balance?amount=500 HTTP/1.1
+Authorization: Bearer {{userToken}}
+
+###
+
+### ─── 4.11 GET check-balance — no auth ───────────────────────────
+### Expected: 401 Unauthorized
+
+GET {{baseUrl}}/api/WalletTransactions/check-balance?amount=500 HTTP/1.1
+
+###
+
+### ─── 4.12 GET check-balance — large amount (insufficient) ───────
+### Expected: 200 OK → { hasSufficientBalance: false, shortfall: > 0 }
+
+GET {{baseUrl}}/api/WalletTransactions/check-balance?amount=999999 HTTP/1.1
+Authorization: Bearer {{userToken}}
+
+###
+
+### ─── 4.13 GET check-balance — zero amount ───────────────────────
+### Expected: 200 OK → { hasSufficientBalance: true, shortfall: 0 }
+
+GET {{baseUrl}}/api/WalletTransactions/check-balance?amount=0 HTTP/1.1
+Authorization: Bearer {{userToken}}
+
+###
+
+
+### ═══════════════════════════════════════════════════════════════════
+### 5. ADMIN WALLET ENDPOINTS
+### Require Admin JWT
+### ═══════════════════════════════════════════════════════════════════
+
+### ─── 5.1 GET admin/all — all transactions ───────────────────────
+### Admin only
+### Expected: 200 OK → array of WalletTransactionDto
+
+GET {{baseUrl}}/api/WalletTransactions/admin/all HTTP/1.1
+Authorization: Bearer {{adminToken}}
+
+###
+
+### ─── 5.2 GET admin/all — no auth ────────────────────────────────
+### Expected: 401 Unauthorized
+
+GET {{baseUrl}}/api/WalletTransactions/admin/all HTTP/1.1
+
+###
+
+### ─── 5.3 GET admin/all — user token (not admin) ─────────────────
+### Expected: 403 Forbidden
+
+GET {{baseUrl}}/api/WalletTransactions/admin/all HTTP/1.1
+Authorization: Bearer {{userToken}}
+
+###
+
+### ─── 5.4 GET admin user balance ─────────────────────────────────
+### Admin only — get specific user's balance
+### Expected: 200 OK → { userId, balance }
+
+GET {{baseUrl}}/api/WalletTransactions/admin/user/1/balance HTTP/1.1
+Authorization: Bearer {{adminToken}}
+
+###
+
+### ─── 5.5 POST admin credit user wallet ──────────────────────────
+### Admin only — top up another user's wallet
+### Expected: 200 OK → WalletTransactionDto
+
+POST {{baseUrl}}/api/WalletTransactions/admin/user/1/credit HTTP/1.1
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+    "amount": 100.00,
+    "description": "Admin credit for testing"
+}
+
+###
+
+### ─── 5.6 POST admin credit — invalid amount ─────────────────────
+### Expected: 400 → { error: "Amount must be greater than 0" }
+
+POST {{baseUrl}}/api/WalletTransactions/admin/user/1/credit HTTP/1.1
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+    "amount": 0
+}
+
+###

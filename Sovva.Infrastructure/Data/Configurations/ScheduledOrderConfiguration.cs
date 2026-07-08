@@ -11,6 +11,9 @@ namespace Sovva.Infrastructure.Data.Configurations
         {
             builder.HasKey(e => e.ScheduledOrderId);
 
+            // Soft delete query filter
+            builder.HasQueryFilter(e => e.DeletedAt == null);
+
             builder.Property(e => e.MealName).IsRequired().HasMaxLength(255);
             builder.Property(e => e.DeliveryTimeSlot).IsRequired().HasMaxLength(50);
             builder.Property(e => e.TotalPrice).HasColumnType("decimal(12,2)");
@@ -58,6 +61,10 @@ namespace Sovva.Infrastructure.Data.Configurations
 
             builder.HasIndex(e => new { e.ScheduledFor, e.OrderStatus })
                 .HasDatabaseName("IX_ScheduledOrders_ScheduledFor_Status");
+
+            builder.HasIndex(e => new { e.ScheduledFor, e.IsProcessedToOrder })
+                .HasFilter("\"IsProcessedToOrder\" = false")
+                .HasDatabaseName("IX_ScheduledOrders_ScheduledFor_Unprocessed");
 
             // Unique: one scheduled order per subscription per day
             builder.HasIndex(e => new { e.SubscriptionId, e.ScheduledFor })

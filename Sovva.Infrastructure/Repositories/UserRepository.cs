@@ -36,8 +36,10 @@ namespace Sovva.Infrastructure.Repositories
 
         public async Task<User?> GetByEmailAsync(string email)
         {
-            var lowerEmail = email.ToLower();
-            return await _context.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == lowerEmail);
+            // ILike is case-insensitive and SARGable when a citext or functional index exists
+            return await _context.Users
+                .AsNoTracking()
+                .FirstOrDefaultAsync(u => EF.Functions.ILike(u.Email, email));
         }
 
         public async Task<IEnumerable<User>> GetAllAsync(int page = 1, int pageSize = 50)
@@ -81,13 +83,6 @@ namespace Sovva.Infrastructure.Repositories
                 .Include(u => u.AuthMapping)
                 .FirstOrDefaultAsync(u => u.AuthMapping != null && u.AuthMapping.AuthId == authId);
 
-            if (user != null)
-            {
-                user.WalletBalance = await _context.WalletTransactions
-                    .Where(wt => wt.UserId == user.UserId)
-                    .SumAsync(wt => (decimal?)(wt.Type == WalletConstants.Credit ? wt.Amount : -wt.Amount)) ?? 0m;
-            }
-
             return user;
         }
 
@@ -97,13 +92,6 @@ namespace Sovva.Infrastructure.Repositories
                 .IgnoreQueryFilters()
                 .Include(u => u.AuthMapping)
                 .FirstOrDefaultAsync(u => u.AuthMapping != null && u.AuthMapping.AuthId == authId);
-
-            if (user != null)
-            {
-                user.WalletBalance = await _context.WalletTransactions
-                    .Where(wt => wt.UserId == user.UserId)
-                    .SumAsync(wt => (decimal?)(wt.Type == WalletConstants.Credit ? wt.Amount : -wt.Amount)) ?? 0m;
-            }
 
             return user;
         }

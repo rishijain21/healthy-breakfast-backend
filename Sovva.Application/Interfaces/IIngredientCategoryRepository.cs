@@ -7,6 +7,7 @@ namespace Sovva.Application.Interfaces
     {
         // ADD THIS LINE ⬇️ (This fixes the CS1061 error)
         Task<IEnumerable<IngredientCategory>> GetAllAsync();
+        Task<IEnumerable<IngredientCategory>> GetAllWithIngredientsAsync();
         
         // Your existing methods
         Task AddAsync(IngredientCategory entity);

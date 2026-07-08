@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using Moq;
 using Sovva.Application.DTOs;
 using Sovva.Application.Exceptions;
+using Sovva.Application.Helpers;
 using Sovva.Application.Interfaces;
 using Sovva.Application.Services;
 using Sovva.Domain.Constants;
@@ -22,6 +23,9 @@ namespace Sovva.Application.Tests.Services
         private readonly Mock<IUserRepository> _userRepoMock;
         private readonly Mock<IUnitOfWork> _unitOfWorkMock;
         private readonly Mock<ILogger<WalletTransactionService>> _loggerMock;
+        private readonly Mock<ICacheService> _cacheServiceMock;
+        private readonly Mock<IFailedOrderAttemptRepository> _failedOrderAttemptRepoMock;
+        private readonly Mock<IAppTimeProvider> _timeMock;
         private readonly WalletTransactionService _service;
 
         public WalletTransactionServiceTests()
@@ -30,6 +34,9 @@ namespace Sovva.Application.Tests.Services
             _userRepoMock = new Mock<IUserRepository>();
             _unitOfWorkMock = new Mock<IUnitOfWork>();
             _loggerMock = new Mock<ILogger<WalletTransactionService>>();
+            _cacheServiceMock = new Mock<ICacheService>();
+            _failedOrderAttemptRepoMock = new Mock<IFailedOrderAttemptRepository>();
+            _timeMock = new Mock<IAppTimeProvider>();
 
             // Mock ExecuteInTransactionAsync to execute the callback immediately and propagate its Task
             _unitOfWorkMock
@@ -40,7 +47,10 @@ namespace Sovva.Application.Tests.Services
                 _walletTxRepoMock.Object,
                 _userRepoMock.Object,
                 _unitOfWorkMock.Object,
-                _loggerMock.Object
+                _loggerMock.Object,
+                _cacheServiceMock.Object,
+                _failedOrderAttemptRepoMock.Object,
+                _timeMock.Object
             );
         }
 
@@ -255,6 +265,11 @@ namespace Sovva.Application.Tests.Services
         [Fact]
         public async Task TopUpWalletAsync_ShouldThrowInvalidOperationException_WhenAmountTooLow()
         {
+            // Arrange
+            var user = new User { UserId = 1, Name = "John Doe", Email = "john@example.com" };
+            _userRepoMock.Setup(r => r.GetByIdAsync(1))
+                .ReturnsAsync(user);
+
             // Act & Assert
             var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _service.TopUpWalletAsync(1, 10m));
             ex.Message.Should().Contain("Minimum top-up amount is");
@@ -264,6 +279,10 @@ namespace Sovva.Application.Tests.Services
         public async Task TopUpWalletAsync_ShouldThrowInvalidOperationException_WhenExceedsMaxBalance()
         {
             // Arrange
+            var user = new User { UserId = 1, Name = "John Doe", Email = "john@example.com" };
+            _userRepoMock.Setup(r => r.GetByIdAsync(1))
+                .ReturnsAsync(user);
+
             _walletTxRepoMock.Setup(r => r.GetUserBalanceAsync(1))
                 .ReturnsAsync(WalletConstants.MaxWalletBalance - 10m);
 
@@ -300,7 +319,7 @@ namespace Sovva.Application.Tests.Services
                 .ReturnsAsync(createdTx);
 
             // Act
-            var result = await _service.AdminCreditWalletAsync(1, 15m, "Refund");
+            var result = await _service.AdminCreditWalletAsync(1, 15m, "Refund", 99);
 
             // Assert
             result.Should().NotBeNull();

@@ -4,9 +4,11 @@ using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using Sovva.Domain.Enums;
 
+using Sovva.Domain.Interfaces;
+
 namespace Sovva.Domain.Entities
 {
-    public class ScheduledOrder : BaseEntity
+    public class ScheduledOrder : BaseEntity, ISoftDeletable
     {
         [Key]
         public int ScheduledOrderId { get; set; }
@@ -56,5 +58,7 @@ namespace Sovva.Domain.Entities
         // Navigation properties
         public User User { get; set; } = null!;
         public ICollection<ScheduledOrderIngredient> Ingredients { get; set; } = new List<ScheduledOrderIngredient>();
+
+        public DateTime? DeletedAt { get; set; }
     }
 }

@@ -14,6 +14,7 @@ namespace Sovva.Application.DTOs
         public DateTime UpdatedAt { get; set; }
         public DateTime? ScheduledFor { get; set; }
         public string? MealName { get; set; }
+        public string? MealImageUrl { get; set; }
         
         // Computed nutritional info
         public NutritionalInfoDto NutritionalInfo { get; set; } = new();

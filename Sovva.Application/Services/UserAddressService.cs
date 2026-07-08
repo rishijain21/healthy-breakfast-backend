@@ -58,8 +58,7 @@ namespace Sovva.Application.Services
                 AdditionalInstructions = dto.AdditionalInstructions,
                 Label = dto.Label,
                 IsPrimary = dto.IsPrimary,
-                IsActive = true,
-                CreatedAt = DateTime.UtcNow
+                IsActive = true
             };
 
             if (dto.IsPrimary)
@@ -115,7 +114,7 @@ namespace Sovva.Application.Services
                 await _addressRepository.SetPrimaryAddressAsync(userId, addressId);
             }
 
-            address.UpdatedAt = DateTime.UtcNow;
+
 
             var updated = await _addressRepository.UpdateAsync(address);
             

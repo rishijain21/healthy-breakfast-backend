@@ -20,9 +20,7 @@ namespace Sovva.Application.Services
             var entity = new MealOptionIngredient
             {
                 MealOptionId = dto.MealOptionId,
-                IngredientId = dto.IngredientId,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
+                IngredientId = dto.IngredientId
             };
 
             await _repository.AddAsync(entity);

@@ -40,6 +40,9 @@ namespace Sovva.Infrastructure.Data
         // ✅ Location feature tables
         public DbSet<ServiceableLocation> ServiceableLocations { get; set; }
         public DbSet<UserAddress> UserAddresses { get; set; }
+        
+        // Dead letter queue
+        public DbSet<FailedOrderAttempt> FailedOrderAttempts { get; set; }
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {
@@ -85,7 +88,6 @@ namespace Sovva.Infrastructure.Data
                     Name          = "TestUser",
                     Email         = "testuser@sovva.com",
                     Phone         = "1234567890",
-                    WalletBalance = 625,
                     Role          = UserRole.Customer,
                     CreatedAt     = seedDate,
                     UpdatedAt     = seedDate

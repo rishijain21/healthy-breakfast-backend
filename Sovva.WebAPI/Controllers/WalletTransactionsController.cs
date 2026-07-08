@@ -15,15 +15,18 @@ namespace Sovva.WebAPI.Controllers
     {
         private readonly IWalletTransactionService _walletTransactionService;
         private readonly ICurrentUserService _currentUserService;
+        private readonly IDashboardService _dashboardService;
         private readonly ILogger<WalletTransactionsController> _logger;
 
         public WalletTransactionsController(
             IWalletTransactionService walletTransactionService,
             ICurrentUserService currentUserService,
+            IDashboardService dashboardService,
             ILogger<WalletTransactionsController> logger)
         {
             _walletTransactionService = walletTransactionService;
             _currentUserService = currentUserService;
+            _dashboardService = dashboardService;
             _logger = logger;
         }
 
@@ -44,7 +47,7 @@ namespace Sovva.WebAPI.Controllers
 
             var balance = await _walletTransactionService.GetWalletBalanceAsync(userId.Value);
             
-            _logger.LogInformation("✅ WALLET: Balance retrieved: {Balance} for user {UserId}", balance, userId);
+            _logger.LogInformation("WALLET: Balance retrieved for user {UserId}", userId);
             return Ok(ApiResponse.Ok(new { balance, userId }));
         }
 
@@ -92,6 +95,10 @@ namespace Sovva.WebAPI.Controllers
             }
 
             var transaction = await _walletTransactionService.TopUpWalletAsync(userId.Value, topUpDto);
+            
+            // ✅ FIX: Invalidate dashboard cache so top-up is instantly visible
+            await _dashboardService.InvalidateDashboardCacheAsync(userId.Value);
+            
             return Ok(ApiResponse.Ok(transaction));
         }
 
@@ -111,22 +118,9 @@ namespace Sovva.WebAPI.Controllers
             if (pageSize > 100)
                 return BadRequest(ApiResponse.Fail("BAD_REQUEST", "Maximum page size is 100"));
 
-            // Reuse the existing paginated method — admin can view any user's transactions
-            // For "all transactions" admin view, we use a dedicated service method
-            var transactions = await _walletTransactionService.GetAllTransactionsAsync();
+            var result = await _walletTransactionService.GetAllTransactionsPagedAsync(page, pageSize);
             
-            // Apply pagination in-memory for backward compatibility
-            // TODO: Add a proper paginated GetAllAsync to the repository
-            var paged = transactions.Skip((page - 1) * pageSize).Take(pageSize).ToList();
-            var totalCount = transactions.Count();
-            
-            return Ok(ApiResponse.Ok(new PagedResult<WalletTransactionDto>
-            {
-                Items = paged,
-                TotalCount = totalCount,
-                Page = page,
-                PageSize = pageSize
-            }));
+            return Ok(ApiResponse.Ok(result));
         }
 
         /// <summary>
@@ -167,10 +161,15 @@ namespace Sovva.WebAPI.Controllers
                 return BadRequest(ApiResponse.Fail("BAD_REQUEST", "Amount must be greater than 0"));
             }
 
+            var adminUserId = await _currentUserService.GetCurrentUserIdAsync();
+            if (adminUserId == null)
+                return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
+
             var transaction = await _walletTransactionService.AdminCreditWalletAsync(
                 userId, 
                 dto.Amount, 
-                dto.Description ?? $"Admin credit of ₹{dto.Amount}"
+                dto.Description ?? $"Admin credit of ₹{dto.Amount}",
+                adminUserId.Value
             );
             return Ok(ApiResponse.Ok(transaction));
         }

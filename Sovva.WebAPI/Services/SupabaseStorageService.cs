@@ -75,10 +75,24 @@ namespace Sovva.WebAPI.Services
             if (!_isConfigured)
                 throw new InvalidOperationException("SupabaseStorageService is not configured: Supabase:ServiceRoleKey is missing. Storage features are unavailable.");
 
-            // Ensure we only pass relative path inside bucket
-            var cleanPath = filePath.StartsWith("meal-images/")
-                ? filePath.Replace("meal-images/", "")
-                : filePath;
+            if (string.IsNullOrWhiteSpace(filePath))
+                return null;
+
+            // If external URL (not hosted in our meal-images bucket), return as-is
+            if (filePath.StartsWith("http", StringComparison.OrdinalIgnoreCase) && !filePath.Contains("meal-images/"))
+            {
+                return filePath;
+            }
+
+            // Extract relative path after meal-images/ and strip query params (?token=...)
+            var idx = filePath.IndexOf("meal-images/", StringComparison.OrdinalIgnoreCase);
+            var cleanPath = idx >= 0 ? filePath.Substring(idx + "meal-images/".Length) : filePath;
+            var queryIdx = cleanPath.IndexOf('?');
+            if (queryIdx >= 0)
+            {
+                cleanPath = cleanPath.Substring(0, queryIdx);
+            }
+
             // P2-1 FIX: Use configured _storageUrl instead of hardcoded project URL
             var requestUrl =
                 $"{_storageUrl}/object/sign/meal-images/{cleanPath}";

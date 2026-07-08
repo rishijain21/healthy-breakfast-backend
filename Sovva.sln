@@ -13,6 +13,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sovva.WebAPI", "Sovva.WebAP
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sovva.Application.Tests", "Sovva.Application.Tests\Sovva.Application.Tests.csproj", "{9BCC4EF4-7077-4AD9-9D13-38D232E392C0}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sovva.IntegrationTests", "Sovva.IntegrationTests\Sovva.IntegrationTests.csproj", "{3D1241A1-3719-4F37-8FD2-2076C7D04F9C}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -42,5 +44,9 @@ Global
 		{9BCC4EF4-7077-4AD9-9D13-38D232E392C0}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{9BCC4EF4-7077-4AD9-9D13-38D232E392C0}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{9BCC4EF4-7077-4AD9-9D13-38D232E392C0}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3D1241A1-3719-4F37-8FD2-2076C7D04F9C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3D1241A1-3719-4F37-8FD2-2076C7D04F9C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3D1241A1-3719-4F37-8FD2-2076C7D04F9C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3D1241A1-3719-4F37-8FD2-2076C7D04F9C}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

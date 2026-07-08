@@ -6,6 +6,7 @@ namespace Sovva.Application.Interfaces
     public interface IWalletTransactionRepository
     {
         Task<IEnumerable<WalletTransaction>> GetAllAsync();
+        Task<(IEnumerable<WalletTransaction> Items, int TotalCount)> GetAllPagedAsync(int page, int pageSize);
         Task<WalletTransaction?> GetByIdAsync(long transactionId);
         Task<(IEnumerable<WalletTransaction> Items, int TotalCount)> GetByUserIdAsync(int userId, int page, int pageSize);
         Task<IEnumerable<WalletTransaction>> GetByUserIdAndTypeAsync(int userId, string type);
@@ -36,7 +37,7 @@ namespace Sovva.Application.Interfaces
         /// Returns true if the debit was recorded (balance was sufficient), false if insufficient.
         /// This is the ONLY safe way to deduct wallet balance — eliminates race conditions.
         /// </summary>
-        Task<bool> AtomicDebitAsync(int userId, decimal amount, string description, int? scheduledOrderId = null);
+        Task<(bool Success, long? TransactionId)> AtomicDebitAsync(int userId, decimal amount, string description, int? scheduledOrderId = null);
 
         /// <summary>
         /// Atomically inserts a Credit record. Returns true if successful.

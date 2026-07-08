@@ -18,8 +18,6 @@ namespace Sovva.Infrastructure.Data.Configurations
                 .HasConversion<string>()
                 .IsRequired()
                 .HasMaxLength(50);
-            builder.Property(e => e.WalletBalance)
-                .HasColumnType("decimal(12,2)");
 
             builder.Property(e => e.Role)
                 .HasConversion<string>()
@@ -29,7 +27,7 @@ namespace Sovva.Infrastructure.Data.Configurations
             // Unique indexes
             builder.HasIndex(e => e.Email)
                 .IsUnique()
-                .HasDatabaseName("IX_Users_Email");
+                .HasDatabaseName("IX_Users_Email_Lower");
 
             builder.HasIndex(e => e.Phone)
                 .IsUnique()
@@ -44,8 +42,7 @@ namespace Sovva.Infrastructure.Data.Configurations
                 t.HasCheckConstraint("CK_Users_AccountStatus",
                     "\"AccountStatus\" IN ('Active', 'Deactivated', 'Deleted')");
 
-                t.HasCheckConstraint("CK_Users_WalletBalance",
-                    "\"WalletBalance\" >= 0");
+
             });
 
             // Soft delete — filtered index so queries on active users are fast

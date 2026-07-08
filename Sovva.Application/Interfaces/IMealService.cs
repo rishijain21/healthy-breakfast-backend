@@ -1,5 +1,6 @@
 using Sovva.Application.DTOs;
 using System.Threading.Tasks;
+using Sovva.Domain.Entities;
 
 namespace Sovva.Application.Interfaces
 {
@@ -38,23 +39,26 @@ namespace Sovva.Application.Interfaces
         /// Calculates only the price portion of a set of ingredients.
         /// </summary>
         /// <param name="ingredients">List of selected ingredients and quantities.</param>
+        /// <param name="ingredientMap">Prefetched ingredient map.</param>
         /// <returns>The sum of ingredient prices.</returns>
-        Task<decimal> GetIngredientsTotalPriceAsync(List<SelectedIngredientDto> ingredients);
+        Task<decimal> GetIngredientsTotalPriceAsync(List<SelectedIngredientDto> ingredients, IDictionary<int, Ingredient> ingredientMap);
 
         /// <summary>
         /// Aggregates nutritional data (calories, protein, fiber) for a set of ingredients.
         /// </summary>
         /// <param name="ingredients">List of selected ingredients.</param>
+        /// <param name="ingredientMap">Prefetched ingredient map.</param>
         /// <returns>A tuple containing aggregated nutrition values.</returns>
-        Task<(int calories, decimal protein, decimal fiber)> GetNutritionalSummaryAsync(List<SelectedIngredientDto> ingredients);
+        Task<(int calories, decimal protein, decimal fiber)> GetNutritionalSummaryAsync(List<SelectedIngredientDto> ingredients, IDictionary<int, Ingredient> ingredientMap);
 
         /// <summary>
         /// Validates that the selected ingredients are valid for the specified meal template.
         /// </summary>
         /// <param name="mealId">The template meal ID.</param>
         /// <param name="ingredients">The user's selection.</param>
+        /// <param name="ingredientMap">Prefetched ingredient map.</param>
         /// <returns>True if the selection is valid, false otherwise.</returns>
-        Task<bool> ValidateIngredientSelectionAsync(int mealId, List<SelectedIngredientDto> ingredients);
+        Task<bool> ValidateIngredientSelectionAsync(int mealId, List<SelectedIngredientDto> ingredients, IDictionary<int, Ingredient> ingredientMap);
         
         /// <summary>
         /// Retrieves all meals for the admin dashboard without pagination.

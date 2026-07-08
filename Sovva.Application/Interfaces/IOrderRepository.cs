@@ -11,6 +11,7 @@ namespace Sovva.Application.Interfaces
         Task<Order?> GetByIdAsync(long id);
         void Update(Order order);
         Task<IEnumerable<Order>> GetByUserIdAsync(int userId);
+        Task<(IEnumerable<Order> Items, int TotalCount)> GetByUserIdPagedAsync(int userId, int page, int pageSize);
         
         // ✅ FIXED: Changed from string to OrderStatus enum + added pagination
         Task<IEnumerable<Order>> GetByStatusAsync(OrderStatus status, int page = 1, int pageSize = 50);
@@ -20,6 +21,7 @@ namespace Sovva.Application.Interfaces
 
         // ✅ NEW: Enhanced methods with eager loading
         Task<IEnumerable<Order>> GetUserOrdersWithDetailsAsync(int userId);
+        Task<(IEnumerable<Order> Items, int TotalCount)> GetUserOrdersWithDetailsPagedAsync(int userId, int page, int pageSize);
         Task<IEnumerable<Order>> GetAllOrdersWithDetailsAsync(int page = 1, int pageSize = 50);
 
         /// </summary>

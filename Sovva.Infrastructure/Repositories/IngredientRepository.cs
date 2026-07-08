@@ -75,20 +75,18 @@ namespace Sovva.Infrastructure.Repositories
 
         // ==================== UPDATE OPERATIONS ====================
         
-        public Task UpdateIngredientAsync(Ingredient ingredient)
+        public async Task UpdateIngredientAsync(Ingredient ingredient)
         {
             _context.Ingredients.Update(ingredient);
-            _cacheService.RemoveAsync(CacheKeyAll).GetAwaiter().GetResult();
-            return Task.CompletedTask;
+            await _cacheService.RemoveAsync(CacheKeyAll);
         }
 
         // ==================== DELETE OPERATIONS ====================
         
-        public Task DeleteIngredientAsync(Ingredient ingredient)
+        public async Task DeleteIngredientAsync(Ingredient ingredient)
         {
             _context.Ingredients.Remove(ingredient);
-            _cacheService.RemoveAsync(CacheKeyAll).GetAwaiter().GetResult();
-            return Task.CompletedTask;
+            await _cacheService.RemoveAsync(CacheKeyAll);
         }
 
         // ==================== CHECK OPERATIONS ====================

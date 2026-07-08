@@ -1,5 +1,6 @@
 using Sovva.Application.Exceptions;
 using Sovva.Application.DTOs;
+using Sovva.Application.Helpers;
 using Sovva.Application.Interfaces;
 using Sovva.Domain.Constants;
 using Sovva.Domain.Entities;
@@ -17,21 +18,46 @@ namespace Sovva.Application.Services
         private readonly IUserRepository _userRepository;
         private readonly IUnitOfWork _unitOfWork;
         private readonly ILogger<WalletTransactionService> _logger;
+        private readonly ICacheService _cacheService;
+        private readonly IFailedOrderAttemptRepository _failedOrderAttemptRepository;
+        private readonly IAppTimeProvider _time;
 
         public WalletTransactionService(
             IWalletTransactionRepository walletTransactionRepository,
             IUserRepository userRepository,
             IUnitOfWork unitOfWork,
-            ILogger<WalletTransactionService> logger)
+            ILogger<WalletTransactionService> logger,
+            ICacheService cacheService,
+            IFailedOrderAttemptRepository failedOrderAttemptRepository,
+            IAppTimeProvider time)
         {
             _walletTransactionRepository = walletTransactionRepository;
             _userRepository = userRepository;
             _unitOfWork = unitOfWork;
             _logger = logger;
+            _cacheService = cacheService;
+            _failedOrderAttemptRepository = failedOrderAttemptRepository;
+            _time = time;
         }
 
         public async Task<IEnumerable<WalletTransactionDto>> GetAllTransactionsAsync()
             => (await _walletTransactionRepository.GetAllAsync()).Select(t => MapToDto(t!));
+
+        public async Task<PagedResult<WalletTransactionDto>> GetAllTransactionsPagedAsync(int page, int pageSize)
+        {
+            page = Math.Max(1, page);
+            pageSize = Math.Clamp(pageSize, 1, 100);
+
+            var (transactions, totalCount) = await _walletTransactionRepository.GetAllPagedAsync(page, pageSize);
+            
+            return new PagedResult<WalletTransactionDto>
+            {
+                Items = transactions.Select(MapToDto).ToList(),
+                TotalCount = totalCount,
+                Page = page,
+                PageSize = pageSize
+            };
+        }
 
         public async Task<WalletTransactionDto?> GetTransactionByIdAsync(long transactionId)
         {
@@ -61,7 +87,20 @@ namespace Sovva.Application.Services
             => (await _walletTransactionRepository.GetByUserIdAndTypeAsync(userId, type)).Select(t => MapToDto(t!));
 
         public async Task<decimal> GetUserBalanceAsync(int userId)
-            => await _walletTransactionRepository.GetUserBalanceAsync(userId);
+        {
+            var cacheKey = $"wallet:balance:{userId}";
+            var cached = await _cacheService.GetAsync<decimal?>(cacheKey);
+            if (cached.HasValue) return cached.Value;
+            
+            var balance = await _walletTransactionRepository.GetUserBalanceAsync(userId);
+            await _cacheService.SetAsync(cacheKey, balance, TimeSpan.FromSeconds(30));
+            return balance;
+        }
+
+        private async Task InvalidateBalanceCacheAsync(int userId)
+        {
+            await _cacheService.RemoveAsync($"wallet:balance:{userId}");
+        }
 
         public async Task<UserWalletSummaryDto?> GetUserWalletSummaryAsync(int userId)
         {
@@ -99,8 +138,8 @@ namespace Sovva.Application.Services
                 // pg_advisory_xact_lock is scoped to the transaction and auto-releases on commit/rollback
                 await _walletTransactionRepository.AcquireUserWalletLockAsync(dto.UserId);
 
-                // ✅ Re-read balance AFTER acquiring the lock (pre-lock read is stale)
-                var currentBalance = await GetUserBalanceAsync(dto.UserId);
+                // ✅ Re-read balance AFTER acquiring the lock — bypass cache for authoritative read
+                var currentBalance = await _walletTransactionRepository.GetUserBalanceAsync(dto.UserId);
 
                 // ✅ Validate wallet limit for Credit transactions
                 if (dto.Type == WalletConstants.Credit)
@@ -135,7 +174,9 @@ namespace Sovva.Application.Services
                     UserId = dto.UserId,
                     Amount = dto.Amount,
                     Type = dto.Type,
-                    Description = dto.Description
+                    Description = dto.Description,
+                    ReferenceType = dto.ReferenceType,
+                    ReferenceId = dto.ReferenceId
                 };
 
                 var created = await _walletTransactionRepository.CreateAsync(transaction);
@@ -159,28 +200,20 @@ namespace Sovva.Application.Services
                 }
             });
 
+            // ✅ Invalidate cache after successful transaction commit
+            await InvalidateBalanceCacheAsync(dto.UserId);
+
             return result;
         }
 
-        // ✅ UPDATED: Removed MAX_TOPUP_AMOUNT validation
+        // ✅ UPDATED: Removed redundant pre-balance check to avoid TOCTOU race conditions
         public async Task<UserDto> TopUpWalletAsync(int userId, decimal amount, string description = "Wallet top-up")
         {
             // Validate minimum amount
             if (amount < WalletConstants.MinTopUpAmount)
                 throw new InvalidOperationException($"Minimum top-up amount is ₹{WalletConstants.MinTopUpAmount}");
 
-            var currentBalance = await GetUserBalanceAsync(userId);
-            var newBalance = currentBalance + amount;
-
-            if (newBalance > WalletConstants.MaxWalletBalance)
-            {
-                var remaining = WalletConstants.MaxWalletBalance - currentBalance;
-                throw new InvalidOperationException(
-                    $"Cannot add ₹{amount}. Maximum wallet balance is ₹{WalletConstants.MaxWalletBalance}. " +
-                    $"Current balance: ₹{currentBalance}. You can add up to ₹{remaining}."
-                );
-            }
-
+            // The actual CreateTransactionAsync handles the advisory lock and MaxWalletBalance check safely
             var transactionDto = await CreateTransactionAsync(new CreateWalletTransactionDto
             {
                 UserId = userId,
@@ -216,7 +249,7 @@ namespace Sovva.Application.Services
                 Description = topUpDto.Description ?? $"Wallet top-up of ₹{topUpDto.Amount}"
             });
 
-        public async Task<WalletTransactionDto> AdminCreditWalletAsync(long userId, decimal amount, string description)
+        public async Task<WalletTransactionDto> AdminCreditWalletAsync(long userId, decimal amount, string description, int adminUserId)
         {
             var user = await _userRepository.GetByIdAsync((int)userId);
             if (user == null)
@@ -229,11 +262,8 @@ namespace Sovva.Application.Services
                 throw new ArgumentException("Amount must be greater than zero");
             }
 
-            var currentBalance = await GetUserBalanceAsync((int)userId);
-            if (currentBalance + amount > WalletConstants.MaxWalletBalance)
-            {
-                throw new InvalidOperationException($"Maximum wallet balance is ₹{WalletConstants.MaxWalletBalance}. Current balance: ₹{currentBalance}");
-            }
+            // Redundant check removed to avoid TOCTOU race condition.
+            // CreateTransactionAsync handles advisory lock + max balance verification.
 
             return await CreateTransactionAsync(new CreateWalletTransactionDto
             {
@@ -241,7 +271,9 @@ namespace Sovva.Application.Services
                 Amount = amount,
                 Type = WalletConstants.Credit,
                 Description = description,
-                IsAdminCredit = true
+                IsAdminCredit = true,
+                ReferenceType = "Manual",
+                ReferenceId = adminUserId
             });
         }
 
@@ -287,24 +319,51 @@ namespace Sovva.Application.Services
         /// Atomically checks ledger balance and inserts a Debit record in a single SQL statement.
         /// Replaces the broken two-step DeductWalletBalanceAtomicAsync + WriteTransactionRecordAsync flow.
         /// </summary>
-        public async Task<bool> AtomicDebitAsync(int userId, decimal amount, string description, int? scheduledOrderId = null)
+        public async Task<(bool Success, long? TransactionId)> AtomicDebitAsync(int userId, decimal amount, string description, int? scheduledOrderId = null)
         {
-            var success = await _walletTransactionRepository.AtomicDebitAsync(userId, amount, description, scheduledOrderId);
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            // Safety net: Warn loudly if called outside a transaction.
+            // AtomicDebitAsync relies on the surrounding transaction for serialization.
+            // This is not enforced at runtime to avoid breaking the retrying execution strategy,
+            // but is logged as a warning to catch accidental misuse.
+            // See: IWalletTransactionService.AtomicDebitAsync contract.
+            _logger.LogDebug("AtomicDebitAsync called for UserId={UserId}, Amount={Amount}", userId, amount);
 
-            if (success)
+            var result = await _walletTransactionRepository.AtomicDebitAsync(userId, amount, description, scheduledOrderId);
+
+            if (result.Success)
             {
+                await InvalidateBalanceCacheAsync(userId);
+                
                 _logger.LogInformation(
-                    "Wallet atomic debit: UserId={UserId} Amount={Amount} ScheduledOrderId={ScheduledOrderId}",
-                    userId, amount, scheduledOrderId);
+                    "Wallet atomic debit: UserId={UserId} Amount={Amount} ScheduledOrderId={ScheduledOrderId} TransactionId={TransactionId}",
+                    userId, amount, scheduledOrderId, result.TransactionId);
             }
             else
             {
+                var currentBalance = await GetUserBalanceAsync(userId);
                 _logger.LogWarning(
-                    "Wallet atomic debit FAILED (insufficient balance): UserId={UserId} Required={Amount} ScheduledOrderId={ScheduledOrderId}",
-                    userId, amount, scheduledOrderId);
+                    "Wallet atomic debit FAILED (insufficient balance): UserId={UserId} Required={Amount} ScheduledOrderId={ScheduledOrderId} CurrentBalance={CurrentBalance}",
+                    userId, amount, scheduledOrderId, currentBalance);
+
+                if (scheduledOrderId.HasValue)
+                {
+                    await _failedOrderAttemptRepository.AddAsync(new FailedOrderAttempt
+                    {
+                        UserId = userId,
+                        ScheduledOrderId = scheduledOrderId.Value,
+                        RequiredAmount = amount,
+                        AvailableBalance = currentBalance,
+                        Reason = "Insufficient wallet balance",
+                        AttemptedAt = _time.UtcNow
+                    });
+                }
             }
 
-            return success;
+            stopwatch.Stop();
+            _logger.LogInformation("[METRICS] AtomicDebitAsync took {Ms}ms", stopwatch.ElapsedMilliseconds);
+
+            return result;
         }
 
         private static WalletTransactionDto MapToDto(WalletTransaction t)

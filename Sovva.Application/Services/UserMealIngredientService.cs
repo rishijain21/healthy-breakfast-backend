@@ -25,9 +25,7 @@ namespace Sovva.Application.Services
                 IngredientId = dto.IngredientId,
                 Quantity = dto.Quantity,
                 UnitPrice = dto.UnitPrice,
-                TotalPrice = dto.TotalPrice,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
+                TotalPrice = dto.TotalPrice
             };
 
             await _repository.AddAsync(entity);
@@ -44,9 +42,7 @@ namespace Sovva.Application.Services
                 IngredientId = dto.IngredientId,
                 Quantity = dto.Quantity,
                 UnitPrice = dto.UnitPrice,
-                TotalPrice = dto.TotalPrice,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
+                TotalPrice = dto.TotalPrice
             });
 
             await _repository.AddRangeAsync(entities);

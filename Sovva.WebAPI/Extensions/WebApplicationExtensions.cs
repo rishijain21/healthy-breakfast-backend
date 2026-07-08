@@ -5,6 +5,7 @@ using Hangfire;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Serilog;
+using Microsoft.AspNetCore.HttpOverrides;
 
 namespace Sovva.WebAPI.Extensions;
 
@@ -20,6 +21,16 @@ public static class WebApplicationExtensions
     public static WebApplication UseAppMiddleware(this WebApplication app)
     {
         // Middleware order matters — do not rearrange.
+        
+        // Trust Render's reverse proxy (one hop)
+        app.UseForwardedHeaders(new ForwardedHeadersOptions
+        {
+            ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto,
+            KnownNetworks = { },   // Accept from any proxy (Render manages this)
+            KnownProxies = { },
+            ForwardLimit = 1
+        });
+
         // CORS must be first so that Access-Control-Allow-Origin headers are present
         // on ALL responses, including error responses from GlobalExceptionMiddleware.
         // Without this, the browser sees missing CORS headers on errors and reports
@@ -123,32 +134,11 @@ public static class WebApplicationExtensions
         {
             var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
 
-            // 1. Expire old subscriptions — runs first, clean slate
-            RecurringJob.AddOrUpdate<ISubscriptionService>(
-                "expire-subscriptions",
-                s => s.ExpireSubscriptionsAsync(),
-                "50 23 * * *",
-                new RecurringJobOptions { TimeZone = istZone });
-
-            // 2. Sync subscription dates — safety net
-            RecurringJob.AddOrUpdate<ISubscriptionService>(
-                "sync-subscription-dates",
-                s => s.UpdateNextScheduledDatesAsync(),
-                "55 23 * * *",
-                new RecurringJobOptions { TimeZone = istZone });
-
-            // 3. Confirm today's orders AT midnight — wallet deducted, Orders row created
-            RecurringJob.AddOrUpdate<IScheduledOrderService>(
-                "midnight-order-confirmation",
-                s => s.ConfirmAllScheduledOrdersAsync(null),
-                "0 0 * * *",
-                new RecurringJobOptions { TimeZone = istZone });
-
-            // 4. Generate next-day subscription orders at 12:01 AM IST
-            RecurringJob.AddOrUpdate<ISubscriptionSchedulingService>(
-                "subscription-order-generation",
-                s => s.GenerateScheduledOrdersFromSubscriptionsAsync(),
-                "1 0 * * *",
+            // Daily Maintenance Orchestrator — sequentializes all nightly jobs
+            RecurringJob.AddOrUpdate<IDailyMaintenanceOrchestrator>(
+                "daily-maintenance",
+                o => o.RunDailyMaintenanceAsync(),
+                "0 0 * * *", // Midnight IST
                 new RecurringJobOptions { TimeZone = istZone });
 
             logger.LogInformation("Hangfire jobs scheduled successfully");
@@ -178,7 +168,6 @@ public static class WebApplicationExtensions
             {
                 name = e.Key,
                 status = e.Value.Status.ToString(),
-                description = e.Value.Description,
                 duration = e.Value.Duration.TotalMilliseconds + "ms"
             })
         };

@@ -1,3 +1,4 @@
+using System;
 using Hangfire.Common;
 using Hangfire.States;
 using Microsoft.Extensions.Logging;
@@ -15,14 +16,22 @@ public class JobFailureAlertFilter : JobFilterAttribute, IElectStateFilter
 
     public void OnStateElection(ElectStateContext context)
     {
-        if (context.CandidateState is FailedState failedState)
+        try
         {
-            _logger.LogError(
-                failedState.Exception,
-                "CRITICAL: Hangfire job {JobId} ({JobName}) FAILED. " +
-                "Manual intervention may be required for midnight wallet processing.",
-                context.BackgroundJob.Id,
-                context.BackgroundJob.Job.Method.Name);
+            if (context.CandidateState is FailedState failedState)
+            {
+                _logger.LogError(
+                    failedState.Exception,
+                    "CRITICAL: Hangfire job {JobId} ({JobName}) FAILED. " +
+                    "Manual intervention may be required for midnight wallet processing.",
+                    context.BackgroundJob.Id,
+                    context.BackgroundJob.Job.Method.Name);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Failsafe to prevent the filter from throwing and breaking Hangfire state transition
+            Console.WriteLine($"JobFailureAlertFilter threw an exception: {ex}");
         }
     }
 }

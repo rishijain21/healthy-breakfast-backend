@@ -41,4 +41,4 @@ seed_data.sql
 Sovva.WebAPI/logs/
 
 # HTTP test files (VSCode REST Client)
-*.http
+# *.http

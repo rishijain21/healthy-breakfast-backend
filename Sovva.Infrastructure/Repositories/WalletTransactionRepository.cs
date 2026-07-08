@@ -31,6 +31,21 @@ namespace Sovva.Infrastructure.Repositories
                         .ToListAsync();
         }
 
+        public async Task<(IEnumerable<WalletTransaction> Items, int TotalCount)> GetAllPagedAsync(int page, int pageSize)
+        {
+            var query = _context.WalletTransactions
+                        .AsNoTracking()
+                        .OrderByDescending(wt => wt.CreatedAt);
+
+            var totalCount = await query.CountAsync();
+            var items = await query
+                        .Skip((page - 1) * pageSize)
+                        .Take(pageSize)
+                        .ToListAsync();
+
+            return (items, totalCount);
+        }
+
         // ✅ OPTIMIZED: Removed .Include(wt => wt.User) for faster queries
         public async Task<WalletTransaction?> GetByIdAsync(long transactionId)
             => await _context.WalletTransactions
@@ -59,30 +74,15 @@ namespace Sovva.Infrastructure.Repositories
             => await _context.WalletTransactions
                         .AsNoTracking()
                         .Where(wt => wt.UserId == userId && wt.Type == type)
-                        .OrderByDescending(wt => wt.CreatedAt).ToListAsync();
+                        .OrderByDescending(wt => wt.CreatedAt)
+                        .Take(100)
+                        .ToListAsync();
 
         public async Task<decimal> GetUserBalanceAsync(int userId)
         {
-            var conn = _context.Database.GetDbConnection();
-            bool wasClosed = conn.State == System.Data.ConnectionState.Closed;
-            if (wasClosed) await conn.OpenAsync();
-            try
-            {
-                using var command = conn.CreateCommand();
-                command.CommandText = @"SELECT COALESCE(SUM(CASE WHEN ""Type"" = 'Credit' THEN ""Amount"" ELSE -""Amount"" END), 0) FROM ""WalletTransactions"" WHERE ""UserId"" = @userId";
-                
-                var param = command.CreateParameter();
-                param.ParameterName = "@userId";
-                param.Value = userId;
-                command.Parameters.Add(param);
-
-                var result = await command.ExecuteScalarAsync();
-                return result != DBNull.Value && result != null ? Convert.ToDecimal(result) : 0m;
-            }
-            finally
-            {
-                if (wasClosed) await conn.CloseAsync();
-            }
+            return await _context.WalletTransactions
+                .Where(wt => wt.UserId == userId)
+                .SumAsync(wt => wt.Type == WalletConstants.Credit ? wt.Amount : -wt.Amount);
         }
 
         public async Task<WalletTransaction> CreateAsync(WalletTransaction transaction)
@@ -103,45 +103,27 @@ namespace Sovva.Infrastructure.Repositories
         public async Task<bool> HasSufficientBalanceAsync(int userId, decimal amount)
             => await GetUserBalanceAsync(userId) >= amount;
 
-        // ✅ FIX 8: Optimized to use targeted SQL aggregates instead of loading all transactions into memory
+        // ✅ FIX 8: Optimized to use targeted EF Core aggregates instead of loading all transactions into memory or manual ADO.NET
         public async Task<(decimal totalCredits, decimal totalDebits, int transactionCount, DateTime? lastTransactionDate)> GetUserWalletSummaryAsync(int userId)
         {
-            var conn = _context.Database.GetDbConnection();
-            bool wasClosed = conn.State == System.Data.ConnectionState.Closed;
-            if (wasClosed) await conn.OpenAsync();
-            try
-            {
-                using var command = conn.CreateCommand();
-                command.CommandText = @"
-                    SELECT 
-                        COALESCE(SUM(CASE WHEN ""Type"" = 'Credit' THEN ""Amount"" ELSE 0 END), 0) AS TotalCredits,
-                        COALESCE(SUM(CASE WHEN ""Type"" = 'Debit' THEN ""Amount"" ELSE 0 END), 0) AS TotalDebits,
-                        COUNT(*) AS TransactionCount,
-                        MAX(""CreatedAt"") AS LastTransactionDate
-                    FROM ""WalletTransactions""
-                    WHERE ""UserId"" = @userId";
-                
-                var param = command.CreateParameter();
-                param.ParameterName = "@userId";
-                param.Value = userId;
-                command.Parameters.Add(param);
-
-                using var reader = await command.ExecuteReaderAsync();
-                if (await reader.ReadAsync())
+            var summary = await _context.WalletTransactions
+                .Where(wt => wt.UserId == userId)
+                .GroupBy(wt => wt.UserId)
+                .Select(g => new
                 {
-                    return (
-                        reader.IsDBNull(0) ? 0m : reader.GetDecimal(0),
-                        reader.IsDBNull(1) ? 0m : reader.GetDecimal(1),
-                        reader.IsDBNull(2) ? 0 : reader.GetInt32(2),
-                        reader.IsDBNull(3) ? (DateTime?)null : reader.GetDateTime(3)
-                    );
-                }
+                    TotalCredits = g.Sum(wt => wt.Type == WalletConstants.Credit ? wt.Amount : 0),
+                    TotalDebits = g.Sum(wt => wt.Type == WalletConstants.Debit ? wt.Amount : 0),
+                    TransactionCount = g.Count(),
+                    LastTransactionDate = g.Max(wt => (DateTime?)wt.CreatedAt)
+                })
+                .FirstOrDefaultAsync();
+
+            if (summary == null)
+            {
                 return (0m, 0m, 0, null);
             }
-            finally
-            {
-                if (wasClosed) await conn.CloseAsync();
-            }
+
+            return (summary.TotalCredits, summary.TotalDebits, summary.TransactionCount, summary.LastTransactionDate);
         }
 
         // ✅ FIX 4: PostgreSQL advisory lock to prevent race conditions on wallet operations
@@ -197,21 +179,43 @@ namespace Sovva.Infrastructure.Repositories
         /// If two requests race, only one can see sufficient balance; the other
         /// will see the first's INSERT in its snapshot (same statement = same snapshot).
         /// </summary>
-        public async Task<bool> AtomicDebitAsync(int userId, decimal amount, string description, int? scheduledOrderId = null)
+        public async Task<(bool Success, long? TransactionId)> AtomicDebitAsync(int userId, decimal amount, string description, int? scheduledOrderId = null)
         {
-            // Single atomic SQL: check ledger balance AND insert Debit in one statement.
-            // If balance < amount, zero rows are inserted.
-            var rowsAffected = await _context.Database.ExecuteSqlRawAsync(
-                @"INSERT INTO ""WalletTransactions"" (""UserId"", ""Amount"", ""Type"", ""Description"", ""ScheduledOrderId"", ""CreatedAt"", ""UpdatedAt"")
-                  SELECT {0}, {1}, 'Debit', {2}, {3}, NOW() AT TIME ZONE 'UTC', NOW() AT TIME ZONE 'UTC'
-                  WHERE (
-                      SELECT COALESCE(SUM(CASE WHEN ""Type"" = 'Credit' THEN ""Amount"" ELSE -""Amount"" END), 0)
-                      FROM ""WalletTransactions""
-                      WHERE ""UserId"" = {0}
-                  ) >= {1}",
-                userId, amount, description, scheduledOrderId);
+            var strategy = _context.Database.CreateExecutionStrategy();
+            return await strategy.ExecuteAsync(async () =>
+            {
+                using var transaction = _context.Database.CurrentTransaction == null 
+                    ? await _context.Database.BeginTransactionAsync() 
+                    : null;
 
-            return rowsAffected == 1;
+                await AcquireUserWalletLockAsync(userId);
+
+                var ids = await _context.Database
+                    .SqlQueryRaw<long>(
+                        @"INSERT INTO ""WalletTransactions"" (""UserId"", ""Amount"", ""Type"", ""Description"", ""ScheduledOrderId"", ""CreatedAt"", ""UpdatedAt"")
+                          SELECT {0}, {1}, 'Debit', {2}, {3}, NOW() AT TIME ZONE 'UTC', NOW() AT TIME ZONE 'UTC'
+                          WHERE (
+                              SELECT COALESCE(SUM(CASE WHEN ""Type"" = 'Credit' THEN ""Amount"" ELSE -""Amount"" END), 0)
+                              FROM ""WalletTransactions""
+                              WHERE ""UserId"" = {0}
+                          ) >= {1}
+                          AND ({3} IS NULL OR NOT EXISTS (
+                              SELECT 1 FROM ""WalletTransactions""
+                              WHERE ""ScheduledOrderId"" = {3} AND ""Type"" = 'Debit'
+                          ))
+                          RETURNING ""TransactionId""",
+                        userId, amount, description, scheduledOrderId)
+                    .ToListAsync();
+
+                if (ids.Count == 1)
+                {
+                    if (transaction != null) await transaction.CommitAsync();
+                    return (true, ids[0]);
+                }
+
+                if (transaction != null) await transaction.RollbackAsync();
+                return (false, (long?)null);
+            });
         }
 
         /// <summary>
@@ -220,20 +224,35 @@ namespace Sovva.Infrastructure.Repositories
         /// </summary>
         public async Task<bool> AtomicCreditAsync(int userId, decimal amount, string description, int? scheduledOrderId = null)
         {
-            // Single atomic SQL: insert Credit only if resulting balance <= MaxWalletBalance.
-            var maxBalance = WalletConstants.MaxWalletBalance;
+            var strategy = _context.Database.CreateExecutionStrategy();
+            return await strategy.ExecuteAsync(async () =>
+            {
+                using var transaction = _context.Database.CurrentTransaction == null 
+                    ? await _context.Database.BeginTransactionAsync() 
+                    : null;
 
-            var rowsAffected = await _context.Database.ExecuteSqlRawAsync(
-                @"INSERT INTO ""WalletTransactions"" (""UserId"", ""Amount"", ""Type"", ""Description"", ""ScheduledOrderId"", ""CreatedAt"", ""UpdatedAt"")
-                  SELECT {0}, {1}, 'Credit', {2}, {3}, NOW() AT TIME ZONE 'UTC', NOW() AT TIME ZONE 'UTC'
-                  WHERE (
-                      SELECT COALESCE(SUM(CASE WHEN ""Type"" = 'Credit' THEN ""Amount"" ELSE -""Amount"" END), 0)
-                      FROM ""WalletTransactions""
-                      WHERE ""UserId"" = {0}
-                  ) + {1} <= {4}",
-                userId, amount, description, scheduledOrderId, maxBalance);
+                await AcquireUserWalletLockAsync(userId);
 
-            return rowsAffected == 1;
+                var maxBalance = WalletConstants.MaxWalletBalance;
+
+                var rowsAffected = await _context.Database.ExecuteSqlRawAsync(
+                    @"INSERT INTO ""WalletTransactions"" (""UserId"", ""Amount"", ""Type"", ""Description"", ""ScheduledOrderId"", ""CreatedAt"", ""UpdatedAt"")
+                      SELECT {0}, {1}, 'Credit', {2}, {3}, NOW() AT TIME ZONE 'UTC', NOW() AT TIME ZONE 'UTC'
+                      WHERE (
+                          SELECT COALESCE(SUM(CASE WHEN ""Type"" = 'Credit' THEN ""Amount"" ELSE -""Amount"" END), 0)
+                          FROM ""WalletTransactions""
+                          WHERE ""UserId"" = {0}
+                      ) + {1} <= {4}",
+                    userId, amount, description, scheduledOrderId, maxBalance);
+
+                if (transaction != null)
+                {
+                    if (rowsAffected == 1) await transaction.CommitAsync();
+                    else await transaction.RollbackAsync();
+                }
+
+                return rowsAffected == 1;
+            });
         }
     }
 }

@@ -1,17 +1,15 @@
 using Serilog;
 using Sovva.WebAPI.Extensions;
 
-// ══════════════════════════════════════════════════
-// GLOBAL FIX: Disable IPv6 for Npgsql/Supabase connection hanging on unroutable IPv6 
-// ══════════════════════════════════════════════════
-AppContext.SetSwitch("System.Net.DisableIPv6", true);
+// IPv6 switch removed because Supabase direct connection is IPv6-only.
 
 // ══════════════════════════════════════════════════
 // LOGGING
 // ══════════════════════════════════════════════════
 var builder = WebApplication.CreateBuilder(args);
+builder.WebHost.UseShutdownTimeout(TimeSpan.FromSeconds(30));
 
-Log.Logger = new LoggerConfiguration()
+var loggerConfig = new LoggerConfiguration()
     .MinimumLevel.Information()
     .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
     .MinimumLevel.Override("Microsoft.EntityFrameworkCore", Serilog.Events.LogEventLevel.Warning)
@@ -24,11 +22,15 @@ Log.Logger = new LoggerConfiguration()
         rollingInterval: RollingInterval.Day,
         retainedFileCountLimit: 14,
         outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} " +
-                        "[{Level:u3}] {Message:lj}{NewLine}{Exception}")
-    .WriteTo.Seq(
-        serverUrl: builder.Configuration["Logging:SeqUrl"] ?? "http://localhost:5341",
-        apiKey: builder.Configuration["Logging:SeqApiKey"])
-    .CreateLogger();
+                        "[{Level:u3}] {Message:lj}{NewLine}{Exception}");
+
+var seqUrl = builder.Configuration["Logging:SeqUrl"];
+if (!string.IsNullOrWhiteSpace(seqUrl))
+{
+    loggerConfig.WriteTo.Seq(serverUrl: seqUrl, apiKey: builder.Configuration["Logging:SeqApiKey"]);
+}
+
+Log.Logger = loggerConfig.CreateLogger();
 
 builder.Host.UseSerilog();
 
@@ -52,6 +54,25 @@ builder.Services
 // APP
 // ══════════════════════════════════════════════════
 var app = builder.Build();
+
+if (app.Environment.IsProduction())
+{
+    var requiredConfigs = new[] 
+    { 
+        "ConnectionStrings:DefaultConnection",
+        "Supabase:Url",
+        "ConnectionStrings:RedisConnection"
+    };
+
+    foreach (var config in requiredConfigs)
+    {
+        if (string.IsNullOrWhiteSpace(builder.Configuration[config]))
+        {
+            Log.Fatal("Missing required configuration for production: {ConfigKey}", config);
+            throw new InvalidOperationException($"Missing required configuration: {config}");
+        }
+    }
+}
 
 app.UseAppMiddleware()
    .UseHangfireDashboardWithAuth()
