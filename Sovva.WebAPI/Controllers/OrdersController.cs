@@ -83,7 +83,7 @@ namespace Sovva.WebAPI.Controllers
 
             var userOrders = await _orderRepository.GetUserOrdersSummaryPagedAsync(userId.Value, page, pageSize);
 
-            if (userOrders?.Items != null)
+            if (userOrders.Items != null)
             {
                 var signingTasks = userOrders.Items
                     .Where(item => !string.IsNullOrEmpty(item.MealImageUrl))

@@ -74,7 +74,7 @@ namespace Sovva.WebAPI.Middleware
                     var cacheService = scope.ServiceProvider.GetRequiredService<ICacheService>();
 
                     var cacheKey = $"auth:{authGuid}";
-                    var authInfo = await cacheService.GetAsync<Sovva.Domain.Entities.AuthInfo?>(cacheKey);
+                    var authInfo = await cacheService.GetAsync<(int UserId, string Role, string AccountStatus)?>(cacheKey);
                     
                     if (!authInfo.HasValue)
                     {
