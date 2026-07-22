@@ -1,6 +1,5 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
-using Microsoft.Extensions.Caching.Memory;
 using Sovva.Application.Interfaces;
 using Sovva.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
@@ -72,14 +71,19 @@ namespace Sovva.WebAPI.Middleware
                 {
                     await using var scope = _serviceScopeFactory.CreateAsyncScope();
                     var userRepository = scope.ServiceProvider.GetRequiredService<IUserRepository>();
-                    var memoryCache = scope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Caching.Memory.IMemoryCache>();
+                    var cacheService = scope.ServiceProvider.GetRequiredService<ICacheService>();
 
                     var cacheKey = $"auth:{authGuid}";
-                    var authInfo = await memoryCache.GetOrCreateAsync(cacheKey, async entry =>
+                    var authInfo = await cacheService.GetAsync<Sovva.Domain.Entities.AuthInfo?>(cacheKey);
+                    
+                    if (!authInfo.HasValue)
                     {
-                        entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30);
-                        return await userRepository.GetAuthInfoByAuthIdAsync(authGuid);
-                    });
+                        authInfo = await userRepository.GetAuthInfoByAuthIdAsync(authGuid);
+                        if (authInfo.HasValue)
+                        {
+                            await cacheService.SetAsync(cacheKey, authInfo, TimeSpan.FromSeconds(30));
+                        }
+                    }
 
                     if (authInfo.HasValue)
                     {
@@ -156,9 +160,6 @@ namespace Sovva.WebAPI.Middleware
 
         private string? ExtractAuthIdFromToken(HttpContext context)
         {
-            var authHeader = context.Request.Headers["Authorization"].FirstOrDefault();
-            if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith("Bearer "))
-                return null;
 
             try
             {

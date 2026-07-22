@@ -9,7 +9,9 @@ namespace Sovva.Application.Interfaces
         Task<IEnumerable<Subscription>> GetAllAsync(int page = 1, int pageSize = 50);
         Task<(IEnumerable<Subscription> Items, int TotalCount)> GetAllWithCountAsync(int page = 1, int pageSize = 50);
         Task<Subscription?> GetByIdAsync(int subscriptionId);
+        Task<Subscription?> GetByIdAndUserIdAsync(int subscriptionId, int userId);
         Task<IEnumerable<Subscription>> GetByUserIdAsync(int userId);
+        Task<IEnumerable<Subscription>> GetActiveSubscriptionsByUserIdAsync(int userId, DateOnly targetDate);
         Task<IEnumerable<Subscription>> GetActiveSubscriptionsAsync();
         Task<IEnumerable<Subscription>> GetExpiredActiveSubscriptionsAsync(DateOnly today);
         Task<Subscription> CreateAsync(Subscription subscription);
@@ -38,5 +40,11 @@ namespace Sovva.Application.Interfaces
         /// Uses IgnoreQueryFilters() to bypass the soft-delete EF Core filter.
         /// </summary>
         Task<IEnumerable<Subscription>> GetCancelledSubscriptionsAsync(int daysAgo = 30);
+
+        /// <summary>
+        /// Returns true if a subscription with the given ID exists AND belongs to the given userId.
+        /// Uses a SELECT EXISTS projection — no entity materialization.
+        /// </summary>
+        Task<bool> BelongsToUserAsync(int subscriptionId, int userId);
     }
 }

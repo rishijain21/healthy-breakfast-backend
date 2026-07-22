@@ -4,6 +4,7 @@ using Sovva.WebAPI.Extensions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
+using Sovva.Domain.Constants;
 
 namespace Sovva.WebAPI.Controllers
 {
@@ -47,7 +48,7 @@ namespace Sovva.WebAPI.Controllers
 
             var balance = await _walletTransactionService.GetWalletBalanceAsync(userId.Value);
             
-            _logger.LogInformation("WALLET: Balance retrieved for user {UserId}", userId);
+            _logger.LogDebug("WALLET: Balance retrieved for user {UserId}", userId);
             return Ok(ApiResponse.Ok(new { balance, userId }));
         }
 
@@ -159,6 +160,11 @@ namespace Sovva.WebAPI.Controllers
             if (dto.Amount <= 0)
             {
                 return BadRequest(ApiResponse.Fail("BAD_REQUEST", "Amount must be greater than 0"));
+            }
+
+            if (dto.Amount > WalletConstants.MaxWalletBalance)
+            {
+                return BadRequest(ApiResponse.Fail("BAD_REQUEST", $"Credit amount cannot exceed ₹{WalletConstants.MaxWalletBalance}"));
             }
 
             var adminUserId = await _currentUserService.GetCurrentUserIdAsync();

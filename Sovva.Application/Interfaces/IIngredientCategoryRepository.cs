@@ -11,7 +11,6 @@ namespace Sovva.Application.Interfaces
         
         // Your existing methods
         Task AddAsync(IngredientCategory entity);
-        Task SaveChangesAsync();
         Task<IngredientCategory?> GetByIdAsync(int id);
     }
 }

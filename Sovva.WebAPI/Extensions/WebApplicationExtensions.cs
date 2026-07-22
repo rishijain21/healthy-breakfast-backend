@@ -134,10 +134,10 @@ public static class WebApplicationExtensions
         {
             var istZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
 
-            // Daily Maintenance Orchestrator — sequentializes all nightly jobs
-            RecurringJob.AddOrUpdate<IDailyMaintenanceOrchestrator>(
+            // Daily Maintenance Orchestrator wrapper — sequentializes all nightly jobs inside clean scope
+            RecurringJob.AddOrUpdate<Sovva.WebAPI.Jobs.DailyMaintenanceJob>(
                 "daily-maintenance",
-                o => o.RunDailyMaintenanceAsync(),
+                o => o.ExecuteAsync(),
                 "0 0 * * *", // Midnight IST
                 new RecurringJobOptions { TimeZone = istZone });
 

@@ -22,11 +22,6 @@ namespace Sovva.Infrastructure.Repositories
             await _context.UserMeals.AddAsync(entity);
         }
 
-        public async Task SaveChangesAsync()
-        {
-            await _context.SaveChangesAsync();
-        }
-
         public async Task<UserMeal?> GetByIdAsync(int id)
         {
             return await _context.UserMeals

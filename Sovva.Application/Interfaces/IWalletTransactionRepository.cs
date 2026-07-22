@@ -16,7 +16,10 @@ namespace Sovva.Application.Interfaces
         Task<(decimal totalCredits, decimal totalDebits, int transactionCount, DateTime? lastTransactionDate)> GetUserWalletSummaryAsync(int userId);
         Task AcquireUserWalletLockAsync(int userId);
 
-
+        /// <summary>
+        /// Returns the sum of all Credit transactions ever for a user (lifetime total).
+        /// </summary>
+        Task<decimal> GetLifetimeCreditSumAsync(int userId);
 
         /// <summary>
         /// ✅ NEW: Write ledger record ONLY — no wallet balance update

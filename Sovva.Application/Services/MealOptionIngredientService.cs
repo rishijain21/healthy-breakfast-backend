@@ -9,10 +9,14 @@ namespace Sovva.Application.Services
     public class MealOptionIngredientService : IMealOptionIngredientService
     {
         private readonly IMealOptionIngredientRepository _repository;
+        private readonly IUnitOfWork _unitOfWork;
 
-        public MealOptionIngredientService(IMealOptionIngredientRepository repository)
+        public MealOptionIngredientService(
+            IMealOptionIngredientRepository repository,
+            IUnitOfWork unitOfWork)
         {
             _repository = repository;
+            _unitOfWork = unitOfWork;
         }
 
         public async Task<int> CreateMealOptionIngredientAsync(CreateMealOptionIngredientDto dto)
@@ -24,7 +28,7 @@ namespace Sovva.Application.Services
             };
 
             await _repository.AddAsync(entity);
-            await _repository.SaveChangesAsync();
+            await _unitOfWork.SaveChangesAsync(); // ARCH-MIGRATION: TASK-1.1
 
             return entity.MealOptionIngredientId;
         }

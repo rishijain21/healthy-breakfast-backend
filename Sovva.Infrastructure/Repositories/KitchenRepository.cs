@@ -88,7 +88,7 @@ namespace Sovva.Infrastructure.Repositories
         public async Task UpdateOrderAsync(Order order)
         {
             _context.Orders.Update(order);
-            await _context.SaveChangesAsync();
+            // NOTE: Caller (UnitOfWork or service) is responsible for SaveChangesAsync
         }
     }
 }

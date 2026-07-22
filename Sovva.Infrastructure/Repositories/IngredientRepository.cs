@@ -98,11 +98,7 @@ namespace Sovva.Infrastructure.Repositories
                 .AnyAsync(moi => moi.IngredientId == ingredientId);
         }
 
-        // ==================== SAVE ====================
-        
-        public async Task SaveChangesAsync()
-        {
-            await _context.SaveChangesAsync();
-        }
+        // ==================== SAVE removed ====================
+        // Use IUnitOfWork.SaveChangesAsync() from the calling service
     }
 }

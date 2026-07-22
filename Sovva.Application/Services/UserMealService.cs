@@ -14,15 +14,18 @@ namespace Sovva.Application.Services
         private readonly IUserMealRepository _repository;
         private readonly IUserMealIngredientRepository _ingredientRepository;
         private readonly ILogger<UserMealService> _logger;
+        private readonly IUnitOfWork _unitOfWork;
 
         public UserMealService(
             IUserMealRepository repository,
             IUserMealIngredientRepository ingredientRepository,
-            ILogger<UserMealService> logger)
+            ILogger<UserMealService> logger,
+            IUnitOfWork unitOfWork)
         {
             _repository = repository;
             _ingredientRepository = ingredientRepository;
             _logger = logger;
+            _unitOfWork = unitOfWork;
         }
 
         // ✅ SECURE: CreateUserMealAsync with userId from JWT token
@@ -38,7 +41,7 @@ namespace Sovva.Application.Services
             };
 
             await _repository.AddAsync(entity);
-            await _repository.SaveChangesAsync();
+            await _unitOfWork.SaveChangesAsync(); // ARCH-MIGRATION: TASK-1.1
 
             // ✅ Save ingredients if provided
             if (dto.SelectedIngredients != null && dto.SelectedIngredients.Any())
@@ -57,7 +60,7 @@ namespace Sovva.Application.Services
                     await _ingredientRepository.AddAsync(userMealIngredient);
                 }
                 
-                await _ingredientRepository.SaveChangesAsync();
+                await _unitOfWork.SaveChangesAsync(); // ARCH-MIGRATION: TASK-1.1
                 _logger.LogInformation("Saved {IngredientCount} ingredients for UserMeal {UserMealId}", dto.SelectedIngredients.Count, entity.UserMealId);
             }
             else

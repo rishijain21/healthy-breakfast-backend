@@ -22,11 +22,6 @@ namespace Sovva.Infrastructure.Repositories
             await _context.Meals.AddAsync(meal);
         }
 
-        public async Task SaveChangesAsync()
-        {
-            await _context.SaveChangesAsync();
-        }
-
         // NOTE: All queries below do NOT need !m.IsDeleted or m.DeletedAt == null
         // because the Global Query Filter on AppDbContext handles this automatically.
 
@@ -83,7 +78,7 @@ namespace Sovva.Infrastructure.Repositories
         public async Task UpdateMealAsync(Meal meal)
         {
             _context.Meals.Update(meal);
-            await _context.SaveChangesAsync();
+            // NOTE: Caller (UnitOfWork or service) is responsible for SaveChangesAsync
             await _cacheService.RemoveAsync($"Meal_{meal.MealId}");
         }
 
@@ -92,7 +87,7 @@ namespace Sovva.Infrastructure.Repositories
             // Soft delete: the TimestampInterceptor converts this Remove() call
             // into: meal.DeletedAt = now; (EntityState.Modified)
             _context.Meals.Remove(meal);
-            await _context.SaveChangesAsync();
+            // NOTE: Caller (UnitOfWork or service) is responsible for SaveChangesAsync
             await _cacheService.RemoveAsync($"Meal_{meal.MealId}");
         }
 
@@ -102,7 +97,7 @@ namespace Sovva.Infrastructure.Repositories
             if (meal == null) return false;
 
             meal.IsComplete = isComplete;
-            await _context.SaveChangesAsync();
+            // NOTE: Caller (UnitOfWork or service) is responsible for SaveChangesAsync
             await _cacheService.RemoveAsync($"Meal_{id}");
             return true;
         }

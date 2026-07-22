@@ -14,6 +14,19 @@ using Sovva.Domain.Entities;
 using Sovva.Domain.Enums;
 using Sovva.Application.Exceptions;
 using Sovva.Domain.Exceptions;
+using Sovva.Application.Features.Subscriptions.Commands.ActivateSubscription;
+using Sovva.Application.Features.Subscriptions.Commands.CreateSubscription;
+using Sovva.Application.Features.Subscriptions.Commands.DeactivateSubscription;
+using Sovva.Application.Features.Subscriptions.Commands.DeleteSubscription;
+using Sovva.Application.Features.Subscriptions.Commands.ExpireSubscriptions;
+using Sovva.Application.Features.Subscriptions.Commands.UpdateNextScheduledDates;
+using Sovva.Application.Features.Subscriptions.Commands.UpdateSubscription;
+using Sovva.Application.Features.Subscriptions.Queries.GetActiveSubscriptionByUserMealId;
+using Sovva.Application.Features.Subscriptions.Queries.GetActiveSubscriptions;
+using Sovva.Application.Features.Subscriptions.Queries.GetAllSubscriptions;
+using Sovva.Application.Features.Subscriptions.Queries.GetSubscriptionById;
+using Sovva.Application.Features.Subscriptions.Queries.GetSubscriptionsByUserId;
+using Sovva.Application.Tests.Helpers;
 
 namespace Sovva.Application.Tests.Services
 {
@@ -29,10 +42,16 @@ namespace Sovva.Application.Tests.Services
         private readonly Mock<IUserMealIngredientRepository> _userMealIngRepoMock = new();
         private readonly Mock<IWalletTransactionService> _walletServiceMock = new();
         private readonly Mock<IAppTimeProvider> _timeProviderMock = new();
-        private readonly Mock<ILogger<SubscriptionService>> _loggerMock = new();
+        private readonly Mock<ILogger<CreateSubscriptionCommandHandler>> _createLoggerMock = new();
+        private readonly Mock<ILogger<DeleteSubscriptionCommandHandler>> _deleteLoggerMock = new();
+        private readonly Mock<ILogger<ActivateSubscriptionCommandHandler>> _activateLoggerMock = new();
+        private readonly Mock<ILogger<DeactivateSubscriptionCommandHandler>> _deactivateLoggerMock = new();
+        private readonly Mock<ILogger<UpdateNextScheduledDatesCommandHandler>> _updateDatesLoggerMock = new();
+        private readonly Mock<ILogger<ExpireSubscriptionsCommandHandler>> _expireLoggerMock = new();
         private readonly Mock<IUserLoader> _userLoaderMock = new();
         private readonly Mock<IUnitOfWork> _unitOfWorkMock = new();
         private readonly Mock<ICacheService> _cacheServiceMock = new();
+        private readonly TestMediatRSender _sender = new();
 
         // 2. The Service Under Test (SUT)
         private readonly SubscriptionService _sut;
@@ -55,22 +74,26 @@ namespace Sovva.Application.Tests.Services
             _unitOfWorkMock.Setup(u => u.ExecuteInTransactionAsync(It.IsAny<Func<Task<SubscriptionDto>>>()))
                            .Returns((Func<Task<SubscriptionDto>> action) => action());
 
-            // 4. Instantiate the service with all mocked dependencies
-            _sut = new SubscriptionService(
-                _subRepoMock.Object,
-                _userMealRepoMock.Object,
-                _mealRepoMock.Object,
-                _addressRepoMock.Object,
-                _scheduledOrderRepoMock.Object,
-                _ingredientRepoMock.Object,
-                _userMealIngRepoMock.Object,
-                _walletServiceMock.Object,
-                _timeProviderMock.Object,
-                _loggerMock.Object,
-                _userLoaderMock.Object,
-                _unitOfWorkMock.Object,
-                _cacheServiceMock.Object
-            );
+            // Register handlers
+            _sender.Register(new CreateSubscriptionCommandHandler(
+                _subRepoMock.Object, _userMealRepoMock.Object, _mealRepoMock.Object, _addressRepoMock.Object,
+                _scheduledOrderRepoMock.Object, _ingredientRepoMock.Object, _userMealIngRepoMock.Object,
+                _timeProviderMock.Object, _createLoggerMock.Object, _userLoaderMock.Object, _unitOfWorkMock.Object, _cacheServiceMock.Object));
+            _sender.Register(new UpdateSubscriptionCommandHandler(_subRepoMock.Object, _unitOfWorkMock.Object, _timeProviderMock.Object, _cacheServiceMock.Object));
+            _sender.Register(new DeleteSubscriptionCommandHandler(_subRepoMock.Object, _scheduledOrderRepoMock.Object, _walletServiceMock.Object, _unitOfWorkMock.Object, _cacheServiceMock.Object, _deleteLoggerMock.Object));
+            _sender.Register(new ActivateSubscriptionCommandHandler(_subRepoMock.Object, _mealRepoMock.Object, _cacheServiceMock.Object, _activateLoggerMock.Object));
+            _sender.Register(new DeactivateSubscriptionCommandHandler(_subRepoMock.Object, _cacheServiceMock.Object, _deactivateLoggerMock.Object));
+            _sender.Register(new UpdateNextScheduledDatesCommandHandler(_subRepoMock.Object, _timeProviderMock.Object, _updateDatesLoggerMock.Object));
+            _sender.Register(new ExpireSubscriptionsCommandHandler(_subRepoMock.Object, _timeProviderMock.Object, _cacheServiceMock.Object, _expireLoggerMock.Object));
+
+            _sender.Register(new GetAllSubscriptionsQueryHandler(_subRepoMock.Object));
+            _sender.Register(new GetSubscriptionByIdQueryHandler(_subRepoMock.Object));
+            _sender.Register(new GetSubscriptionsByUserIdQueryHandler(_subRepoMock.Object, _cacheServiceMock.Object));
+            _sender.Register(new GetActiveSubscriptionsQueryHandler(_subRepoMock.Object));
+            _sender.Register(new GetActiveSubscriptionByUserMealIdQueryHandler(_subRepoMock.Object));
+
+            // 4. Instantiate the service with sender
+            _sut = new SubscriptionService(_sender);
         }
 
         [Fact]

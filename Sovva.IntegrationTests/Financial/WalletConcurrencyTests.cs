@@ -22,26 +22,10 @@ namespace Sovva.IntegrationTests.Financial;
 /// Verifies that only one debit wins when multiple concurrent requests race
 /// against insufficient funds.
 /// </summary>
-[Collection("PostgresCollection")]
-public class WalletConcurrencyTests : IAsyncLifetime
+public class WalletConcurrencyTests : BaseIntegrationTest
 {
-    private readonly PostgresContainerFixture _fixture;
-    private AppDbContext _dbContext = null!;
-
-    public WalletConcurrencyTests(PostgresContainerFixture fixture)
+    public WalletConcurrencyTests(PostgresContainerFixture fixture) : base(fixture)
     {
-        _fixture = fixture;
-    }
-
-    public async Task InitializeAsync()
-    {
-        _dbContext = _fixture.CreateDbContext();
-        await DbSeeder.CleanAsync(_dbContext);
-    }
-
-    public async Task DisposeAsync()
-    {
-        await _dbContext.DisposeAsync();
     }
 
     // ─────────────────────────────────────────────────────────────────────────

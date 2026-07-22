@@ -143,11 +143,14 @@ namespace Sovva.Application.Services
                     }
 
                     // 2. EndDate guard
-                    if (subscription.EndDate <= today)
+                    // ⚠️ FIX: Compare against deliveryDay (= tomorrow), NOT today.
+                    // A subscription with EndDate == today should still generate tomorrow's order.
+                    // Only skip if EndDate is BEFORE the delivery date.
+                    if (subscription.EndDate < deliveryDay)
                     {
                         _logger.LogInformation(
-                            "[SUB-JOB] Subscription #{Id} expired on {End}, skipping",
-                            subscription.SubscriptionId, subscription.EndDate);
+                            "[SUB-JOB] Subscription #{Id} expired on {End} (before delivery date {DeliveryDay}), skipping",
+                            subscription.SubscriptionId, subscription.EndDate, deliveryDay);
                         skipped++;
                         continue;
                     }
@@ -222,7 +225,13 @@ namespace Sovva.Application.Services
                     }
                     else
                     {
-                        failed++; continue;
+                        _logger.LogError(
+                            "[SUB-JOB] DATA INTEGRITY VIOLATION: Subscription #{SubscriptionId} for User #{UserId} " +
+                            "has neither MealId nor UserMealId set. No order generated. " +
+                            "Investigate immediately — subscription appears active but produces no deliveries.",
+                            subscription.SubscriptionId, subscription.UserId);
+                        failed++;
+                        continue;
                     }
 
                     if (resolvedIngredients == null)
@@ -285,7 +294,6 @@ namespace Sovva.Application.Services
 
                     // 10. Advance NextScheduledDate
                     subscription.NextScheduledDate = CalculateNextScheduledDate(subscription, deliveryDay);
-                    subscription.UpdatedAt         = _time.UtcNow;
                     subscriptionsToUpdate.Add(subscription);
 
                     generated++;
@@ -481,11 +489,9 @@ namespace Sovva.Application.Services
         {
             var tomorrow = _time.TodayIst.AddDays(1);
 
-            var orders = await _scheduledOrderRepo.GetBySubscriptionIdAsync(subscriptionId);
-            var toDelete = orders
-                .Where(o => o.ScheduledFor >= tomorrow 
-                         && !o.IsProcessedToOrder)
-                .ToList();
+            // ✅ Filter in SQL — avoids loading full subscription history into memory
+            var toDelete = await _scheduledOrderRepo.GetFutureUnprocessedBySubscriptionIdAsync(
+                subscriptionId, tomorrow);
 
             if (!toDelete.Any())
             {

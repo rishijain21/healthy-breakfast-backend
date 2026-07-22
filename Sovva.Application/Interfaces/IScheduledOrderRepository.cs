@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Sovva.Domain.Entities;
+using Sovva.Application.DTOs;
 
 namespace Sovva.Application.Interfaces
 {
@@ -10,6 +11,8 @@ namespace Sovva.Application.Interfaces
         Task<ScheduledOrder> CreateAsync(ScheduledOrder scheduledOrder);
         Task<List<ScheduledOrder>> GetByAuthIdAndDateAsync(Guid authId, DateTime date);
         Task<List<ScheduledOrder>> GetByUserIdAndDateAsync(int userId, DateTime date);
+        Task<List<ScheduledOrderSummaryDto>> GetTomorrowOrdersSummaryAsync(int userId, DateTime date);
+        Task<int> GetOrdersThisWeekCountAsync(int userId, DateOnly from, DateOnly to);
         Task<List<ScheduledOrder>> GetByUserIdAndDateRangeAsync(int userId, DateOnly from, DateOnly to);
         Task<ScheduledOrder?> GetByIdAndAuthIdAsync(int scheduledOrderId, Guid authId);
         Task<ScheduledOrder> UpdateAsync(ScheduledOrder scheduledOrder);
@@ -35,6 +38,13 @@ namespace Sovva.Application.Interfaces
         
         Task<bool> HasScheduledOrdersForDateAsync(Guid authId, DateTime date);
         Task<List<ScheduledOrder>> GetBySubscriptionIdAsync(int subscriptionId);
+        
+        /// <summary>
+        /// Returns only future, unprocessed orders for a subscription from a given date onwards.
+        /// Used by cancellation flow — scoped in SQL to avoid loading historical data.
+        /// </summary>
+        Task<List<ScheduledOrder>> GetFutureUnprocessedBySubscriptionIdAsync(
+            int subscriptionId, DateOnly fromDate);
         
         /// <summary>
         /// ✅ NEW: Check if a scheduled order already exists for a subscription on a specific date

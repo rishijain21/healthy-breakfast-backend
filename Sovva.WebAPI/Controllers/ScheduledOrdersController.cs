@@ -21,35 +21,33 @@ namespace Sovva.WebAPI.Controllers
     public class ScheduledOrdersController : ControllerBase
     {
         private readonly IScheduledOrderService _scheduledOrderService;
-        private readonly IScheduledOrderRepository _scheduledOrderRepository;
-        private readonly IUserRepository _userRepository;
         private readonly IOrderService _orderService;
         private readonly ICurrentUserService _currentUserService;
         private readonly IAppTimeProvider _time;
         private readonly ILogger<ScheduledOrdersController> _logger;
         private readonly ISupabaseStorageService _storageService;
+        private readonly IDashboardService _dashboardService;
 
         public ScheduledOrdersController(
             IScheduledOrderService scheduledOrderService,
-            IScheduledOrderRepository scheduledOrderRepository,
-            IUserRepository userRepository,
             IOrderService orderService,
             ICurrentUserService currentUserService,
             IAppTimeProvider time,
             ILogger<ScheduledOrdersController> logger,
-            ISupabaseStorageService storageService)
+            ISupabaseStorageService storageService,
+            IDashboardService dashboardService)
         {
             _scheduledOrderService = scheduledOrderService;
-            _scheduledOrderRepository = scheduledOrderRepository;
-            _userRepository = userRepository;
             _orderService = orderService;
             _currentUserService = currentUserService;
             _time = time;
             _logger = logger;
             _storageService = storageService;
+            _dashboardService = dashboardService;
         }
 
         [HttpPost("create-from-meal-builder")]
+        [Microsoft.AspNetCore.RateLimiting.EnableRateLimiting("financial")]
         public async Task<ActionResult<ScheduledOrderResponseDto>> CreateScheduledOrder([FromBody] CreateScheduledOrderDto dto)
         {
             try
@@ -63,6 +61,7 @@ namespace Sovva.WebAPI.Controllers
                 }
 
                 var result = await _scheduledOrderService.CreateScheduledOrderAsync(userId.Value, authId.Value, dto);
+                await _dashboardService.InvalidateDashboardCacheAsync(userId.Value);
                 return Ok(ApiResponse.Ok(result));
             }
             catch (InvalidOperationException ex)
@@ -87,6 +86,7 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
         }
 
         var result = await _scheduledOrderService.DuplicateScheduledOrderAsync(userId.Value, authId.Value, id);
+        await _dashboardService.InvalidateDashboardCacheAsync(userId.Value);
         
         _logger.LogInformation("Successfully duplicated order {OriginalId} to {NewId}", id, result.ScheduledOrderId);
         
@@ -157,6 +157,7 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
                 }
 
                 await _scheduledOrderService.ModifyScheduledOrderAsync(userId.Value, authId.Value, id, dto);
+                await _dashboardService.InvalidateDashboardCacheAsync(userId.Value);
                 return Ok(ApiResponse.Ok(new { message = "Scheduled order modified successfully" }));
             }
             catch (InvalidOperationException ex)
@@ -183,6 +184,7 @@ public async Task<ActionResult<ScheduledOrderResponseDto>> DuplicateScheduledOrd
                 }
 
                 await _scheduledOrderService.CancelScheduledOrderAsync(userId.Value, authId.Value, id);
+                await _dashboardService.InvalidateDashboardCacheAsync(userId.Value);
                 return Ok(ApiResponse.Ok(new { message = "Scheduled order cancelled successfully" }));
             }
             catch (InvalidOperationException ex)

@@ -24,11 +24,6 @@ namespace Sovva.Infrastructure.Repositories
             await _context.UserMealIngredients.AddAsync(entity);
         }
 
-        public async Task SaveChangesAsync()
-        {
-            await _context.SaveChangesAsync();
-        }
-
         public async Task<UserMealIngredient?> GetByIdAsync(int id)
         {
             return await _context.UserMealIngredients
@@ -56,7 +51,7 @@ namespace Sovva.Infrastructure.Repositories
         public async Task AddRangeAsync(IEnumerable<UserMealIngredient> entities)
         {
             await _context.UserMealIngredients.AddRangeAsync(entities);
-            await _context.SaveChangesAsync();
+            // NOTE: Caller (UnitOfWork or service) is responsible for SaveChangesAsync
         }
     }
 }

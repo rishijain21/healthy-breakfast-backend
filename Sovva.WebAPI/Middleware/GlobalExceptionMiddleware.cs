@@ -110,12 +110,15 @@ public class GlobalExceptionMiddleware
 
         context.Response.ContentType = "application/json";
         context.Response.StatusCode = statusCode;
+        
+        context.Response.Headers.TryAdd("X-Correlation-Id", context.TraceIdentifier);
 
         var response = new
         {
             success = false,
             code = code,
-            message = message
+            message = message,
+            traceId = context.TraceIdentifier
         };
 
         await context.Response.WriteAsJsonAsync(response);

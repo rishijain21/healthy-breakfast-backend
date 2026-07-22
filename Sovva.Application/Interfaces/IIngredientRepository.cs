@@ -24,8 +24,5 @@ namespace Sovva.Application.Interfaces
         
         // Check operations
         Task<bool> IsIngredientUsedInMealsAsync(int ingredientId);
-        
-        // Save
-        Task SaveChangesAsync();
     }
 }

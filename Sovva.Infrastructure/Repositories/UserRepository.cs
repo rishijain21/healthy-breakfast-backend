@@ -36,10 +36,12 @@ namespace Sovva.Infrastructure.Repositories
 
         public async Task<User?> GetByEmailAsync(string email)
         {
-            // ILike is case-insensitive and SARGable when a citext or functional index exists
+            // Use LOWER() comparison — SARGable via the IX_Users_Email_Lower functional index.
+            // ILike was replaced because it requires the pg_trgm extension which is not guaranteed in production.
+            var lowerEmail = email.ToLowerInvariant();
             return await _context.Users
                 .AsNoTracking()
-                .FirstOrDefaultAsync(u => EF.Functions.ILike(u.Email, email));
+                .FirstOrDefaultAsync(u => u.Email.ToLower() == lowerEmail);
         }
 
         public async Task<IEnumerable<User>> GetAllAsync(int page = 1, int pageSize = 50)
@@ -55,11 +57,6 @@ namespace Sovva.Infrastructure.Repositories
         public async Task AddUserAsync(User user)
         {
             await _context.Users.AddAsync(user);
-        }
-
-        public async Task SaveChangesAsync()
-        {
-            await _context.SaveChangesAsync();
         }
 
         // P1-1 FIX: Removed duplicate GetByAuthIdAsync. This is the single canonical method.

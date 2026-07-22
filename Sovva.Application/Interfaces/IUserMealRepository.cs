@@ -7,7 +7,6 @@ namespace Sovva.Application.Interfaces
     public interface IUserMealRepository
     {
         Task AddAsync(UserMeal entity);
-        Task SaveChangesAsync();
         Task<UserMeal?> GetByIdAsync(int id);
         Task<IEnumerable<UserMeal>> GetByUserIdAsync(int userId);
         Task<List<UserMeal>> GetByIdsAsync(List<int> userMealIds);

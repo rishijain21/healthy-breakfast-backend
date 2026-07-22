@@ -20,5 +20,11 @@ namespace Sovva.Application.Interfaces
         /// Invalidate the dashboard profile cache for a user
         /// </summary>
         Task InvalidateDashboardCacheAsync(int userId);
+
+        /// <summary>
+        /// Fast, lightweight dashboard data — wallet balance + active sub count + tomorrow orders.
+        /// Runs fewer queries than GetDashboardSummaryAsync. Used by the new v2 endpoint.
+        /// </summary>
+        Task<DashboardLightDto> GetDashboardLightAsync(int userId, CancellationToken ct = default);
     }
 }

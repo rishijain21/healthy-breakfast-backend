@@ -111,31 +111,24 @@ namespace Sovva.WebAPI.Controllers
 
                 var summary = await _dashboardService.GetDashboardSummaryAsync(userId.Value, ct);
 
-                // ✅ FIX: Sign raw storage paths for subscription meal images so frontend can render them
-                if (summary.ActiveSubscriptions != null)
-                {
-                    foreach (var sub in summary.ActiveSubscriptions)
-                    {
-                        if (!string.IsNullOrEmpty(sub.MealImageUrl))
-                        {
-                            try { sub.MealImageUrl = await _storageService.GetSignedUrlAsync(sub.MealImageUrl); }
-                            catch { sub.MealImageUrl = null; }
-                        }
-                    }
-                }
+                // ✅ PERF FIX (NEW-11): Sign all image URLs in parallel using Task.WhenAll.
+                // Combines subscription images + tomorrow's order images into a single parallel batch.
+                var allSigningTasks = new List<Task>();
 
-                // ✅ FIX: Sign raw storage paths for tomorrow's order meal images
+                if (summary.ActiveSubscriptions != null)
+                    allSigningTasks.AddRange(
+                        summary.ActiveSubscriptions
+                            .Where(sub => !string.IsNullOrEmpty(sub.MealImageUrl))
+                            .Select(sub => SignUrlSafeAsync(sub, _storageService, v => sub.MealImageUrl = v)));
+
                 if (summary.TomorrowOrders != null)
-                {
-                    foreach (var order in summary.TomorrowOrders)
-                    {
-                        if (!string.IsNullOrEmpty(order.MealImageUrl))
-                        {
-                            try { order.MealImageUrl = await _storageService.GetSignedUrlAsync(order.MealImageUrl); }
-                            catch { order.MealImageUrl = null; }
-                        }
-                    }
-                }
+                    allSigningTasks.AddRange(
+                        summary.TomorrowOrders
+                            .Where(order => !string.IsNullOrEmpty(order.MealImageUrl))
+                            .Select(order => SignUrlSafeAsync(order, _storageService, v => order.MealImageUrl = v)));
+
+                if (allSigningTasks.Count > 0)
+                    await Task.WhenAll(allSigningTasks);
 
                 return Ok(ApiResponse.Ok(summary));
             }
@@ -233,6 +226,26 @@ namespace Sovva.WebAPI.Controllers
             if (!Guid.TryParse(authIdStr, out var authId)) return null;
             var user = await _userService.GetUserByAuthIdAsync(authId);
             return user?.UserId;
+        }
+
+        /// <summary>
+        /// Signs a single image URL safely — sets field to null on failure rather than throwing.
+        /// Used with Task.WhenAll for parallel batch signing.
+        /// </summary>
+        private static async Task SignUrlSafeAsync<T>(T item, ISupabaseStorageService storageService, Action<string?> setUrl)
+        {
+            try
+            {
+                var signed = await storageService.GetSignedUrlAsync(
+                    item is SubscriptionDto sub ? sub.MealImageUrl!
+                  : item is ScheduledOrderResponseDto order ? order.MealImageUrl!
+                  : string.Empty);
+                setUrl(signed);
+            }
+            catch
+            {
+                setUrl(null);
+            }
         }
     }
 }

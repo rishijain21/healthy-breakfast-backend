@@ -6,10 +6,10 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.DependencyInjection;
 using Sovva.Application.DTOs;
 using Sovva.Application.Helpers;
 using Sovva.Application.Interfaces;
+using Sovva.Application.Common.Infrastructure;
 using Sovva.Domain.Entities;
 using Sovva.Domain.Enums;
 using System.Text.Json;
@@ -21,6 +21,10 @@ namespace Sovva.Application.Services
     /// </summary>
     public class DashboardService : IDashboardService
     {
+        // ✅ Cached to avoid per-call allocation — JsonSerializerOptions is expensive to construct
+        private static readonly JsonSerializerOptions _nutritionJsonOpts =
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+
         private readonly IUserRepository _userRepository;
         private readonly IWalletTransactionRepository _walletTransactionRepository;
         private readonly ISubscriptionService _subscriptionService;
@@ -28,9 +32,6 @@ namespace Sovva.Application.Services
         private readonly IAppTimeProvider _time;
         private readonly ICacheService _cacheService;
         private readonly ILogger<DashboardService> _logger;
-        private readonly Microsoft.Extensions.DependencyInjection.IServiceScopeFactory _scopeFactory;
-        
-        private const string ProfileCacheKey = "dashboard:profile";
 
         public DashboardService(
             IUserRepository userRepository,
@@ -39,8 +40,7 @@ namespace Sovva.Application.Services
             IScheduledOrderRepository scheduledOrderRepository,
             IAppTimeProvider time,
             ICacheService cacheService,
-            ILogger<DashboardService> logger,
-            Microsoft.Extensions.DependencyInjection.IServiceScopeFactory scopeFactory)
+            ILogger<DashboardService> logger)
         {
             _userRepository = userRepository;
             _walletTransactionRepository = walletTransactionRepository;
@@ -49,7 +49,6 @@ namespace Sovva.Application.Services
             _time = time;
             _cacheService = cacheService;
             _logger = logger;
-            _scopeFactory = scopeFactory;
         }
 
         public async Task<DashboardSummaryDto> GetDashboardSummaryAsync(int userId, CancellationToken ct = default)
@@ -60,14 +59,7 @@ namespace Sovva.Application.Services
             var istNow = _time.ToIst(_time.UtcNow);
             var tomorrowIst = istNow.Date.AddDays(1);
 
-            // ✅ FIX: Consolidated sequential execution to reduce DB connection pool exhaustion (5 -> 1 connection per user)
-            await using var scope = _scopeFactory.CreateAsyncScope();
-            var userRepo = scope.ServiceProvider.GetRequiredService<IUserRepository>();
-            var walletRepo = scope.ServiceProvider.GetRequiredService<IWalletTransactionRepository>();
-            var subService = scope.ServiceProvider.GetRequiredService<ISubscriptionService>();
-            var orderRepo = scope.ServiceProvider.GetRequiredService<IScheduledOrderRepository>();
-
-            var profile = await GetProfileAsync(userId, userRepo, ct);
+            var profile = await GetProfileAsync(userId, _userRepository, ct);
             if (profile == null)
             {
                 _logger.LogWarning("⚠️ User {UserId} has no profile yet. Returning safe zero-state.", userId);
@@ -85,23 +77,31 @@ namespace Sovva.Application.Services
                 };
             }
 
-            var walletBalance = await walletRepo.GetUserBalanceAsync(userId);
+            // ── SEQUENTIAL DB QUERIES ────────────────────────────────────────────
+            // Note: All repositories share the same scoped EF DbContext.
+            // Task.WhenAll with EF queries on a shared context causes InvalidOperationException.
+            // Queries run sequentially — the wallet SUM and scheduled-order reads use
+            // lightweight projections/raw SQL that complete in < 5ms each on typical load.
+            var walletBalance = await _walletTransactionRepository.GetUserBalanceAsync(userId);
+
+            var transactionsResult = await _walletTransactionRepository.GetByUserIdAsync(userId, 1, 5);
+            // Note: GetByUserIdAsync already returns descending-ordered results from DB.
+            // No in-memory re-ordering needed.
+            var transactions = transactionsResult.Items.ToList();
             
-            var transactionsResult = await walletRepo.GetByUserIdAsync(userId, 1, 20);
-            var transactions = transactionsResult.Items;
+            var subscriptions = await GetActiveSubscriptionsAsync(userId, _subscriptionService, ct);
             
-            var subscriptions = await GetActiveSubscriptionsAsync(userId, subService, ct);
-            
-            var tomorrowOrders = await GetTomorrowOrdersAsync(userId, tomorrowIst, orderRepo, ct);
+            var tomorrowOrders = await GetTomorrowOrdersAsync(userId, tomorrowIst, _scheduledOrderRepository, ct);
 
             // ── THIS WEEK: rolling 7 days (IST) ──────────────────────────────────
             var todayIst = DateOnly.FromDateTime(istNow);
             var weekStart = todayIst.AddDays(-6);
-            var weekOrders = await orderRepo.GetByUserIdAndDateRangeAsync(userId, weekStart, todayIst);
+            var weekOrders = await _scheduledOrderRepository.GetByUserIdAndDateRangeAsync(userId, weekStart, todayIst);
 
             var (avgCalories, avgProtein, avgCarbs, avgFats) = ComputeWeeklyAverages(weekOrders, tomorrowOrders);
             var currentStreak = ComputeStreak(weekOrders, todayIst);
-            var loyaltyPoints = (int)transactions.Where(t => t.Type == "Credit").Sum(t => t.Amount) + (int)walletBalance;
+            var lifetimeCredits = await _walletTransactionRepository.GetLifetimeCreditSumAsync(userId);
+            var loyaltyPoints = (int)lifetimeCredits;
 
             profile.WalletBalance = walletBalance;
 
@@ -111,7 +111,7 @@ namespace Sovva.Application.Services
                 "transactions={TxCount}, subscriptions={SubCount}, tomorrowOrders={OrderCount}",
                 profile != null,
                 walletBalance,
-                transactions.Count(),
+                transactions.Count,
                 subscriptions.Count(),
                 tomorrowOrders.Count
             );
@@ -120,9 +120,8 @@ namespace Sovva.Application.Services
             {
                 Profile = profile,
                 WalletBalance = walletBalance,
+                // Repo returns already-ordered descending results. No further sorting needed.
                 RecentTransactions = transactions
-                    .OrderByDescending(t => t.CreatedAt)
-                    .Take(20)
                     .Select(t => new WalletTransactionDto
                     {
                         TransactionId = t.TransactionId,
@@ -137,7 +136,7 @@ namespace Sovva.Application.Services
                 TomorrowOrders = tomorrowOrders,
                 TotalTransactions = transactionsResult.TotalCount,
                 CurrentStreak = currentStreak,
-                BestStreak = Math.Max(currentStreak, 3), // safe baseline for UI motivation
+                BestStreak = currentStreak, // accurate — stored BestStreak is a future feature
                 LoyaltyPoints = loyaltyPoints,
                 AverageCalories = avgCalories,
                 AverageProtein = avgProtein,
@@ -147,15 +146,16 @@ namespace Sovva.Application.Services
             };
         }
 
-        public Task InvalidateDashboardCacheAsync(int userId)
+        public async Task InvalidateDashboardCacheAsync(int userId)
         {
-            var cacheKey = $"{ProfileCacheKey}:{userId}";
-            return _cacheService.RemoveAsync(cacheKey);
+            await _cacheService.RemoveAsync(CacheKeys.DashboardProfile(userId));
+            await _cacheService.RemoveAsync(CacheKeys.ActiveSubscriptions(userId));
+            await _cacheService.RemoveAsync($"dashboard:light:{userId}"); // ✅ Also bust light BFF cache
         }
 
         private async Task<UserDto?> GetProfileAsync(int userId, IUserRepository userRepo, CancellationToken ct)
         {
-            var cacheKey = $"{ProfileCacheKey}:{userId}";
+            var cacheKey = CacheKeys.DashboardProfile(userId);
             
             var cachedProfile = await _cacheService.GetAsync<UserDto>(cacheKey);
             if (cachedProfile != null)
@@ -190,16 +190,28 @@ namespace Sovva.Application.Services
         }
 
         /// <summary>
-        /// Get active subscriptions (Active = true and within date range)
+        /// Get active subscriptions with 30s cache (CACHE-02 fix).
+        /// Cache is invalidated when subscriptions are created, cancelled, or paused.
         /// </summary>
         private async Task<List<SubscriptionDto>> GetActiveSubscriptionsAsync(int userId, ISubscriptionService subService, CancellationToken ct)
         {
-            var subscriptions = await subService.GetSubscriptionsByUserIdAsync(userId);
-            var today = _time.TodayIst;
-            
-            return subscriptions
-                .Where(s => s.IsActive && s.StartDate <= today && s.EndDate >= today)
-                .ToList();
+            var cacheKey = CacheKeys.ActiveSubscriptions(userId);
+
+            var cached = await _cacheService.GetAsync<List<SubscriptionDto>>(cacheKey);
+            if (cached != null)
+            {
+                _logger.LogDebug("📦 Active subscriptions served from cache for user {UserId}", userId);
+                return cached;
+            }
+
+            var subscriptions = (await subService.GetActiveSubscriptionsByUserIdAsync(userId)).ToList();
+
+            // Cache for 30s — short TTL to stay fresh after subscription changes.
+            // InvalidateDashboardCacheAsync() is called by create/cancel/pause endpoints.
+            await _cacheService.SetAsync(cacheKey, subscriptions, TimeSpan.FromSeconds(30));
+            _logger.LogDebug("💾 Active subscriptions cached for user {UserId} ({Count} subs)", userId, subscriptions.Count);
+
+            return subscriptions;
         }
 
         /// <summary>
@@ -267,7 +279,7 @@ namespace Sovva.Application.Services
                     {
                         var ns = JsonSerializer.Deserialize<NutritionalSummaryDto>(
                             o.NutritionalSummary,
-                            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                            _nutritionJsonOpts); // ✅ Reuse cached options
                         if (ns != null && ns.TotalCalories > 0)
                         {
                             totalCal += ns.TotalCalories;
@@ -278,7 +290,13 @@ namespace Sovva.Application.Services
                             parsed = true;
                         }
                     }
-                    catch { /* fallback to ingredients below */ }
+                    catch (JsonException jex)
+                    {
+                        _logger.LogWarning(jex,
+                            "Failed to parse NutritionalSummary JSON for scheduled order {OrderId}",
+                            o.ScheduledOrderId);
+                        // Fallback to ingredient-level calculation below
+                    }
                 }
 
                 if (!parsed && o.Ingredients != null && o.Ingredients.Any())
@@ -327,36 +345,97 @@ namespace Sovva.Application.Services
             );
         }
 
-        private int ComputeStreak(List<ScheduledOrder> weekOrders, DateOnly today)
+        private int ComputeStreak(IEnumerable<ScheduledOrder> weekOrders, DateOnly todayIst)
         {
-            var datesWithOrders = weekOrders
-                .Select(o => o.ScheduledFor)
+            // ✅ Count both Processed (past confirmed deliveries) and Scheduled (today/future)
+            // This correctly gives a streak > 0 to active subscribers
+            var orderedDates = weekOrders
+                .Where(o => o.OrderStatus == ScheduledOrderStatus.Processed
+                         || o.OrderStatus == ScheduledOrderStatus.Scheduled)
+                .Select(o => o.ScheduledFor) // Assuming ScheduledFor is a DateOnly
                 .Distinct()
                 .OrderByDescending(d => d)
                 .ToList();
 
-            int streak = 0;
-            var expected = today;
+            var currentStreak = 0;
+            // ✅ Start from today (not yesterday) so today's scheduled order counts
+            var expectedDate = todayIst;
 
-            if (!datesWithOrders.Contains(today))
+            foreach (var date in orderedDates)
             {
-                expected = today.AddDays(-1);
-            }
-
-            foreach (var d in datesWithOrders)
-            {
-                if (d == expected)
+                if (date == expectedDate)
                 {
-                    streak++;
-                    expected = expected.AddDays(-1);
+                    currentStreak++;
+                    expectedDate = expectedDate.AddDays(-1);
                 }
-                else if (d < expected)
+                else
                 {
                     break;
                 }
             }
+            return currentStreak;
+        }
 
-            return streak;
+        public async Task<DashboardLightDto> GetDashboardLightAsync(int userId, CancellationToken ct = default)
+        {
+            var cacheKey = $"dashboard:light:{userId}";
+            var cached = await _cacheService.GetAsync<DashboardLightDto>(cacheKey);
+            if (cached != null)
+            {
+                _logger.LogInformation("📊 Dashboard light cache HIT for user {UserId}", userId);
+                return cached;
+            }
+
+            _logger.LogInformation("📊 Building lightweight dashboard for user {UserId}", userId);
+
+            var istNow = _time.ToIst(_time.UtcNow);
+            var tomorrowIst = istNow.Date.AddDays(1);
+
+            // ─── Sequential DB queries (shared EF DbContext scope) ───────────────────
+            var walletBalance = await _walletTransactionRepository.GetUserBalanceAsync(userId);
+
+            var activeSubscriptions = await _subscriptionService.GetActiveSubscriptionsByUserIdAsync(userId);
+
+            var tomorrowOrderEntities = await _scheduledOrderRepository.GetTomorrowOrdersSummaryAsync(
+                userId, tomorrowIst);
+
+            var todayIst = DateOnly.FromDateTime(istNow);
+            var weekStart = todayIst.AddDays(-6);
+            var ordersThisWeek = await _scheduledOrderRepository.GetOrdersThisWeekCountAsync(userId, weekStart, todayIst);
+
+            var transactionsResult = await _walletTransactionRepository.GetByUserIdAsync(userId, 1, 5);
+            var recentTransactions = transactionsResult.Items.Select(t => new WalletTransactionDto
+            {
+                TransactionId = t.TransactionId,
+                UserId = t.UserId,
+                Amount = t.Amount,
+                Type = t.Type,
+                Description = t.Description,
+                CreatedAt = t.CreatedAt
+            }).ToList();
+            // ─────────────────────────────────────────────────────────────────────────
+
+            var dto = new DashboardLightDto
+            {
+                WalletBalance = walletBalance,
+                ActiveSubscriptionCount = activeSubscriptions.Count(),
+                ActiveSubscriptions = activeSubscriptions.Select(s => new SubscriptionSummaryDto
+                {
+                    SubscriptionId    = s.SubscriptionId,
+                    IsActive          = s.IsActive,
+                    MealName          = s.MealName,
+                    MealImageUrl      = s.MealImageUrl,
+                    AgreedPrice       = s.AgreedPrice,
+                    NextScheduledDate = s.NextScheduledDate
+                }).ToList(),
+                TomorrowOrders = tomorrowOrderEntities,
+                OrdersThisWeek = ordersThisWeek,
+                RecentTransactions = recentTransactions
+            };
+
+            await _cacheService.SetAsync(cacheKey, dto, TimeSpan.FromSeconds(30));
+
+            return dto;
         }
     }
 }

@@ -12,18 +12,18 @@ namespace Sovva.WebAPI.Controllers
     public class UserMealsController : ControllerBase
     {
         private readonly IUserMealService _userMealService;
-        private readonly ISubscriptionRepository _subscriptionRepository;
+        private readonly ISubscriptionService _subscriptionService;
         private readonly ISubscriptionSchedulingService _subscriptionSchedulingService;
         private readonly ILogger<UserMealsController> _logger;
 
         public UserMealsController(
             IUserMealService userMealService,
-            ISubscriptionRepository subscriptionRepository,
+            ISubscriptionService subscriptionService,
             ISubscriptionSchedulingService subscriptionSchedulingService,
             ILogger<UserMealsController> logger)
         {
             _userMealService = userMealService;
-            _subscriptionRepository = subscriptionRepository;
+            _subscriptionService = subscriptionService;
             _subscriptionSchedulingService = subscriptionSchedulingService;
             _logger = logger;
         }
@@ -41,7 +41,11 @@ namespace Sovva.WebAPI.Controllers
                 return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
             }
 
-            var userId = (int)HttpContext.Items["UserId"]!;
+            if (!int.TryParse(HttpContext.Items["UserId"]?.ToString(), out int userId))
+            {
+                _logger.LogWarning("Invalid UserId format in HttpContext: {UserId}", HttpContext.Items["UserId"]);
+                return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "Invalid user identification"));
+            }
 
             _logger.LogInformation("Creating UserMeal for UserId: {UserId}, MealName: {MealName}, Ingredients: {Count}",
                 userId, dto.MealName, dto.SelectedIngredients?.Count ?? 0);
@@ -54,7 +58,7 @@ namespace Sovva.WebAPI.Controllers
                 var authIdStr = HttpContext.Items["auth_id"]?.ToString();
                 if (!string.IsNullOrEmpty(authIdStr) && Guid.TryParse(authIdStr, out var authGuid))
                 {
-                    var subscription = await _subscriptionRepository
+                    var subscription = await _subscriptionService
                         .GetActiveSubscriptionByUserMealIdAsync(userId, userMealId);
 
                     if (subscription != null)

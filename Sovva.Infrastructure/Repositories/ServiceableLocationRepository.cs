@@ -88,14 +88,14 @@ namespace Sovva.Infrastructure.Repositories
         public async Task<ServiceableLocation> CreateAsync(ServiceableLocation location)
         {
             _context.ServiceableLocations.Add(location);
-            await _context.SaveChangesAsync();
+            // NOTE: Caller (UnitOfWork or service) is responsible for SaveChangesAsync
             return location;
         }
 
         public async Task<ServiceableLocation> UpdateAsync(ServiceableLocation location)
         {
             _context.ServiceableLocations.Update(location);
-            await _context.SaveChangesAsync();
+            // NOTE: Caller (UnitOfWork or service) is responsible for SaveChangesAsync
             return location;
         }
 
@@ -117,7 +117,7 @@ namespace Sovva.Infrastructure.Repositories
             }
 
             _context.ServiceableLocations.Remove(location);
-            await _context.SaveChangesAsync();
+            // NOTE: Caller (UnitOfWork or service) is responsible for SaveChangesAsync
             return true;
         }
 

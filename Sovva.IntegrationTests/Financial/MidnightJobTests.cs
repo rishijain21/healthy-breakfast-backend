@@ -19,26 +19,10 @@ namespace Sovva.IntegrationTests.Financial;
 /// Verifies that all orders are confirmed even when processed in parallel
 /// with SemaphoreSlim concurrency.
 /// </summary>
-[Collection("PostgresCollection")]
-public class MidnightJobTests : IAsyncLifetime
+public class MidnightJobTests : BaseIntegrationTest
 {
-    private readonly PostgresContainerFixture _fixture;
-    private AppDbContext _dbContext = null!;
-
-    public MidnightJobTests(PostgresContainerFixture fixture)
+    public MidnightJobTests(PostgresContainerFixture fixture) : base(fixture)
     {
-        _fixture = fixture;
-    }
-
-    public async Task InitializeAsync()
-    {
-        _dbContext = _fixture.CreateDbContext();
-        await DbSeeder.CleanAsync(_dbContext);
-    }
-
-    public async Task DisposeAsync()
-    {
-        await _dbContext.DisposeAsync();
     }
 
     // ─────────────────────────────────────────────────────────────────────────

@@ -6,6 +6,9 @@ using Microsoft.EntityFrameworkCore;
 using System;
 
 using Sovva.Domain.Constants;
+using Sovva.Domain.Interfaces;
+using System.Linq.Expressions;
+using System.Reflection;
 
 namespace Sovva.Infrastructure.Data
 {
@@ -58,11 +61,18 @@ namespace Sovva.Infrastructure.Data
             // All entity config loaded from IEntityTypeConfiguration<T> classes
             modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
 
-            // ── Uniform soft-delete filters (DeletedAt == null means active) ─
-            modelBuilder.Entity<Meal>().HasQueryFilter(m => m.DeletedAt == null);
-            modelBuilder.Entity<User>().HasQueryFilter(u => u.DeletedAt == null);
-            modelBuilder.Entity<Subscription>().HasQueryFilter(s => s.DeletedAt == null);
-            modelBuilder.Entity<UserMeal>().HasQueryFilter(um => um.DeletedAt == null);
+            // ── Automatic soft-delete filters (DeletedAt == null means active) ──
+            foreach (var entityType in modelBuilder.Model.GetEntityTypes().ToList())
+            {
+                if (typeof(ISoftDeletable).IsAssignableFrom(entityType.ClrType))
+                {
+                    var parameter = Expression.Parameter(entityType.ClrType, "e");
+                    var property = Expression.Property(parameter, nameof(ISoftDeletable.DeletedAt));
+                    var nullValue = Expression.Constant(null, typeof(DateTime?));
+                    var filter = Expression.Lambda(Expression.Equal(property, nullValue), parameter);
+                    modelBuilder.Entity(entityType.ClrType).HasQueryFilter(filter);
+                }
+            }
 
             // ======= SEED DATA =======
             var seedDate = new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc);

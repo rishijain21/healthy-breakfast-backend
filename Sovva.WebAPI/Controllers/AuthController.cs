@@ -90,46 +90,41 @@ namespace Sovva.WebAPI.Controllers
                 authId, "***@***", request.Name
             );
 
-            try
+            // ✅ Check if user already exists by AuthId
+            var existingUserByAuth = await _userService.GetUserByAuthIdAsync(authId);
+            if (existingUserByAuth != null)
             {
-                // ✅ Check if user already exists by AuthId
-                var existingUserByAuth = await _userService.GetUserByAuthIdAsync(authId);
-                if (existingUserByAuth != null)
-                {
-                    _logger.LogInformation("User already exists with AuthId, returning existing user: {UserId}", existingUserByAuth.UserId);
-                    return Ok(ApiResponse.Ok(new { user = existingUserByAuth, isNewUser = false, message = "User already registered" }));
-                }
-
-                // ✅ Check if user already exists by Email
-                var existingUserByEmail = await _userService.GetUserByEmailAsync(email);
-                if (existingUserByEmail != null)
-                {
-                    _logger.LogWarning("User already exists with Email: {Email}", "***@***");
-                    return Conflict(ApiResponse.Fail("CONFLICT", "Email already registered. Please login instead."));
-                }
-
-                // ✅ Create new user — authId + email from JWT, name + phone from body
-                var registrationRequest = new RegisterUserRequest
-                {
-                    AuthId = authId,
-                    Email = email,
-                    Name = request.Name,
-                    Phone = request.Phone
-                };
-
-                var userDto = await _userService.RegisterUserAsync(registrationRequest);
-
-                _logger.LogInformation(
-                    "User registered successfully - UserId: {UserId}, Email: {Email}",
-                    userDto.UserId, "***@***"
-                );
-
-                return Ok(ApiResponse.Ok(new { user = userDto, isNewUser = true, message = "User registered successfully" }));
+                _logger.LogInformation("User already exists with AuthId, returning existing user: {UserId}", existingUserByAuth.UserId);
+                return Ok(ApiResponse.Ok(new { user = existingUserByAuth, isNewUser = false, message = "User already registered" }));
             }
-            catch (InvalidOperationException ex)
+
+            // ✅ Check if user already exists by Email
+            var existingUserByEmail = await _userService.GetUserByEmailAsync(email);
+            if (existingUserByEmail != null)
             {
-                return Conflict(ApiResponse.Fail("CONFLICT", ex.Message));
+                _logger.LogWarning("User already exists with Email: {Email}", "***@***");
+                return Conflict(ApiResponse.Fail("CONFLICT", "Email already registered. Please login instead."));
             }
+
+            // ✅ Create new user — authId + email from JWT, name + phone from body
+            // Any unexpected InvalidOperationException is handled by GlobalExceptionMiddleware
+            // which returns a safe generic message — no internal details leak to the client.
+            var registrationRequest = new RegisterUserRequest
+            {
+                AuthId = authId,
+                Email = email,
+                Name = request.Name,
+                Phone = request.Phone
+            };
+
+            var userDto = await _userService.RegisterUserAsync(registrationRequest);
+
+            _logger.LogInformation(
+                "User registered successfully - UserId: {UserId}, Email: {Email}",
+                userDto.UserId, "***@***"
+            );
+
+            return Ok(ApiResponse.Ok(new { user = userDto, isNewUser = true, message = "User registered successfully" }));
         }
 
     }

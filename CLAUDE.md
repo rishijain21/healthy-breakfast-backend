@@ -890,3 +890,95 @@ The `AtomicDebitAsync` pattern uses a single `INSERT INTO ... SELECT ... WHERE b
 The wallet system — which was the ONLY production-blocking risk — is now architecturally sound. The atomic INSERT pattern is a well-proven PostgreSQL pattern used by payment systems at scale. All existing tests pass. No breaking API changes were introduced.
 
 **This system is ready for production launch.**
+
+---
+
+---
+
+# ═══════════════════════════════════════════════════════════
+# 🤖 AI AGENT AUTONOMOUS EXECUTION PROTOCOL
+# ═══════════════════════════════════════════════════════════
+# READ THIS FIRST ON EVERY CONVERSATION.
+# This protocol governs ALL ongoing architectural migration work.
+# ═══════════════════════════════════════════════════════════
+
+## WHAT THIS PROJECT IS DOING
+
+Active migration: Sovva Backend → Vertical Slice + CQRS + DDD architecture.
+Full plan: `/Users/rishijain/.gemini/antigravity-ide/brain/4ca30a4c-17a1-444a-8a21-73baac1db940/implementation_plan_sprints.md`
+Task state: `AGENT_TASK.md` (this repo root)
+Resume state: `AGENT_STATE.md` (this repo root)
+
+## 🎯 TRIGGER WORD SYSTEM — RESPOND TO THESE EXACTLY
+
+When the user sends ANY of the following short messages, execute the mapped action WITHOUT asking for clarification:
+
+| User types | Agent does |
+|---|---|
+| `continue` or `c` | Read AGENT_TASK.md → find first `[ ]` item → execute it fully → mark `[x]` → update AGENT_STATE.md → report done |
+| `continue all` | Execute ALL remaining `[ ]` items in current stage, one by one, without stopping |
+| `status` or `s` | Print a clean progress table from AGENT_TASK.md (✅ done, 🔄 in progress, ⏳ pending) |
+| `build` | Run: `cd /Users/rishijain/Projects/HealthyBreakfastApp/sovva-backend && dotnet build` — report pass/fail |
+| `test` | Run: `cd /Users/rishijain/Projects/HealthyBreakfastApp/sovva-backend && dotnet test` — report results |
+| `stage 2` | Jump AGENT_STATE to Stage 2, begin its first `[ ]` task |
+| `stage 3` | Same for Stage 3 |
+| `stage 4` | Same for Stage 4 |
+| `stage 5` | Same for Stage 5 |
+| `skip` | Mark current `[ ]` task as `[~] SKIPPED` → advance to next |
+| `redo` | Re-execute the last `[x]` task (useful after a bad edit) |
+| `what next` | Describe (do NOT execute) the next pending task |
+| `blocker: [text]` | Write blocker to AGENT_STATE.md → stop and wait for user resolution |
+| `done` | Run final stage gate: dotnet build + dotnet test → report |
+
+## 📋 HOW TO EXECUTE A "continue"
+
+1. **Read** `AGENT_TASK.md` — identify first `[ ]` item
+2. **Read** `AGENT_STATE.md` — get last context (files changed, current stage/task)
+3. **Read** the task definition from `implementation_plan_sprints.md` (the TASK-X.X section)
+4. **Execute** the task: make code changes, create files, etc.
+5. **Verify**: propose `dotnet build` command for user approval
+6. **Update** `AGENT_TASK.md`: change `[ ]` to `[x]` for completed task
+7. **Update** `AGENT_STATE.md`: record what was done, files changed, next task
+8. **Report**: one-paragraph summary ending with "Type `continue` for next task: TASK-X.X — [name]"
+
+## 🔄 CONTEXT WINDOW RECOVERY
+
+If you notice previous steps are truncated or context is lost:
+1. Read `AGENT_STATE.md` — it has the last known state
+2. Read `AGENT_TASK.md` — it has all task statuses
+3. Continue from the first `[ ]` or `[/]` item
+4. You do NOT need the user to re-explain anything
+
+## 🚦 STAGE GATES
+
+After completing ALL tasks in a stage, STOP and report:
+```
+════════════════════════════════
+STAGE X GATE CHECK
+════════════════════════════════
+Tasks completed: X/X
+Build: ✅ PASS / ❌ FAIL
+Tests: ✅ PASS / ❌ FAIL (X/X passing)
+Ready for Stage X+1: YES / NO — [reason]
+════════════════════════════════
+```
+Do NOT proceed to the next stage until the user explicitly confirms.
+
+## ⚙️ EXECUTION RULES
+
+- ALWAYS make one task at a time on `continue`
+- ALWAYS verify build compiles before marking task `[x]`
+- NEVER break existing API contracts
+- NEVER delete files — soft-delete by moving to `_archive/` folder
+- NEVER auto-commit to git
+- Add comment `// ARCH-MIGRATION: TASK-X.X` to every changed file
+- Preserve ALL existing XML docs and comments
+
+## 📁 KEY PATHS
+
+```
+Repo root:       /Users/rishijain/Projects/HealthyBreakfastApp/sovva-backend/
+Task list:       /Users/rishijain/Projects/HealthyBreakfastApp/sovva-backend/AGENT_TASK.md
+State file:      /Users/rishijain/Projects/HealthyBreakfastApp/sovva-backend/AGENT_STATE.md
+Full plan:       /Users/rishijain/.gemini/antigravity-ide/brain/4ca30a4c-17a1-444a-8a21-73baac1db940/implementation_plan_sprints.md
+```

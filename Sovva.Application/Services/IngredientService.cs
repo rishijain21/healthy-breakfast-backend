@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Sovva.Application.DTOs;
 using Sovva.Application.Interfaces;
+using Sovva.Application.Common.Infrastructure;
 using Sovva.Domain.Entities;
 
 namespace Sovva.Application.Services
@@ -12,34 +13,35 @@ namespace Sovva.Application.Services
     {
         private readonly IIngredientRepository _ingredientRepository;
         private readonly ICacheService _cacheService;
+        private readonly IUnitOfWork _unitOfWork;
 
-        private const string AllIngredientsCacheKey = "ingredients:all";
-        private const string CategoryIngredientsCacheKeyPrefix = "ingredients:category:";
-        private const string IngredientByIdCacheKeyPrefix = "ingredients:id:";
-
-        public IngredientService(IIngredientRepository ingredientRepository, ICacheService cacheService)
+        public IngredientService(
+            IIngredientRepository ingredientRepository,
+            ICacheService cacheService,
+            IUnitOfWork unitOfWork)
         {
             _ingredientRepository = ingredientRepository;
             _cacheService = cacheService;
+            _unitOfWork = unitOfWork;
         }
 
         // ==================== READ OPERATIONS ====================
 
         public async Task<IEnumerable<IngredientDto>> GetAllIngredientsAsync()
         {
-            var cached = await _cacheService.GetAsync<IEnumerable<IngredientDto>>(AllIngredientsCacheKey);
+            var cached = await _cacheService.GetAsync<IEnumerable<IngredientDto>>(CacheKeys.IngredientsAll());
             if (cached != null) return cached;
 
             var ingredients = await _ingredientRepository.GetAllAsync();
             var result = ingredients.Select(MapToDto).ToList();
 
-            await _cacheService.SetAsync(AllIngredientsCacheKey, result, TimeSpan.FromMinutes(30));
+            await _cacheService.SetAsync(CacheKeys.IngredientsAll(), result, TimeSpan.FromMinutes(30));
             return result;
         }
 
         public async Task<IEnumerable<IngredientDto>> GetIngredientsByCategoryIdAsync(int categoryId)
         {
-            var cacheKey = CategoryIngredientsCacheKeyPrefix + categoryId;
+            var cacheKey = CacheKeys.IngredientsByCategory(categoryId);
             var cached = await _cacheService.GetAsync<IEnumerable<IngredientDto>>(cacheKey);
             if (cached != null) return cached;
 
@@ -52,7 +54,7 @@ namespace Sovva.Application.Services
 
         public async Task<IngredientDto?> GetIngredientByIdAsync(int id)
         {
-            var cacheKey = IngredientByIdCacheKeyPrefix + id;
+            var cacheKey = CacheKeys.IngredientById(id);
             var cached = await _cacheService.GetAsync<IngredientDto>(cacheKey);
             if (cached != null) return cached;
 
@@ -84,12 +86,12 @@ namespace Sovva.Application.Services
             };
 
             await _ingredientRepository.AddIngredientAsync(ingredient);
-            await _ingredientRepository.SaveChangesAsync();
+            await _unitOfWork.SaveChangesAsync(); // ARCH-MIGRATION: TASK-1.1
 
-            await _cacheService.RemoveAsync(AllIngredientsCacheKey);
-            await _cacheService.RemoveAsync(CategoryIngredientsCacheKeyPrefix + ingredient.CategoryId);
-            await _cacheService.RemoveAsync(IngredientByIdCacheKeyPrefix + ingredient.IngredientId);
-            await _cacheService.RemoveAsync("meals:categories_with_ingredients");
+            await _cacheService.RemoveAsync(CacheKeys.IngredientsAll());
+            await _cacheService.RemoveAsync(CacheKeys.IngredientsByCategory(ingredient.CategoryId));
+            await _cacheService.RemoveAsync(CacheKeys.IngredientById(ingredient.IngredientId));
+            await _cacheService.RemoveAsync(CacheKeys.MealCategories());
 
             return ingredient.IngredientId;
         }
@@ -114,12 +116,12 @@ namespace Sovva.Application.Services
             ingredient.IconEmoji = dto.IconEmoji;
 
             await _ingredientRepository.UpdateIngredientAsync(ingredient);
-            await _ingredientRepository.SaveChangesAsync();
+            await _unitOfWork.SaveChangesAsync(); // ARCH-MIGRATION: TASK-1.1
 
-            await _cacheService.RemoveAsync(AllIngredientsCacheKey);
-            await _cacheService.RemoveAsync(CategoryIngredientsCacheKeyPrefix + ingredient.CategoryId);
-            await _cacheService.RemoveAsync(IngredientByIdCacheKeyPrefix + ingredient.IngredientId);
-            await _cacheService.RemoveAsync("meals:categories_with_ingredients");
+            await _cacheService.RemoveAsync(CacheKeys.IngredientsAll());
+            await _cacheService.RemoveAsync(CacheKeys.IngredientsByCategory(ingredient.CategoryId));
+            await _cacheService.RemoveAsync(CacheKeys.IngredientById(ingredient.IngredientId));
+            await _cacheService.RemoveAsync(CacheKeys.MealCategories());
 
             return true;
         }
@@ -133,12 +135,12 @@ namespace Sovva.Application.Services
             ingredient.IsAvailable = !ingredient.IsAvailable;
 
             await _ingredientRepository.UpdateIngredientAsync(ingredient);
-            await _ingredientRepository.SaveChangesAsync();
+            await _unitOfWork.SaveChangesAsync(); // ARCH-MIGRATION: TASK-1.1
 
-            await _cacheService.RemoveAsync(AllIngredientsCacheKey);
-            await _cacheService.RemoveAsync(CategoryIngredientsCacheKeyPrefix + ingredient.CategoryId);
-            await _cacheService.RemoveAsync(IngredientByIdCacheKeyPrefix + ingredient.IngredientId);
-            await _cacheService.RemoveAsync("meals:categories_with_ingredients");
+            await _cacheService.RemoveAsync(CacheKeys.IngredientsAll());
+            await _cacheService.RemoveAsync(CacheKeys.IngredientsByCategory(ingredient.CategoryId));
+            await _cacheService.RemoveAsync(CacheKeys.IngredientById(ingredient.IngredientId));
+            await _cacheService.RemoveAsync(CacheKeys.MealCategories());
 
             return true;
         }
@@ -161,12 +163,12 @@ namespace Sovva.Application.Services
             }
 
             await _ingredientRepository.DeleteIngredientAsync(ingredient);
-            await _ingredientRepository.SaveChangesAsync();
+            await _unitOfWork.SaveChangesAsync(); // ARCH-MIGRATION: TASK-1.1
 
-            await _cacheService.RemoveAsync(AllIngredientsCacheKey);
-            await _cacheService.RemoveAsync(CategoryIngredientsCacheKeyPrefix + ingredient.CategoryId);
-            await _cacheService.RemoveAsync(IngredientByIdCacheKeyPrefix + ingredient.IngredientId);
-            await _cacheService.RemoveAsync("meals:categories_with_ingredients");
+            await _cacheService.RemoveAsync(CacheKeys.IngredientsAll());
+            await _cacheService.RemoveAsync(CacheKeys.IngredientsByCategory(ingredient.CategoryId));
+            await _cacheService.RemoveAsync(CacheKeys.IngredientById(ingredient.IngredientId));
+            await _cacheService.RemoveAsync(CacheKeys.MealCategories());
 
             return true;
         }

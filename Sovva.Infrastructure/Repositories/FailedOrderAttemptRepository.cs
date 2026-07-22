@@ -17,7 +17,7 @@ namespace Sovva.Infrastructure.Repositories
         public async Task AddAsync(FailedOrderAttempt attempt)
         {
             _context.FailedOrderAttempts.Add(attempt);
-            await _context.SaveChangesAsync();
+            // NOTE: Caller (UnitOfWork or service) is responsible for SaveChangesAsync
         }
     }
 }

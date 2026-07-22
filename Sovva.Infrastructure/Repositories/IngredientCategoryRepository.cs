@@ -33,11 +33,6 @@ namespace Sovva.Infrastructure.Repositories
             await _context.IngredientCategories.AddAsync(entity);
         }
 
-        public async Task SaveChangesAsync()
-        {
-            await _context.SaveChangesAsync();
-        }
-
         public async Task<IngredientCategory?> GetByIdAsync(int id)
         {
             return await _context.IngredientCategories.FirstOrDefaultAsync(c => c.CategoryId == id);

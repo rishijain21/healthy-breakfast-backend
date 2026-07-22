@@ -18,30 +18,30 @@ namespace Sovva.WebAPI.Controllers
         private readonly ISubscriptionService _subscriptionService;
         private readonly ISubscriptionSchedulingService _subscriptionSchedulingService;
         private readonly IScheduledOrderService _scheduledOrderService;
-        private readonly IScheduledOrderRepository _scheduledOrderRepository;
         private readonly ICurrentUserService _currentUserService;
         private readonly IDashboardService _dashboardService;
         private readonly IAppTimeProvider _time;
         private readonly ILogger<SubscriptionsController> _logger;
+        private readonly ISubscriptionRepository _subscriptionRepository;
 
         public SubscriptionsController(
             ISubscriptionService subscriptionService,
             ISubscriptionSchedulingService subscriptionSchedulingService,
             IScheduledOrderService scheduledOrderService,
-            IScheduledOrderRepository scheduledOrderRepository,
             ICurrentUserService currentUserService,
             IDashboardService dashboardService,
             IAppTimeProvider time,
-            ILogger<SubscriptionsController> logger)
+            ILogger<SubscriptionsController> logger,
+            ISubscriptionRepository subscriptionRepository)
         {
             _subscriptionService = subscriptionService;
             _subscriptionSchedulingService = subscriptionSchedulingService;
             _scheduledOrderService = scheduledOrderService;
-            _scheduledOrderRepository = scheduledOrderRepository;
             _currentUserService = currentUserService;
             _dashboardService = dashboardService;
             _time = time;
             _logger = logger;
+            _subscriptionRepository = subscriptionRepository;
         }
 
         // ✅ NEW: Uses ICurrentUserService to correctly fallback to DB if token lacks claim
@@ -74,12 +74,10 @@ namespace Sovva.WebAPI.Controllers
             if (userId == null)
                 return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
 
-            var subscription = await _subscriptionService.GetSubscriptionByIdAsync(id);
+            // ✅ SECURE: Scope subscription fetch to authenticated user ID (eliminates IDOR)
+            var subscription = await _subscriptionService.GetSubscriptionByIdAndUserIdAsync(id, userId.Value);
             if (subscription == null)
                 return NotFound(ApiResponse.Fail("NOT_FOUND", "Resource not found"));
-
-            if (subscription.UserId != userId.Value)
-                return StatusCode(403, ApiResponse.Fail("FORBIDDEN", "Access denied"));
 
             return Ok(ApiResponse.Ok(subscription));
         }
@@ -107,9 +105,8 @@ namespace Sovva.WebAPI.Controllers
             if (userId == null)
                 return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
 
-            // ✅ Filter by the current user only
-            var subscriptions = await _subscriptionService.GetSubscriptionsByUserIdAsync(userId.Value);
-            var active = subscriptions.Where(s => s.IsActive);
+            // ✅ Filter active subscriptions at DB level
+            var active = await _subscriptionService.GetActiveSubscriptionsByUserIdAsync(userId.Value);
             return Ok(ApiResponse.Ok(active));
         }
 
@@ -177,12 +174,10 @@ namespace Sovva.WebAPI.Controllers
             if (userId == null)
                 return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
 
-            var existing = await _subscriptionService.GetSubscriptionByIdAsync(id);
-            if (existing == null)
+            // ✅ PERF: Single EXISTS query instead of full entity fetch for ownership check
+            var belongs = await _subscriptionRepository.BelongsToUserAsync(id, userId.Value);
+            if (!belongs)
                 return NotFound(ApiResponse.Fail("NOT_FOUND", "Resource not found"));
-
-            if (existing.UserId != userId.Value)
-                return StatusCode(403, ApiResponse.Fail("FORBIDDEN", "Access denied"));
 
             var subscription = await _subscriptionService.UpdateSubscriptionAsync(id, updateSubscriptionDto);
             if (subscription == null)
@@ -200,16 +195,14 @@ namespace Sovva.WebAPI.Controllers
             if (userId == null)
                 return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
 
-            var subscription = await _subscriptionService.GetSubscriptionByIdAsync(id);
-            if (subscription == null)
+            // ✅ PERF: EXISTS query — no full entity materialization needed for delete
+            var belongs = await _subscriptionRepository.BelongsToUserAsync(id, userId.Value);
+            if (!belongs)
             {
-                // ✅ FIX: Idempotent delete. If already deleted, treat as success to prevent frontend UX errors.
+                // ✅ Idempotent: treat not-found as already deleted
                 _logger.LogInformation("Subscription {SubscriptionId} not found during delete (likely already deleted)", id);
                 return NoContent();
             }
-
-            if (subscription.UserId != userId.Value)
-                return StatusCode(403, ApiResponse.Fail("FORBIDDEN", "Access denied"));
 
             // ✅ Delegate to service - it handles scheduled orders properly
             // (keeps processed orders, deletes pending ones)
@@ -233,9 +226,10 @@ namespace Sovva.WebAPI.Controllers
             if (userId == null || authId == null)
                 return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
 
-            var existing = await _subscriptionService.GetSubscriptionByIdAsync(id);
-            if (existing == null || existing.UserId != userId.Value)
-                return StatusCode(403, ApiResponse.Fail("FORBIDDEN", "Access denied"));
+            // ✅ SECURE: Check subscription ownership in DB via EXISTS query
+            var belongs = await _subscriptionRepository.BelongsToUserAsync(id, userId.Value);
+            if (!belongs)
+                return NotFound(ApiResponse.Fail("NOT_FOUND", "Resource not found"));
 
             _logger.LogInformation("Resuming subscription {SubscriptionId}", id);
 
@@ -244,20 +238,35 @@ namespace Sovva.WebAPI.Controllers
             if (!result)
                 return NotFound(ApiResponse.Fail("NOT_FOUND", "Resource not found"));
 
-            // ✅ NEW: Generate tomorrow's order immediately when resuming
+            // ✅ Generate tomorrow's order immediately when resuming.
+            // Track success separately — order generation failure must NOT rollback the activation.
+            var orderGenerated = false;
+            string? orderWarning = null;
             try
             {
                 await _subscriptionSchedulingService.GenerateOrderForSubscriptionAsync(id, userId.Value, authId.Value);
+                orderGenerated = true;
                 _logger.LogInformation("Generated order for resumed subscription {SubscriptionId}", id);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to generate order for resumed subscription {SubscriptionId}", id);
+                // Activation itself succeeded — only order generation failed.
+                // The midnight job will generate it automatically tonight.
+                orderWarning = "Subscription activated, but we couldn't generate today's order. It will be created automatically tonight.";
+                _logger.LogWarning(ex, "Failed to generate order for resumed subscription {SubscriptionId} — midnight job will retry", id);
             }
 
             await _dashboardService.InvalidateDashboardCacheAsync(userId.Value);
 
-            return Ok(ApiResponse.Ok(new { message = "Subscription activated and order generated" }));
+            return Ok(ApiResponse.Ok(new
+            {
+                activated = true,
+                orderGenerated,
+                message = orderGenerated
+                    ? "Subscription activated and order generated"
+                    : "Subscription activated",
+                warning = orderWarning
+            }));
         }
 
         /// <summary>
@@ -272,9 +281,10 @@ namespace Sovva.WebAPI.Controllers
             if (userId == null || authId == null)
                 return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
 
-            var existing = await _subscriptionService.GetSubscriptionByIdAsync(id);
-            if (existing == null || existing.UserId != userId.Value)
-                return StatusCode(403, ApiResponse.Fail("FORBIDDEN", "Access denied"));
+            // ✅ SECURE: Check subscription ownership in DB via EXISTS query
+            var belongs = await _subscriptionRepository.BelongsToUserAsync(id, userId.Value);
+            if (!belongs)
+                return NotFound(ApiResponse.Fail("NOT_FOUND", "Resource not found"));
 
             _logger.LogInformation("Pausing subscription {SubscriptionId}", id);
 

@@ -12,6 +12,9 @@ namespace Sovva.Application.Interfaces
         Task<long> CreateOrderAsync(CreateOrderDto dto, int userId);
         Task<OrderDto?> GetOrderByIdAsync(long id);
         
+        // ✅ NEW: Enhanced single order fetch
+        Task<EnhancedOrderHistoryDto?> GetOrderDetailsByIdAsync(long id);
+        
         // ✅ SECURE: Meal builder method with userId from JWT token
         Task<OrderCreationResponseDto> CreateOrderFromMealBuilderAsync(CreateOrderFromMealBuilderDto dto, int userId);
         

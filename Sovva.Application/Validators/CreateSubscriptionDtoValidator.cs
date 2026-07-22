@@ -8,8 +8,9 @@ public class CreateSubscriptionDtoValidator : AbstractValidator<CreateSubscripti
 {
     public CreateSubscriptionDtoValidator(IAppTimeProvider time)
     {
-        RuleFor(x => x.MealId)
-            .GreaterThan(0).WithMessage("A valid meal must be selected");
+        RuleFor(x => x)
+            .Must(x => (x.MealId.HasValue && x.MealId > 0) || (x.UserMealId.HasValue && x.UserMealId > 0))
+            .WithMessage("Either a master meal (MealId) or a custom meal (UserMealId) must be specified");
 
 
         RuleFor(x => x.StartDate)

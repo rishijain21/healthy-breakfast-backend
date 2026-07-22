@@ -1,3 +1,4 @@
+using Sovva.Application.DTOs;
 using Sovva.Domain.Entities;
 using Sovva.Domain.Enums;  // ✅ ADD this import
 using System.Threading.Tasks;
@@ -7,7 +8,6 @@ namespace Sovva.Application.Interfaces
     public interface IOrderRepository
     {
         Task AddAsync(Order entity);
-        Task SaveChangesAsync();
         Task<Order?> GetByIdAsync(long id);
         void Update(Order order);
         Task<IEnumerable<Order>> GetByUserIdAsync(int userId);
@@ -20,6 +20,7 @@ namespace Sovva.Application.Interfaces
         Task<IEnumerable<Order>> GetAllAsync(int page = 1, int pageSize = 50);
 
         // ✅ NEW: Enhanced methods with eager loading
+        Task<Order?> GetOrderDetailsByIdAsync(long id);
         Task<IEnumerable<Order>> GetUserOrdersWithDetailsAsync(int userId);
         Task<(IEnumerable<Order> Items, int TotalCount)> GetUserOrdersWithDetailsPagedAsync(int userId, int page, int pageSize);
         Task<IEnumerable<Order>> GetAllOrdersWithDetailsAsync(int page = 1, int pageSize = 50);
@@ -38,5 +39,10 @@ namespace Sovva.Application.Interfaces
         // ✅ NEW: Count methods for pagination
         Task<int> CountAsync();
         Task<int> CountByStatusAsync(OrderStatus status);
+
+        /// <summary>
+        /// Lightweight projection — fetches only list-view fields, no ingredient join.
+        /// </summary>
+        Task<(IEnumerable<OrderHistorySummaryDto> Items, int TotalCount)> GetUserOrdersSummaryPagedAsync(int userId, int page, int pageSize);
     }
 }

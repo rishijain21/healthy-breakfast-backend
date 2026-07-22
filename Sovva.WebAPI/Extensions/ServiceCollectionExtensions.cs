@@ -201,6 +201,14 @@ public static class ServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddApplicationServices(this IServiceCollection services)
     {
+        // MediatR & CQRS Behaviours
+        services.AddMediatR(cfg =>
+        {
+            cfg.RegisterServicesFromAssembly(typeof(Sovva.Application.Validators.CreateUserDtoValidator).Assembly);
+            cfg.AddBehavior(typeof(MediatR.IPipelineBehavior<,>), typeof(Sovva.Application.Common.Behaviors.LoggingBehaviour<,>));
+            cfg.AddBehavior(typeof(MediatR.IPipelineBehavior<,>), typeof(Sovva.Application.Common.Behaviors.ValidationBehaviour<,>));
+        });
+
         // Caching
         services.AddScoped<ICacheService, CacheService>();
         // Repositories
@@ -242,6 +250,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ISubscriptionSchedulingService, SubscriptionSchedulingService>();
         services.AddScoped<IDashboardService, DashboardService>();
         services.AddScoped<IDailyMaintenanceOrchestrator, DailyMaintenanceOrchestrator>();
+        services.AddSingleton<Sovva.WebAPI.Jobs.DailyMaintenanceJob>();
 
         // Infrastructure & helpers
         services.AddSingleton<IAppTimeProvider, AppTimeProvider>();

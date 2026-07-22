@@ -9,7 +9,6 @@ namespace Sovva.Application.Interfaces
         Task<(IEnumerable<Meal> Items, int TotalCount)> GetActiveMealsAsync(int page, int pageSize);
 
         Task AddMealAsync(Meal meal);
-        Task SaveChangesAsync();
         Task<Meal?> GetByIdAsync(int id);
         Task<IEnumerable<Meal>> GetAllAsync();
         

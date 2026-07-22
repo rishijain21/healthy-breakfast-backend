@@ -1,5 +1,6 @@
 using Sovva.Application.DTOs;
 using Sovva.Application.Interfaces;
+using Sovva.Application.Common.Infrastructure;
 using Sovva.Domain.Entities;
 
 namespace Sovva.Application.Services
@@ -9,9 +10,6 @@ namespace Sovva.Application.Services
         private readonly IServiceableLocationRepository _repository;
         private readonly ICacheService _cacheService;
 
-        private const string ActiveLocationsCacheKey = "locations:all:active";
-        private const string LocationByIdCacheKeyPrefix = "locations:id:";
-
         public ServiceableLocationService(IServiceableLocationRepository repository, ICacheService cacheService)
         {
             _repository = repository;
@@ -20,7 +18,7 @@ namespace Sovva.Application.Services
 
         public async Task<ServiceableLocationDto?> GetByIdAsync(int id)
         {
-            var cacheKey = LocationByIdCacheKeyPrefix + id;
+            var cacheKey = CacheKeys.LocationById(id);
             var cached = await _cacheService.GetAsync<ServiceableLocationDto>(cacheKey);
             if (cached != null) return cached;
 
@@ -49,13 +47,13 @@ namespace Sovva.Application.Services
         /// </summary>
         public async Task<IEnumerable<ServiceableLocationDto>> GetActiveLocationsAsync()
         {
-            var cached = await _cacheService.GetAsync<IEnumerable<ServiceableLocationDto>>(ActiveLocationsCacheKey);
+            var cached = await _cacheService.GetAsync<IEnumerable<ServiceableLocationDto>>(CacheKeys.LocationsActive());
             if (cached != null) return cached;
 
             var locations = await _repository.GetActiveLocationsAsync();
             var result = locations.Select(MapToDto).ToList();
 
-            await _cacheService.SetAsync(ActiveLocationsCacheKey, result, TimeSpan.FromMinutes(15));
+            await _cacheService.SetAsync(CacheKeys.LocationsActive(), result, TimeSpan.FromMinutes(15));
             return result;
         }
 
@@ -104,8 +102,8 @@ namespace Sovva.Application.Services
 
             var created = await _repository.CreateAsync(location);
 
-            await _cacheService.RemoveAsync(ActiveLocationsCacheKey);
-            await _cacheService.RemoveAsync(LocationByIdCacheKeyPrefix + created.Id);
+            await _cacheService.RemoveAsync(CacheKeys.LocationsActive());
+            await _cacheService.RemoveAsync(CacheKeys.LocationById(created.Id));
 
             return MapToDto(created);
         }
@@ -149,8 +147,8 @@ namespace Sovva.Application.Services
 
             var updated = await _repository.UpdateAsync(location);
 
-            await _cacheService.RemoveAsync(ActiveLocationsCacheKey);
-            await _cacheService.RemoveAsync(LocationByIdCacheKeyPrefix + updated.Id);
+            await _cacheService.RemoveAsync(CacheKeys.LocationsActive());
+            await _cacheService.RemoveAsync(CacheKeys.LocationById(updated.Id));
 
             return MapToDto(updated);
         }
@@ -160,8 +158,8 @@ namespace Sovva.Application.Services
             var result = await _repository.DeleteAsync(id);
             if (result)
             {
-                await _cacheService.RemoveAsync(ActiveLocationsCacheKey);
-                await _cacheService.RemoveAsync(LocationByIdCacheKeyPrefix + id);
+                await _cacheService.RemoveAsync(CacheKeys.LocationsActive());
+                await _cacheService.RemoveAsync(CacheKeys.LocationById(id));
             }
             return result;
         }

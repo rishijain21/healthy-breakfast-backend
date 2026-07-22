@@ -54,6 +54,22 @@ namespace Sovva.Application.Tests.Services
                 _timeProviderMock.Object,
                 _loggerMock.Object
             );
+
+            // Default mock setups for GenerateScheduledOrdersFromSubscriptionsAsync
+            _userMealRepoMock.Setup(r => r.GetByIdsAsync(It.IsAny<List<int>>()))
+                .ReturnsAsync(new List<UserMeal>());
+            _userMealIngredientRepoMock.Setup(r => r.GetByUserMealIdsAsync(It.IsAny<List<int>>()))
+                .ReturnsAsync(new List<UserMealIngredient>());
+            _userRepoMock.Setup(r => r.GetByIdsWithAuthMappingAsync(It.IsAny<List<int>>()))
+                .ReturnsAsync(new List<User>());
+            _userAddressRepoMock.Setup(r => r.GetPrimaryAddressesByUserIdsAsync(It.IsAny<List<int>>()))
+                .ReturnsAsync(new List<UserAddress>());
+            _mealRepoMock.Setup(r => r.GetByIdsWithOptionsAsync(It.IsAny<IEnumerable<int>>()))
+                .ReturnsAsync(new List<Meal>());
+            _ingredientRepoMock.Setup(r => r.GetByIdsAsync(It.IsAny<IEnumerable<int>>()))
+                .ReturnsAsync(new Dictionary<int, Ingredient>());
+            _scheduledOrderRepoMock.Setup(r => r.GetExistingSubscriptionOrdersForDateAsync(It.IsAny<List<int>>(), It.IsAny<DateOnly>()))
+                .ReturnsAsync(new List<int>());
         }
 
         [Fact]
@@ -186,6 +202,140 @@ namespace Sovva.Application.Tests.Services
 
             // Assert
             nextDate.Should().Be(new DateOnly(2026, 5, 22)); // Friday
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // TASK-8.3: EndDate boundary tests for GenerateScheduledOrdersFromSubscriptionsAsync
+        // ─────────────────────────────────────────────────────────────────────
+
+        // Helper: builds a fully-wired subscription + dependencies for EndDate tests.
+        // Uses UserMealId path (avoids MealOptions complexity) with pre-populated ingredients.
+        private void SetupEndDateTestDependencies(DateOnly today, DateOnly deliveryDay, int userId = 1)
+        {
+            var authId = Guid.NewGuid();
+            var user = new User
+            {
+                UserId = userId,
+                AuthMapping = new UserAuthMapping { AuthId = authId, UserId = userId }
+            };
+            var userMeal = new UserMeal { UserMealId = 99, UserId = userId, MealName = "Test Meal" };
+            var userMealIngredient = new UserMealIngredient
+            {
+                UserMealIngredientId = 1, UserMealId = 99, IngredientId = 1, Quantity = 1
+            };
+
+            _timeProviderMock.Setup(t => t.TodayIst).Returns(today);
+            _timeProviderMock.Setup(t => t.TomorrowIst).Returns(deliveryDay);
+            _timeProviderMock.Setup(t => t.UtcNow).Returns(new DateTime(2026, 7, 12, 12, 0, 0, DateTimeKind.Utc));
+            _timeProviderMock.Setup(t => t.ToUtc(It.IsAny<DateTime>())).Returns<DateTime>(dt => dt);
+
+            _userRepoMock.Setup(r => r.GetByIdsWithAuthMappingAsync(It.IsAny<List<int>>()))
+                .ReturnsAsync(new List<User> { user });
+
+            _userMealRepoMock.Setup(r => r.GetByIdsAsync(It.IsAny<List<int>>()))
+                .ReturnsAsync(new List<UserMeal> { userMeal });
+
+            _userMealIngredientRepoMock.Setup(r => r.GetByUserMealIdsAsync(It.IsAny<List<int>>()))
+                .ReturnsAsync(new List<UserMealIngredient> { userMealIngredient });
+
+            _subscriptionRepoMock.Setup(r => r.UpdateAsync(It.IsAny<Subscription>()))
+                .ReturnsAsync((Subscription sub) => sub);
+        }
+
+        [Fact]
+        public async Task GenerateScheduledOrders_EndDateEqualToDeliveryDay_ShouldGenerateOrder()
+        {
+            // Arrange — EndDate == deliveryDay means the subscription is still valid for this order
+            var today = new DateOnly(2026, 7, 12);
+            var deliveryDay = today.AddDays(1); // 2026-07-13
+
+            SetupEndDateTestDependencies(today, deliveryDay);
+
+            var subscription = new Subscription
+            {
+                SubscriptionId = 1, UserId = 1, UserMealId = 99,
+                DeliveryAddressId = 10,
+                NextScheduledDate = deliveryDay,
+                EndDate = deliveryDay,          // ← boundary: exactly on delivery day
+                Frequency = SubscriptionFrequency.Daily,
+                AgreedPrice = 100m
+            };
+
+            _subscriptionRepoMock.Setup(r => r.GetActiveSubscriptionsAsync())
+                .ReturnsAsync(new List<Subscription> { subscription });
+
+            // Act
+            await _service.GenerateScheduledOrdersFromSubscriptionsAsync("test");
+
+            // Assert
+            _scheduledOrderRepoMock.Verify(
+                r => r.CreateBatchAsync(It.IsAny<IEnumerable<ScheduledOrder>>()),
+                Times.Once,
+                "Order should be generated: EndDate == DeliveryDay means subscription covers this delivery");
+        }
+
+        [Fact]
+        public async Task GenerateScheduledOrders_EndDateBeforeDeliveryDay_ShouldSkip()
+        {
+            // Arrange — EndDate < deliveryDay means the subscription expired before this order
+            var today = new DateOnly(2026, 7, 12);
+            var deliveryDay = today.AddDays(1); // 2026-07-13
+
+            _timeProviderMock.Setup(t => t.TodayIst).Returns(today);
+            _timeProviderMock.Setup(t => t.TomorrowIst).Returns(deliveryDay);
+
+            var subscription = new Subscription
+            {
+                SubscriptionId = 1, UserId = 1, UserMealId = 99,
+                NextScheduledDate = deliveryDay,
+                EndDate = today,                // ← expired TODAY, before tomorrow's delivery
+                Frequency = SubscriptionFrequency.Daily
+            };
+
+            _subscriptionRepoMock.Setup(r => r.GetActiveSubscriptionsAsync())
+                .ReturnsAsync(new List<Subscription> { subscription });
+
+            // Act
+            await _service.GenerateScheduledOrdersFromSubscriptionsAsync("test");
+
+            // Assert
+            _scheduledOrderRepoMock.Verify(
+                r => r.CreateBatchAsync(It.IsAny<IEnumerable<ScheduledOrder>>()),
+                Times.Never,
+                "Order should NOT be generated: EndDate < DeliveryDay means subscription expired");
+        }
+
+        [Fact]
+        public async Task GenerateScheduledOrders_EndDateAfterDeliveryDay_ShouldGenerateOrder()
+        {
+            // Arrange — EndDate > deliveryDay means the subscription is well within its window
+            var today = new DateOnly(2026, 7, 12);
+            var deliveryDay = today.AddDays(1); // 2026-07-13
+
+            SetupEndDateTestDependencies(today, deliveryDay);
+
+            var subscription = new Subscription
+            {
+                SubscriptionId = 1, UserId = 1, UserMealId = 99,
+                DeliveryAddressId = 10,
+                NextScheduledDate = deliveryDay,
+                EndDate = deliveryDay.AddDays(30), // ← still plenty of time left
+                Frequency = SubscriptionFrequency.Daily,
+                AgreedPrice = 100m
+            };
+
+            _subscriptionRepoMock.Setup(r => r.GetActiveSubscriptionsAsync())
+                .ReturnsAsync(new List<Subscription> { subscription });
+
+            // Act
+            await _service.GenerateScheduledOrdersFromSubscriptionsAsync("test");
+
+            // Assert
+            _scheduledOrderRepoMock.Verify(
+                r => r.CreateBatchAsync(It.Is<IEnumerable<ScheduledOrder>>(
+                    orders => orders.Single().SubscriptionId == 1)),
+                Times.Once,
+                "Order should be generated: EndDate > DeliveryDay");
         }
     }
 }

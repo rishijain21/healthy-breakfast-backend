@@ -20,11 +20,6 @@ namespace Sovva.Infrastructure.Repositories
             await _context.MealOptionIngredients.AddAsync(mealOptionIngredient);
         }
 
-        public async Task SaveChangesAsync()
-        {
-            await _context.SaveChangesAsync();
-        }
-
         // NEW METHOD
         public async Task DeleteByMealOptionIdAsync(int mealOptionId)
         {
@@ -33,7 +28,7 @@ namespace Sovva.Infrastructure.Repositories
                 .ToListAsync();
             
             _context.MealOptionIngredients.RemoveRange(ingredients);
-            await _context.SaveChangesAsync();
+            // NOTE: Caller (UnitOfWork or service) is responsible for SaveChangesAsync
         }
     }
 }

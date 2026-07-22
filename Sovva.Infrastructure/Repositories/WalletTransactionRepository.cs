@@ -91,7 +91,7 @@ namespace Sovva.Infrastructure.Repositories
             {
                 // CreatedAt handled by TimestampInterceptor
                 _context.WalletTransactions.Add(transaction);
-                await _context.SaveChangesAsync();
+                // NOTE: Caller (UnitOfWork or service) is responsible for SaveChangesAsync
                 return transaction;
             }
             catch (DbUpdateConcurrencyException ex)
@@ -136,7 +136,12 @@ namespace Sovva.Infrastructure.Repositories
                 "SELECT pg_advisory_xact_lock({0})", userId);
         }
 
-
+        public async Task<decimal> GetLifetimeCreditSumAsync(int userId)
+        {
+            return await _context.WalletTransactions
+                .Where(t => t.UserId == userId && t.Type == WalletConstants.Credit)
+                .SumAsync(t => (decimal?)t.Amount) ?? 0m;
+        }
 
         /// <summary>
         /// ✅ NEW: Write ledger record ONLY — no wallet balance update
@@ -145,7 +150,7 @@ namespace Sovva.Infrastructure.Repositories
         public async Task WriteRecordOnlyAsync(WalletTransaction transaction)
         {
             _context.WalletTransactions.Add(transaction);
-            await _context.SaveChangesAsync();
+            // NOTE: Caller (UnitOfWork or service) is responsible for SaveChangesAsync
             // ❌ Do NOT call UpdateUserWalletBalance — balance already correct
         }
 

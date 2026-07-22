@@ -2,7 +2,6 @@ using Sovva.Application.DTOs;
 using Sovva.Application.Interfaces;
 using Sovva.Domain.Constants;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using System.Security.Claims;
 
@@ -12,13 +11,13 @@ namespace Sovva.Application.Services
     {
         private readonly IHttpContextAccessor _httpContextAccessor;
         private readonly IUserRepository _userRepository;
-        private readonly IMemoryCache _cache;
+        private readonly ICacheService _cache;
         private readonly ILogger<CurrentUserService> _logger;
 
         public CurrentUserService(
             IHttpContextAccessor httpContextAccessor,
             IUserRepository userRepository,
-            IMemoryCache cache,
+            ICacheService cache,
             ILogger<CurrentUserService> logger)
         {
             _httpContextAccessor = httpContextAccessor;
@@ -36,7 +35,7 @@ namespace Sovva.Application.Services
             var authIdFromMiddleware = context.Items["auth_id"]?.ToString();
             if (!string.IsNullOrEmpty(authIdFromMiddleware))
             {
-                _logger.LogInformation("CurrentUserService: AuthId from middleware: {AuthId}", authIdFromMiddleware);
+                _logger.LogDebug("CurrentUserService: AuthId resolved via middleware context");
                 return authIdFromMiddleware;
             }
 
@@ -50,7 +49,7 @@ namespace Sovva.Application.Services
 
                 if (!string.IsNullOrEmpty(authIdFromClaims))
                 {
-                    _logger.LogInformation("CurrentUserService: AuthId from JWT claims: {AuthId}", authIdFromClaims);
+                    _logger.LogDebug("CurrentUserService: AuthId resolved via JWT claims");
                     return authIdFromClaims;
                 }
             }
@@ -83,15 +82,16 @@ namespace Sovva.Application.Services
 
             // Cache authId → UserId mapping for 5 minutes
             var cacheKey = $"userid_{authId}";
-            if (_cache.TryGetValue(cacheKey, out int cachedUserId))
-                return cachedUserId;
+            var cachedUserId = await _cache.GetAsync<int?>(cacheKey);
+            if (cachedUserId.HasValue)
+                return cachedUserId.Value;
 
             try
             {
                 var user = await _userRepository.GetUserByAuthIdAsync(authGuid);
                 if (user == null) return null;
 
-                _cache.Set(cacheKey, user.UserId, TimeSpan.FromMinutes(5));
+                await _cache.SetAsync(cacheKey, user.UserId, TimeSpan.FromMinutes(5));
                 return user.UserId;
             }
             catch (Exception ex) when (ex is not System.Data.Common.DbException 
@@ -106,17 +106,19 @@ namespace Sovva.Application.Services
         // Returns the currently logged-in user's details as UserDto
         public async Task<UserDto?> GetCurrentUserAsync()
         {
-            var authId = GetAuthId();
-            if (string.IsNullOrEmpty(authId))
+            var userId = await GetCurrentUserIdAsync();
+            if (userId == null)
                 return null;
 
-            if (!Guid.TryParse(authId, out var authGuid))
-                return null;
-
-            // ✅ Cache authId → User mapping for 5 minutes
-            var cacheKey = $"user_{authId}";
-            if (_cache.TryGetValue(cacheKey, out UserDto? cachedUser))
+            // ✅ Cache userId → User mapping for 5 minutes
+            var cacheKey = $"user_{userId}";
+            var cachedUser = await _cache.GetAsync<UserDto>(cacheKey);
+            if (cachedUser != null)
                 return cachedUser;
+
+            var authId = GetAuthId();
+            if (string.IsNullOrEmpty(authId) || !Guid.TryParse(authId, out var authGuid))
+                return null;
 
             try
             {
@@ -134,7 +136,7 @@ namespace Sovva.Application.Services
                     UpdatedAt = user.UpdatedAt
                 };
 
-                _cache.Set(cacheKey, userDto, TimeSpan.FromMinutes(5));
+                await _cache.SetAsync(cacheKey, userDto, TimeSpan.FromMinutes(5));
                 return userDto;
             }
             catch (Exception ex) when (ex is not System.Data.Common.DbException 
@@ -148,14 +150,9 @@ namespace Sovva.Application.Services
 
         public async Task InvalidateCacheAsync(int userId)
         {
-            var user = await _userRepository.GetByIdAsync(userId);
-            if (user != null && user.AuthMapping != null)
-            {
-                var authIdStr = user.AuthMapping.AuthId.ToString();
-                _cache.Remove($"user_{authIdStr}");
-                _cache.Remove($"userid_{authIdStr}");
-                _logger.LogInformation("CurrentUserService: Cache invalidated for user {UserId}", userId);
-            }
+            await _cache.RemoveAsync($"user_{userId}");
+            // We do NOT invalidate userid_{authId} because the authId -> userId mapping is immutable.
+            _logger.LogInformation("CurrentUserService: Cache invalidated for user {UserId}", userId);
         }
     }
 }

@@ -9,7 +9,6 @@ namespace Sovva.Application.Interfaces
         Task<User?> GetByEmailAsync(string email);
         Task<IEnumerable<User>> GetAllAsync(int page = 1, int pageSize = 50);
         Task AddUserAsync(User user);
-        Task SaveChangesAsync();
 
         // Auth-based lookups (single canonical method — GetByAuthIdAsync removed as duplicate)
         Task<(int UserId, string Role, string AccountStatus)?> GetAuthInfoByAuthIdAsync(Guid authId);

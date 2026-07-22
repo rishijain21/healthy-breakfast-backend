@@ -65,6 +65,18 @@ namespace Sovva.Infrastructure.Repositories
                 .FirstOrDefaultAsync(s => s.SubscriptionId == subscriptionId);
         }
 
+        public async Task<Subscription?> GetByIdAndUserIdAsync(int subscriptionId, int userId)
+        {
+            return await _context.Subscriptions
+                .AsNoTracking()
+                .Include(s => s.User)
+                .Include(s => s.UserMeal)
+                    .ThenInclude(um => um.Meal)
+                .Include(s => s.Meal)
+                .Include(s => s.WeeklySchedule)
+                .FirstOrDefaultAsync(s => s.SubscriptionId == subscriptionId && s.UserId == userId);
+        }
+
         public async Task<IEnumerable<Subscription>> GetByUserIdAsync(int userId)
         {
             return await _context.Subscriptions
@@ -76,6 +88,20 @@ namespace Sovva.Infrastructure.Repositories
                 .Include(s => s.Meal) // ✅ ADDED
                 .Include(s => s.WeeklySchedule)  // ✅ NEW
                 .Where(s => s.UserId == userId)
+                .ToListAsync();
+        }
+
+        public async Task<IEnumerable<Subscription>> GetActiveSubscriptionsByUserIdAsync(int userId, DateOnly targetDate)
+        {
+            return await _context.Subscriptions
+                .AsNoTracking()
+                .AsSplitQuery()
+                .Include(s => s.User)
+                .Include(s => s.UserMeal)
+                    .ThenInclude(um => um.Meal)
+                .Include(s => s.Meal)
+                .Include(s => s.WeeklySchedule)
+                .Where(s => s.UserId == userId && s.IsActive && s.StartDate <= targetDate && s.EndDate >= targetDate)
                 .ToListAsync();
         }
 
@@ -108,7 +134,7 @@ namespace Sovva.Infrastructure.Repositories
             try
             {
                 _context.Subscriptions.Add(subscription);
-                await _context.SaveChangesAsync();
+                // NOTE: Caller (UnitOfWork or service) is responsible for SaveChangesAsync
                 return subscription;
             }
             catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException pgEx && pgEx.SqlState == "23505")
@@ -130,7 +156,7 @@ public async Task<Subscription> UpdateAsync(Subscription subscription)
         tracked.State = EntityState.Detached;
 
     _context.Subscriptions.Update(subscription);
-    await _context.SaveChangesAsync();
+    // NOTE: Caller (UnitOfWork or service) is responsible for SaveChangesAsync
     return subscription;
 }
         /// <summary>
@@ -144,8 +170,7 @@ public async Task<Subscription> UpdateAsync(Subscription subscription)
                 _context.Subscriptions.Update(subscription);
             }
             
-            // Single SaveChanges for all updates - much more efficient
-            await _context.SaveChangesAsync();
+            // NOTE: Caller (UnitOfWork or service) is responsible for SaveChangesAsync
         }
 
         public async Task<bool> DeleteAsync(int subscriptionId)
@@ -161,7 +186,7 @@ public async Task<Subscription> UpdateAsync(Subscription subscription)
             // The TimestampInterceptor intercepts this Remove() call and converts it
             // to: subscription.DeletedAt = now (soft delete). No physical row is deleted.
             _context.Subscriptions.Remove(subscription);
-            await _context.SaveChangesAsync();
+            // NOTE: Caller (UnitOfWork or service) is responsible for SaveChangesAsync
             return true;
         }
 
@@ -202,7 +227,7 @@ public async Task<Subscription> UpdateAsync(Subscription subscription)
             }
             
             await _context.Set<SubscriptionSchedule>().AddRangeAsync(schedules);
-            await _context.SaveChangesAsync();
+            // NOTE: Caller (UnitOfWork or service) is responsible for SaveChangesAsync
         }
 
         public async Task RemoveSchedulesAsync(int subscriptionId)
@@ -227,7 +252,7 @@ public async Task<Subscription> UpdateAsync(Subscription subscription)
                 .ToListAsync();
 
             _context.Set<SubscriptionSchedule>().RemoveRange(schedules);
-            await _context.SaveChangesAsync();
+            // NOTE: Caller (UnitOfWork or service) is responsible for SaveChangesAsync
         }
 
         // ✅ NEW: Prevent duplicate subscriptions (checks active + date range)
@@ -278,6 +303,13 @@ public async Task<Subscription> UpdateAsync(Subscription subscription)
         public async Task<int> CountAsync()
         {
             return await _context.Subscriptions.CountAsync();
+        }
+
+        public async Task<bool> BelongsToUserAsync(int subscriptionId, int userId)
+        {
+            return await _context.Subscriptions
+                .AsNoTracking()
+                .AnyAsync(s => s.SubscriptionId == subscriptionId && s.UserId == userId);
         }
     }
 }

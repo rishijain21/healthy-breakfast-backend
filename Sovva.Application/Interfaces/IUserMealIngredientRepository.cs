@@ -9,7 +9,6 @@ namespace Sovva.Application.Interfaces
     public interface IUserMealIngredientRepository
     {
         Task AddAsync(UserMealIngredient entity);
-        Task SaveChangesAsync();
         Task<UserMealIngredient?> GetByIdAsync(int id);
         
         // ✅ NEW: Get all ingredients for a specific UserMeal

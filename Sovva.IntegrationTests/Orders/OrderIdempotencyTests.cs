@@ -19,26 +19,10 @@ namespace Sovva.IntegrationTests.Orders;
 /// Verifies that simultaneous POST /orders/create-from-meal-builder with the
 /// same userId+userMealId produces exactly one order and one debit.
 /// </summary>
-[Collection("PostgresCollection")]
-public class OrderIdempotencyTests : IAsyncLifetime
+public class OrderIdempotencyTests : BaseIntegrationTest
 {
-    private readonly PostgresContainerFixture _fixture;
-    private AppDbContext _dbContext = null!;
-
-    public OrderIdempotencyTests(PostgresContainerFixture fixture)
+    public OrderIdempotencyTests(PostgresContainerFixture fixture) : base(fixture)
     {
-        _fixture = fixture;
-    }
-
-    public async Task InitializeAsync()
-    {
-        _dbContext = _fixture.CreateDbContext();
-        await DbSeeder.CleanAsync(_dbContext);
-    }
-
-    public async Task DisposeAsync()
-    {
-        await _dbContext.DisposeAsync();
     }
 
     // ─────────────────────────────────────────────────────────────────────────

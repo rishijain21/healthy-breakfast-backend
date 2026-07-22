@@ -31,11 +31,6 @@ namespace Sovva.Infrastructure.Repositories
             await _context.MealOptions.AddAsync(mealOption);
         }
 
-        public async Task SaveChangesAsync()
-        {
-            await _context.SaveChangesAsync();
-        }
-
         // NEW METHOD
         public Task DeleteAsync(MealOption mealOption)
         {

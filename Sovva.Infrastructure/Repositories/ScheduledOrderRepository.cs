@@ -9,6 +9,7 @@ using Sovva.Application.Interfaces;
 using Sovva.Domain.Entities;
 using Sovva.Domain.Enums;
 using Sovva.Infrastructure.Data;
+using Sovva.Application.DTOs;
 
 namespace Sovva.Infrastructure.Repositories
 {
@@ -32,14 +33,14 @@ namespace Sovva.Infrastructure.Repositories
         public async Task<ScheduledOrder> CreateAsync(ScheduledOrder scheduledOrder)
         {
             _context.ScheduledOrders.Add(scheduledOrder);
-            await _context.SaveChangesAsync();
+            // NOTE: Caller (UnitOfWork or service) is responsible for SaveChangesAsync
             return scheduledOrder;
         }
 
         public async Task CreateBatchAsync(IEnumerable<ScheduledOrder> scheduledOrders)
         {
             await _context.ScheduledOrders.AddRangeAsync(scheduledOrders);
-            await _context.SaveChangesAsync();
+            // NOTE: Caller (UnitOfWork or service) is responsible for SaveChangesAsync
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -87,6 +88,40 @@ namespace Sovva.Infrastructure.Repositories
                           && so.ScheduledFor == istDateOnly)
                 .OrderBy(so => so.CreatedAt)
                 .ToListAsync();
+        }
+
+        public async Task<List<ScheduledOrderSummaryDto>> GetTomorrowOrdersSummaryAsync(int userId, DateTime date)
+        {
+            var istDateOnly = DateOnly.FromDateTime(
+                date.Kind == DateTimeKind.Utc 
+                    ? _time.ToIst(date) 
+                    : date);
+
+            return await _context.ScheduledOrders
+                .AsNoTracking()
+                .Where(so => so.UserId == userId && so.ScheduledFor == istDateOnly)
+                .OrderBy(so => so.CreatedAt)
+                .Select(so => new ScheduledOrderSummaryDto
+                {
+                    ScheduledOrderId = so.ScheduledOrderId,
+                    MealName = so.MealName ?? string.Empty,
+                    MealImageUrl = so.MealImageUrl,
+                    DeliveryTimeSlot = so.DeliveryTimeSlot,
+                    TotalPrice = so.TotalPrice,
+                    OrderStatus = so.OrderStatus.ToString()
+                })
+                .ToListAsync();
+        }
+
+        public async Task<int> GetOrdersThisWeekCountAsync(int userId, DateOnly from, DateOnly to)
+        {
+            return await _context.ScheduledOrders
+                .AsNoTracking()
+                .CountAsync(so => so.UserId == userId
+                               && so.ScheduledFor >= from
+                               && so.ScheduledFor <= to
+                               && so.OrderStatus != ScheduledOrderStatus.Failed
+                               && so.DeletedAt == null);
         }
 
         public async Task<List<ScheduledOrder>> GetByUserIdAndDateRangeAsync(int userId, DateOnly from, DateOnly to)
@@ -227,6 +262,17 @@ namespace Sovva.Infrastructure.Repositories
                 .ToListAsync();
         }
 
+        public async Task<List<ScheduledOrder>> GetFutureUnprocessedBySubscriptionIdAsync(
+            int subscriptionId, DateOnly fromDate)
+        {
+            return await _context.ScheduledOrders
+                .AsNoTracking()
+                .Where(so => so.SubscriptionId == subscriptionId
+                          && so.ScheduledFor >= fromDate
+                          && !so.IsProcessedToOrder)
+                .ToListAsync();
+        }
+
         /// <summary>
         /// ✅ NEW: Check if a scheduled order already exists for a subscription on a specific date
         /// Used to prevent duplicate order generation on job retry
@@ -309,7 +355,7 @@ namespace Sovva.Infrastructure.Repositories
         public async Task UpdateBatchAsync(IEnumerable<ScheduledOrder> scheduledOrders)
         {
             _context.ScheduledOrders.UpdateRange(scheduledOrders);
-            await _context.SaveChangesAsync();
+            // NOTE: Caller (UnitOfWork or service) is responsible for SaveChangesAsync
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -325,7 +371,7 @@ namespace Sovva.Infrastructure.Repositories
             if (scheduledOrder != null)
             {
                 scheduledOrder.DeletedAt = _time.UtcNow;
-                await _context.SaveChangesAsync();
+                // NOTE: Caller (UnitOfWork or service) is responsible for SaveChangesAsync
             }
         }
 
@@ -343,7 +389,7 @@ namespace Sovva.Infrastructure.Repositories
                 {
                     order.DeletedAt = now;
                 }
-                await _context.SaveChangesAsync();
+                // NOTE: Caller (UnitOfWork or service) is responsible for SaveChangesAsync
             }
         }
 

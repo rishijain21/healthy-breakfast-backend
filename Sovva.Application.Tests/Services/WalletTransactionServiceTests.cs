@@ -7,9 +7,21 @@ using Microsoft.Extensions.Logging;
 using Moq;
 using Sovva.Application.DTOs;
 using Sovva.Application.Exceptions;
+using Sovva.Application.Features.Wallet.Commands.AdminCreditWallet;
+using Sovva.Application.Features.Wallet.Commands.AtomicDebit;
+using Sovva.Application.Features.Wallet.Commands.CreateWalletTransaction;
+using Sovva.Application.Features.Wallet.Commands.DebitWallet;
+using Sovva.Application.Features.Wallet.Commands.TopUpWallet;
+using Sovva.Application.Features.Wallet.Commands.WriteTransactionRecord;
+using Sovva.Application.Features.Wallet.Queries.GetBalance;
+using Sovva.Application.Features.Wallet.Queries.GetSummary;
+using Sovva.Application.Features.Wallet.Queries.GetTransactions;
+using Sovva.Application.Features.Wallet.Queries.HasSufficientBalance;
+using Sovva.Application.Features.Wallet.Queries.TransactionExistsForScheduledOrder;
 using Sovva.Application.Helpers;
 using Sovva.Application.Interfaces;
 using Sovva.Application.Services;
+using Sovva.Application.Tests.Helpers;
 using Sovva.Domain.Constants;
 using Sovva.Domain.Entities;
 using Sovva.Domain.Enums;
@@ -43,15 +55,31 @@ namespace Sovva.Application.Tests.Services
                 .Setup(u => u.ExecuteInTransactionAsync(It.IsAny<Func<Task>>()))
                 .Returns<Func<Task>>(action => action());
 
-            _service = new WalletTransactionService(
-                _walletTxRepoMock.Object,
-                _userRepoMock.Object,
-                _unitOfWorkMock.Object,
-                _loggerMock.Object,
-                _cacheServiceMock.Object,
-                _failedOrderAttemptRepoMock.Object,
-                _timeMock.Object
-            );
+            var sender = new TestMediatRSender();
+            var createHandler = new CreateWalletTransactionCommandHandler(
+                _walletTxRepoMock.Object, _userRepoMock.Object, _unitOfWorkMock.Object, new Mock<ILogger<CreateWalletTransactionCommandHandler>>().Object, _cacheServiceMock.Object);
+            var atomicDebitHandler = new AtomicDebitCommandHandler(
+                _walletTxRepoMock.Object, _failedOrderAttemptRepoMock.Object, _cacheServiceMock.Object, _timeMock.Object, new Mock<ILogger<AtomicDebitCommandHandler>>().Object);
+            var topUpHandler = new TopUpWalletCommandHandler(sender, _userRepoMock.Object, _walletTxRepoMock.Object);
+
+            sender.Register<CreateWalletTransactionCommand, WalletTransactionDto>(createHandler);
+            sender.Register<AtomicDebitCommand, (bool Success, long? TransactionId)>(atomicDebitHandler);
+            sender.Register<TopUpWalletCommand, UserDto>(topUpHandler);
+            sender.Register<TopUpWalletByDtoCommand, WalletTransactionDto>(topUpHandler);
+            sender.Register<DebitWalletCommand, WalletTransactionDto>(new DebitWalletCommandHandler(sender));
+            sender.Register<AdminCreditWalletCommand, WalletTransactionDto>(new AdminCreditWalletCommandHandler(_userRepoMock.Object, sender));
+            sender.Register<GetUserBalanceQuery, decimal>(new GetUserBalanceQueryHandler(_walletTxRepoMock.Object, _cacheServiceMock.Object));
+            sender.Register<GetUserWalletSummaryQuery, UserWalletSummaryDto?>(new GetUserWalletSummaryQueryHandler(_userRepoMock.Object, _walletTxRepoMock.Object, sender));
+            sender.Register<GetAllTransactionsQuery, IEnumerable<WalletTransactionDto>>(new GetAllTransactionsQueryHandler(_walletTxRepoMock.Object));
+            sender.Register<GetAllTransactionsPagedQuery, PagedResult<WalletTransactionDto>>(new GetAllTransactionsPagedQueryHandler(_walletTxRepoMock.Object));
+            sender.Register<GetTransactionByIdQuery, WalletTransactionDto?>(new GetTransactionByIdQueryHandler(_walletTxRepoMock.Object));
+            sender.Register<GetUserTransactionsPagedQuery, PagedResult<WalletTransactionDto>>(new GetUserTransactionsPagedQueryHandler(_walletTxRepoMock.Object));
+            sender.Register<GetUserTransactionsByTypeQuery, IEnumerable<WalletTransactionDto>>(new GetUserTransactionsByTypeQueryHandler(_walletTxRepoMock.Object));
+            sender.Register<HasSufficientBalanceQuery, bool>(new HasSufficientBalanceQueryHandler(_walletTxRepoMock.Object));
+            sender.Register<TransactionExistsForScheduledOrderQuery, bool>(new TransactionExistsForScheduledOrderQueryHandler(_walletTxRepoMock.Object));
+            sender.Register(new WriteTransactionRecordCommandHandler(_walletTxRepoMock.Object));
+
+            _service = new WalletTransactionService(sender);
         }
 
         [Fact]

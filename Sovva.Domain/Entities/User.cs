@@ -2,10 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using Sovva.Domain.Enums;
+using Sovva.Domain.Interfaces;
 
 namespace Sovva.Domain.Entities
 {
-    public class User : BaseEntity
+    public class User : BaseEntity, ISoftDeletable
     {
         [Key]
         public int UserId { get; set; }

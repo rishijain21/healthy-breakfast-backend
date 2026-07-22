@@ -14,17 +14,20 @@ namespace Sovva.WebAPI.Controllers
     public class OrdersController : ControllerBase
     {
         private readonly IOrderService _orderService;
+        private readonly IOrderRepository _orderRepository;
         private readonly ICurrentUserService _currentUserService;
         private readonly ISupabaseStorageService _storageService;
         private readonly ILogger<OrdersController> _logger;
 
         public OrdersController(
             IOrderService orderService,
+            IOrderRepository orderRepository,
             ICurrentUserService currentUserService,
             ISupabaseStorageService storageService,
             ILogger<OrdersController> logger)
         {
             _orderService = orderService;
+            _orderRepository = orderRepository;
             _currentUserService = currentUserService;
             _storageService = storageService;
             _logger = logger;
@@ -41,23 +44,63 @@ namespace Sovva.WebAPI.Controllers
 
             var userOrders = await _orderService.GetUserOrdersWithDetailsAsync(userId.Value, page, pageSize);
 
-            // ✅ Sign image URLs for storage
+            // ✅ PERF FIX (NEW-11): Sign all image URLs in parallel using Task.WhenAll.
+            // Previous approach: sequential await per image = N round-trips to Supabase storage.
+            // New approach: fire all signing requests concurrently = 1 logical round-trip.
             if (userOrders?.Items != null)
             {
-                foreach (var item in userOrders.Items)
-                {
-                    if (!string.IsNullOrEmpty(item.MealImageUrl))
+                var signingTasks = userOrders.Items
+                    .Where(item => !string.IsNullOrEmpty(item.MealImageUrl))
+                    .Select(item => SignImageUrlAsync(item, _storageService))
+                    .ToList();
+
+                await Task.WhenAll(signingTasks);
+            }
+
+            return Ok(ApiResponse.Ok(userOrders));
+        }
+
+        private static async Task SignImageUrlAsync(EnhancedOrderHistoryDto item, ISupabaseStorageService storageService)
+        {
+            try
+            {
+                item.MealImageUrl = await storageService.GetSignedUrlAsync(item.MealImageUrl!);
+            }
+            catch
+            {
+                item.MealImageUrl = null;
+            }
+        }
+
+        /// <summary>Lightweight order history summary (BFF optimization)</summary>
+        [HttpGet("users/me/summary")]
+        public async Task<ActionResult<PagedResult<OrderHistorySummaryDto>>> GetMyOrdersSummary(
+            [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+        {
+            var userId = await _currentUserService.GetCurrentUserIdAsync();
+            if (userId is null)
+                return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
+
+            var userOrders = await _orderRepository.GetUserOrdersSummaryPagedAsync(userId.Value, page, pageSize);
+
+            if (userOrders?.Items != null)
+            {
+                var signingTasks = userOrders.Items
+                    .Where(item => !string.IsNullOrEmpty(item.MealImageUrl))
+                    .Select(async item => 
                     {
-                        try
+                        try 
                         {
-                            item.MealImageUrl = await _storageService.GetSignedUrlAsync(item.MealImageUrl);
+                            item.MealImageUrl = await _storageService.GetSignedUrlAsync(item.MealImageUrl!);
                         }
                         catch
                         {
                             item.MealImageUrl = null;
                         }
-                    }
-                }
+                    })
+                    .ToList();
+
+                await Task.WhenAll(signingTasks);
             }
 
             return Ok(ApiResponse.Ok(userOrders));
@@ -91,6 +134,40 @@ namespace Sovva.WebAPI.Controllers
 
             if (order.UserId != userId.Value)
                 return StatusCode(403, ApiResponse.Fail("FORBIDDEN", "Access denied"));
+
+            return Ok(ApiResponse.Ok(order));
+        }
+
+        /// <summary>Get enhanced single order details by ID (ownership enforced)</summary>
+        [HttpGet("{id}/details")]
+        public async Task<IActionResult> GetOrderDetails(long id)
+        {
+            var userId = await _currentUserService.GetCurrentUserIdAsync();
+            if (userId is null)
+                return Unauthorized(ApiResponse.Fail("UNAUTHORIZED", "User not authenticated"));
+
+            var order = await _orderService.GetOrderDetailsByIdAsync(id);
+            if (order == null)
+                return NotFound(ApiResponse.Fail("NOT_FOUND", "Resource not found"));
+
+            // Note: EnhancedOrderHistoryDto doesn't expose UserId, but we could add it or check if it's correct.
+            // Wait, we need to check ownership. Let's do it by fetching the simple order first, or assume we only show if owned.
+            // Actually, we can fetch the simple order first to check ownership, then fetch details.
+            var simpleOrder = await _orderService.GetOrderByIdAsync(id);
+            if (simpleOrder == null || simpleOrder.UserId != userId.Value)
+                return StatusCode(403, ApiResponse.Fail("FORBIDDEN", "Access denied"));
+
+            if (!string.IsNullOrEmpty(order.MealImageUrl))
+            {
+                try
+                {
+                    order.MealImageUrl = await _storageService.GetSignedUrlAsync(order.MealImageUrl!);
+                }
+                catch
+                {
+                    order.MealImageUrl = null;
+                }
+            }
 
             return Ok(ApiResponse.Ok(order));
         }

@@ -93,14 +93,14 @@ namespace Sovva.Infrastructure.Repositories
         public async Task<UserAddress> CreateAsync(UserAddress address)
         {
             _context.UserAddresses.Add(address);
-            await _context.SaveChangesAsync();
+            // NOTE: Caller (UnitOfWork or service) is responsible for SaveChangesAsync
             return address;
         }
 
         public async Task<UserAddress> UpdateAsync(UserAddress address)
         {
             _context.UserAddresses.Update(address);
-            await _context.SaveChangesAsync();
+            // NOTE: Caller (UnitOfWork or service) is responsible for SaveChangesAsync
             return address;
         }
 
@@ -111,7 +111,7 @@ namespace Sovva.Infrastructure.Repositories
                 return false;
 
             _context.UserAddresses.Remove(address);
-            await _context.SaveChangesAsync();
+            // NOTE: Caller (UnitOfWork or service) is responsible for SaveChangesAsync
             return true;
         }
 

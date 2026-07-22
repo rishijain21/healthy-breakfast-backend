@@ -7,6 +7,7 @@ namespace Sovva.WebAPI.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
+    [Microsoft.AspNetCore.RateLimiting.EnableRateLimiting("default")]
     public class IngredientCategoriesController : ControllerBase
     {
         private readonly IIngredientCategoryService _service;
