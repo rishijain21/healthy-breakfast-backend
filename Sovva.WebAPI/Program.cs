@@ -55,24 +55,7 @@ builder.Services
 // ══════════════════════════════════════════════════
 var app = builder.Build();
 
-if (app.Environment.IsProduction())
-{
-    var requiredConfigs = new[] 
-    { 
-        "ConnectionStrings:DefaultConnection",
-        "Supabase:Url",
-        "ConnectionStrings:RedisConnection"
-    };
-
-    foreach (var config in requiredConfigs)
-    {
-        if (string.IsNullOrWhiteSpace(builder.Configuration[config]))
-        {
-            Log.Fatal("Missing required configuration for production: {ConfigKey}", config);
-            throw new InvalidOperationException($"Missing required configuration: {config}");
-        }
-    }
-}
+// Configuration checks removed to allow Render's DATABASE_URL mapping in ServiceCollectionExtensions
 
 app.UseAppMiddleware()
    .UseHangfireDashboardWithAuth()
